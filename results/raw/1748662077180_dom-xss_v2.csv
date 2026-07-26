@@ -1,2 +1,0 @@
-name,attack,mode,success,reason
-dom-xss,dom_xss,v2,true,Attack detected via server logs

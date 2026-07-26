@@ -1,2 +1,0 @@
-name,attack,mode,success,reason
-message-hijack,priv_esc_msg,v3,false,not triggered

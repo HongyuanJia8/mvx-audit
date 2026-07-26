@@ -1,2 +1,0 @@
-name,attack,mode,success,reason
-unblock-access-control-allow-origin,cors_bypass,v2,false,Timed out after 30000 ms while trying to connect to the browser! Only Chrome at revision r1045629 is guaranteed to work.
