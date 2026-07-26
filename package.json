@@ -13,6 +13,7 @@
     "corpus/",
     "intel/",
     "lab/",
+    "scripts/run-lab.mjs",
     "docs/",
     "CHANGELOG.md",
     "LICENSE",
