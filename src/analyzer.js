@@ -58,7 +58,7 @@ export async function auditExtension(inputPath, options = {}) {
   ]);
   return {
     schemaVersion: 1,
-    tool: { name: 'mvx-audit', version: '2.0.0' },
+    tool: { name: 'mvx-audit', version: '3.0.0' },
     target: {
       root: snapshot.root,
       name: snapshot.manifest.name ?? null,

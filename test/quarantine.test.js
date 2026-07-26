@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fetchSample, planSample } from '../src/quarantine.js';
+import { fetchSample, fetchSampleBatch, planSample, planSampleBatch } from '../src/quarantine.js';
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
 const REF = '1'.repeat(40);
@@ -70,4 +70,32 @@ test('sample fetch rejects symlink quarantine roots and untrusted redirects', as
   const redirect = new Response(null, { status: 302, headers: { location: 'https://evil.example/sample.crx' } });
   await assert.rejects(() => fetchSample({ record, sources, quarantineDir: root, acknowledgeRisk: true, fetcher: async () => redirect }),
     (error) => error.code === 'UNSAFE_DOWNLOAD');
+});
+
+test('batch planning prioritizes confirmed records and obeys count and byte budgets', () => {
+  const small = { ...record, labels: ['reported-malicious'], artifacts: [{ ...record.artifacts[0], size: 20, gitBlobSha: '2'.repeat(40) }] };
+  const confirmed = { ...record, extensionId: 'ponmlkjihgfedcbaponmlkjihgfedcba', labels: ['behavior-confirmed-malicious'], artifacts: [{ ...record.artifacts[0], size: 30, gitBlobSha: '3'.repeat(40) }] };
+  const plan = planSampleBatch([small, confirmed], sources, { limit: 1, maxBytes: 100, maxTotalBytes: 100 });
+  assert.equal(plan.selected, 1);
+  assert.equal(plan.selections[0].extensionId, confirmed.extensionId);
+  assert.throws(() => planSampleBatch([small], sources, { limit: 0 }), (error) => error.code === 'INVALID_ARGUMENT');
+  assert.throws(() => planSampleBatch({}, sources), (error) => error.code === 'INVALID_ARGUMENT');
+  assert.throws(() => planSampleBatch([small], sources, { maxBytes: 0 }), (error) => error.code === 'INVALID_ARGUMENT');
+  assert.throws(() => planSampleBatch([small], sources, { maxTotalBytes: 0 }), (error) => error.code === 'INVALID_ARGUMENT');
+  assert.throws(() => planSampleBatch([small], sources, { label: '' }), (error) => error.code === 'INVALID_ARGUMENT');
+});
+
+test('batch fetch requires acknowledgement and reports individual failures', async (t) => {
+  await assert.rejects(() => fetchSampleBatch({ records: [record], sources }), (error) => error.code === 'RISK_ACK_REQUIRED');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-quarantine-batch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const result = await fetchSampleBatch({
+    records: [{ ...record, labels: ['malware'] }],
+    sources,
+    quarantineDir: root,
+    acknowledgeRisk: true,
+    fetcher: async () => { throw new Error('offline'); }
+  });
+  assert.equal(result.complete, false);
+  assert.equal(result.failures[0].extensionId, ID);
 });

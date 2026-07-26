@@ -6,6 +6,9 @@ import { MvxError } from './errors.js';
 
 const DEFAULT_MAX_BYTES = 25_000_000;
 const HARD_MAX_BYTES = 100_000_000;
+const DEFAULT_BATCH_LIMIT = 100;
+const DEFAULT_BATCH_BYTES = 250_000_000;
+const HARD_BATCH_BYTES = 10_000_000_000;
 const ALLOWED_HOSTS = new Set([
   'raw.githubusercontent.com',
   'media.githubusercontent.com',
@@ -101,6 +104,99 @@ export function samplePlanToText(plan) {
     '',
     'The actual SHA-256 is computed after Git blob and size verification. Fetching requires --acknowledge-risk.'
   ].join('\n') + '\n';
+}
+
+function recordPriority(record) {
+  if (record.labels?.includes('behavior-confirmed-malicious')) return 0;
+  if (record.labels?.includes('malware')) return 1;
+  if (record.labels?.includes('reported-malicious')) return 2;
+  return 3;
+}
+
+export function planSampleBatch(records, sources, options = {}) {
+  const limit = options.limit ?? DEFAULT_BATCH_LIMIT;
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxTotalBytes = options.maxTotalBytes ?? DEFAULT_BATCH_BYTES;
+  const label = options.label;
+  if (!Array.isArray(records)) throw new MvxError('Batch planning requires intelligence records', { code: 'INVALID_ARGUMENT' });
+  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 10_000) throw new MvxError('Batch limit must be between 1 and 10000', { code: 'INVALID_ARGUMENT' });
+  if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes <= 0 || maxTotalBytes > HARD_BATCH_BYTES) {
+    throw new MvxError(`Batch byte budget must be between 1 and ${HARD_BATCH_BYTES}`, { code: 'INVALID_ARGUMENT' });
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > HARD_MAX_BYTES) {
+    throw new MvxError(`maxBytes must be between 1 and ${HARD_MAX_BYTES}`, { code: 'INVALID_ARGUMENT' });
+  }
+  if (label !== undefined && (typeof label !== 'string' || label.length === 0)) {
+    throw new MvxError('Batch label must be a non-empty string', { code: 'INVALID_ARGUMENT' });
+  }
+  const candidates = records
+    .filter((record) => !label || record.labels?.includes(label))
+    .flatMap((record) => {
+      let plan;
+      try { plan = planSample(record, sources); } catch { return []; }
+      const artifact = [...plan.artifacts]
+        .filter((entry) => entry.bytes <= maxBytes)
+        .sort((a, b) => a.bytes - b.bytes || a.path.localeCompare(b.path))[0];
+      return artifact ? [{ extensionId: record.extensionId, labels: record.labels ?? [], priority: recordPriority(record), artifact }] : [];
+    })
+    .sort((a, b) => a.priority - b.priority || a.artifact.bytes - b.artifact.bytes || a.extensionId.localeCompare(b.extensionId));
+  const selections = [];
+  let totalBytes = 0;
+  for (const candidate of candidates) {
+    if (selections.length >= limit) break;
+    if (totalBytes + candidate.artifact.bytes > maxTotalBytes) continue;
+    selections.push({ extensionId: candidate.extensionId, labels: candidate.labels, artifact: candidate.artifact });
+    totalBytes += candidate.artifact.bytes;
+  }
+  return {
+    schemaVersion: 1,
+    source: 'gherardo-crx',
+    label: label ?? null,
+    limits: { count: limit, maxArtifactBytes: maxBytes, maxTotalBytes },
+    availableCandidates: candidates.length,
+    selected: selections.length,
+    totalBytes,
+    selections
+  };
+}
+
+export function sampleBatchPlanToText(plan) {
+  return [
+    'Quarantine batch plan',
+    `Source: ${plan.source}`,
+    `Label filter: ${plan.label ?? 'none'}`,
+    `Eligible artifacts: ${plan.availableCandidates}`,
+    `Selected: ${plan.selected}`,
+    `Pinned bytes: ${plan.totalBytes}`,
+    '',
+    ...plan.selections.map((entry) => `  ${entry.extensionId}  ${entry.artifact.bytes} bytes  ${entry.labels.join(',')}`),
+    '',
+    'Planning does not download or execute extension code.'
+  ].join('\n') + '\n';
+}
+
+export async function fetchSampleBatch({ records, sources, quarantineDir, limit, maxBytes, maxTotalBytes, label, acknowledgeRisk, fetcher = fetch }) {
+  if (!acknowledgeRisk) throw new MvxError('Refusing live malware batch download without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
+  const plan = planSampleBatch(records, sources, { limit, maxBytes, maxTotalBytes, label });
+  const byId = new Map(records.map((record) => [record.extensionId, record]));
+  const fetched = [];
+  const failures = [];
+  for (const selection of plan.selections) {
+    try {
+      fetched.push(await fetchSample({
+        record: byId.get(selection.extensionId),
+        sources,
+        artifactIndex: selection.artifact.index,
+        quarantineDir,
+        maxBytes: plan.limits.maxArtifactBytes,
+        acknowledgeRisk: true,
+        fetcher
+      }));
+    } catch (error) {
+      failures.push({ extensionId: selection.extensionId, code: error.code ?? 'UNEXPECTED_ERROR', message: error.message });
+    }
+  }
+  return { schemaVersion: 1, plan, fetched, failures, complete: failures.length === 0 };
 }
 
 export async function fetchSample({
@@ -243,4 +339,4 @@ export async function fetchSample({
   }
 }
 
-export { DEFAULT_MAX_BYTES, HARD_MAX_BYTES };
+export { DEFAULT_BATCH_BYTES, DEFAULT_BATCH_LIMIT, DEFAULT_MAX_BYTES, HARD_BATCH_BYTES, HARD_MAX_BYTES };
