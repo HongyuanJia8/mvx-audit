@@ -84,6 +84,8 @@ development.
 - Source indicators for dynamic evaluation, HTML injection, wildcard
   messaging, keystroke observation, cookie enumeration, insecure transport,
   downloads, clipboard reads, and unvalidated privileged message bridges.
+- Remote iframe-based extension UI and sensitive capability delegation to
+  framed origins.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
   2.1.0 suitable for GitHub code scanning.
 - Bounded scanning of all packaged source (including vendored directories) that

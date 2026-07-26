@@ -21,6 +21,7 @@ export const REFERENCES = Object.freeze({
   dnr: 'https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest',
   webResources: 'https://developer.chrome.com/docs/extensions/reference/manifest/web-accessible-resources',
   remoteCode: 'https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code',
+  permissionsPolicy: 'https://www.w3.org/TR/permissions-policy-1/',
   mv2Timeline: 'https://developer.chrome.com/docs/extensions/develop/migrate/mv2-deprecation-timeline'
 });
 
@@ -65,4 +66,3 @@ export function summarizeFindings(findings) {
   const rating = score >= 70 ? 'critical' : score >= 40 ? 'high' : score >= 20 ? 'medium' : score > 0 ? 'low' : 'clean';
   return { total: findings.length, counts, riskScore: score, rating };
 }
-

@@ -38,6 +38,8 @@ within the 2.x release line.
 | MVX208 | Medium | High | Programmatic download creation. |
 | MVX209 | High | High | Clipboard read operations. |
 | MVX210 | Critical | Medium | Privileged Chrome API use in a message handler without an apparent sender check in the same file. |
+| MVX211 | High | Medium | A remote origin embedded as extension UI in an iframe. |
+| MVX212 | High | High | Sensitive clipboard, camera, microphone, or geolocation delegation to an iframe. |
 
 ## Suppression policy
 

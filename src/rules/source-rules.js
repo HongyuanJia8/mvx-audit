@@ -54,6 +54,20 @@ const RULES = [
     pattern: /navigator\.clipboard\.read(?:Text)?\s*\(|document\.execCommand\s*\(\s*[`'"]paste/,
     description: 'The source reads clipboard content, which may contain secrets.',
     remediation: 'Read only after an explicit user action and avoid storage or transmission of clipboard data.', references: [REFERENCES.privacy]
+  },
+  {
+    id: 'MVX211', title: 'Remote origin embedded in extension UI', severity: 'high', category: 'remote-content',
+    pattern: /<iframe\b(?=[^>]{0,2000}\bsrc\s*=\s*["']https?:\/\/)[^>]*>/i,
+    description: 'An extension page embeds a remotely controlled origin. That origin can present trusted-looking UI and observe interactions inside its frame.',
+    remediation: 'Use packaged UI and treat remote responses as data. If framing is essential, allowlist one reviewed origin and apply a restrictive iframe sandbox.',
+    references: [REFERENCES.security], confidence: CONFIDENCE.MEDIUM
+  },
+  {
+    id: 'MVX212', title: 'Sensitive capability delegated to iframe', severity: 'high', category: 'sensitive-data',
+    pattern: /<iframe\b(?=[^>]{0,2000}\ballow\s*=\s*["'][^"']*\b(?:clipboard-read|camera|microphone|geolocation)\b)[^>]*>/i,
+    description: 'An iframe receives a sensitive browser capability through its Permissions Policy allowlist.',
+    remediation: 'Remove sensitive iframe delegation or restrict it to the minimum trusted origin and a user-initiated workflow.',
+    references: [REFERENCES.permissionsPolicy, REFERENCES.privacy], confidence: CONFIDENCE.HIGH
   }
 ];
 
