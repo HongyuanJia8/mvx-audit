@@ -2,7 +2,7 @@
 
 Rules identify review targets, not malicious intent. Severity and confidence can
 be refined as the analyzer gains data-flow context, but rule IDs remain stable
-within the 2.x release line.
+within the 3.x release line.
 
 ## Manifest and declarative rules
 
@@ -43,7 +43,7 @@ within the 2.x release line.
 
 ## Suppression policy
 
-Version 2.0 does not support inline suppression. Security findings should remain
+Version 3.0 does not support inline suppression. Security findings should remain
 visible in machine output; projects can apply their own reviewed allowlist by
 rule fingerprint outside the scanned extension. A future suppression format
 must include justification, owner, and expiry rather than a bare ignore comment.

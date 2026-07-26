@@ -60,6 +60,13 @@ requires `--acknowledge-risk` and applies all of the following controls:
 - mode `0600` files in a non-symlink quarantine directory;
 - no overwrite, extraction, import, browser loading, or execution.
 
+For reproducible batches, `sample plan-many` sorts strict behavioral
+confirmations first, then explicit malware labels, then researcher reports. It
+chooses one bounded artifact per extension ID and enforces count, per-file, and
+total-byte budgets. `sample fetch-many` follows that exact plan sequentially,
+preserves every individual failure, and never treats a partial batch as
+complete.
+
 `quarantine/` is excluded from Git and npm packages. It can still contain live
 malware and should be handled inside a disposable analysis VM. A successful
 download only proves artifact integrity, not malicious behavior.
@@ -71,6 +78,11 @@ multi-disk, encrypted, linked, duplicate, absolute, parent-traversing, and
 unknown-method entries are rejected. Extraction is written to a temporary
 directory and renamed only after every entry passes. No extracted file is
 loaded as code.
+
+`mvx benchmark static quarantine --acknowledge-risk` performs bounded extraction
+and static audit across already downloaded samples. Its review-trigger rate is
+a triage metric, not classifier accuracy or proof that the scanner understood
+the reported malicious behavior.
 
 ## Additional research sources
 

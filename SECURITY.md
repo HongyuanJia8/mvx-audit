@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest 2.x release on `main`.
+Security fixes are provided for the latest 3.x release on `main`.
 
 ## Reporting a vulnerability
 
@@ -29,5 +29,8 @@ verified. Keep quarantine outside backups and shared folders, never open it
 with a daily-use browser, and delete it according to your organization's
 malware-handling policy.
 
-Browser automation, public network collection endpoints, sandbox-disabling
-flags, and tests against real user data are outside the accepted project scope.
+Live browser analysis is accepted only through the documented container lab:
+no public network, no host browser profile, no real user data, no writable
+sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium
+sandbox cannot start under those controls, report `inconclusive`; weakening a
+boundary to obtain a result is a security defect.

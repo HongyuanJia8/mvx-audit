@@ -4,10 +4,10 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
 
-MVX Audit is a deterministic, dependency-free static security auditor for
-unpacked Chrome extensions. It explains risky capabilities, detects selected
-source patterns, compares an MV2 extension with its MV3 migration, and produces
-human-readable, JSON, or SARIF output for CI.
+MVX Audit is a deterministic, dependency-free security research toolkit for
+Chrome extensions. It combines static auditing, MV2/MV3 capability comparison,
+reproducible real-world threat intelligence, hash-verified quarantine,
+real-sample triage benchmarking, and an optional networkless dynamic canary lab.
 
 The repository combines a curated corpus of **17 threat scenarios and 34
 paired MV2/MV3 fixtures** with a reproducible real-world intelligence snapshot
@@ -61,13 +61,20 @@ npm run intel:validate
 
 # Inspect a live-artifact plan; this does not download anything
 node bin/mvx.js sample plan <extension-id>
+node bin/mvx.js sample plan-many --label behavior-confirmed-malicious --limit 100
 
 # Explicit opt-in download to the Git-ignored quarantine
 node bin/mvx.js sample fetch <extension-id> --acknowledge-risk
+node bin/mvx.js sample fetch-many --acknowledge-risk \
+  --label behavior-confirmed-malicious --limit 100 --max-total-bytes 250000000
 
 # Bounded CRX2/CRX3 extraction for static analysis
 node bin/mvx.js sample unpack quarantine/<id>/<sha256>.crx --acknowledge-risk
 node bin/mvx.js audit quarantine/<id>/unpacked/<sha256>
+
+# Benchmark quarantined real samples without executing extension code
+node bin/mvx.js benchmark static quarantine --acknowledge-risk \
+  --label behavior-confirmed-malicious --threshold high --format json
 ```
 
 Use `npm link` if you want the equivalent `mvx` command during local
@@ -127,6 +134,12 @@ paths, CRC failures, excessive expansion, and archive bombs before exposing an
 unpacked directory to the static auditor. It still does not make live malware
 safe to execute.
 
+`sample plan-many` and `sample fetch-many` add deterministic prioritization,
+count limits, per-artifact limits, a total byte budget, and isolated failure
+reporting. `benchmark static` safely unpacks quarantined CRXs, audits them, and
+reports a **review-trigger rate**. It deliberately does not call that number
+malware-classification accuracy because extension-ID labels can span versions.
+
 ## Result semantics
 
 The risk score is a bounded review-priority score, not a probability or an
@@ -134,11 +147,12 @@ exploitability measurement. A finding means “review this capability or pattern
 not “this extension is malicious.” Conversely, no static analyzer can prove an
 extension safe.
 
-MVX Audit intentionally does not claim runtime attack success rates. A future
-runtime experiment would require pinned browser builds, loopback-only origins,
-synthetic data, isolated profiles, sandboxing, staged evidence, and a result
-taxonomy that separates `blocked` from `infrastructure_error`. See
-[methodology](docs/methodology.md#runtime-experiments) for that contract.
+The optional [dynamic canary lab](docs/dynamic-analysis.md) runs only inside a
+read-only, non-root Docker container with `--network none`. It serves a virtual
+HTTPS canary page through Chrome DevTools Protocol, blocks and records external
+requests, denies downloads, and classifies exact canary leakage or protected
+state changes as `confirmed_attack`. Ordinary CI tests the event oracle but
+never executes a live extension. `no_trigger_observed` is not a benign verdict.
 
 ## Development
 
@@ -149,6 +163,7 @@ npm run lint            # syntax and repository hygiene checks
 npm run docs:generate   # regenerate the corpus report
 npm run intel:validate  # validate real-world intelligence offline
 npm run intel:check     # reproduce it from pinned upstream sources
+npm run lab:build       # build the optional isolated Chromium image
 npm run check           # all required checks
 npm audit --omit=dev    # expected: zero dependencies, zero advisories
 ```
