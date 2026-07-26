@@ -50,7 +50,7 @@ function validateRecord(record, line, ids, hashes, errors) {
     }
     if (!Number.isSafeInteger(artifact.size) || artifact.size <= 0) errors.push(`${label}: invalid artifact size`);
     if (!/^[a-f0-9]{40}$/.test(artifact.gitBlobSha ?? '')) errors.push(`${label}: invalid Git blob SHA`);
-    if (artifact.sha256 !== undefined && !SHA256.test(artifact.sha256)) errors.push(`${label}: invalid artifact SHA-256`);
+    if (artifact.reportedSha256 !== undefined && !SHA256.test(artifact.reportedSha256)) errors.push(`${label}: invalid reported artifact SHA-256`);
   }
   for (const provenance of Array.isArray(record.provenance) ? record.provenance : []) {
     if (!provenance || typeof provenance !== 'object' || typeof provenance.provider !== 'string') {

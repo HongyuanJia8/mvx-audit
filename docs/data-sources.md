@@ -39,6 +39,31 @@ SHA-256, and provenance. The packages themselves are neither vendored nor
 automatically downloaded because they are dangerous, large, and may have
 separate third-party copyright constraints.
 
+The provider's `database.json` associates hashes with extension IDs, not with
+an explicit artifact path and version. Real validation found at least one stale
+reported SHA-256 even though the pinned Git blob and byte size matched. MVX
+therefore stores this field as `reportedSha256`; it never presents it as the
+hash of the currently indexed file without checking the bytes.
+
+## Opt-in artifact acquisition
+
+Use `mvx sample plan <extension-id>` before downloading. `mvx sample fetch`
+requires `--acknowledge-risk` and applies all of the following controls:
+
+- immutable source revision and allowlisted HTTPS hosts;
+- manual redirect validation;
+- default 25 MB and hard 100 MB per-file limits;
+- pinned size and Git blob SHA verification;
+- locally computed SHA-256 content addressing;
+- explicit reporting when a provider-reported SHA-256 belongs to another
+  version;
+- mode `0600` files in a non-symlink quarantine directory;
+- no overwrite, extraction, import, browser loading, or execution.
+
+`quarantine/` is excluded from Git and npm packages. It can still contain live
+malware and should be handled inside a disposable analysis VM. A successful
+download only proves artifact integrity, not malicious behavior.
+
 ## Additional research sources
 
 - The [`tweb25`](https://github.com/its-not-easy/tweb25) artifact accompanies

@@ -23,6 +23,11 @@ Still, analyze only material you are authorized to possess. Do not load unknown
 fixtures into a daily-use Chrome profile. Report parser escapes and filesystem
 boundaries must be reviewed whenever a new format or archive reader is added.
 
+The optional sample fetcher writes live CRX files only after explicit risk
+acknowledgement. Quarantine files are not safe merely because their hashes were
+verified. Keep quarantine outside backups and shared folders, never open it
+with a daily-use browser, and delete it according to your organization's
+malware-handling policy.
+
 Browser automation, public network collection endpoints, sandbox-disabling
 flags, and tests against real user data are outside the accepted project scope.
-

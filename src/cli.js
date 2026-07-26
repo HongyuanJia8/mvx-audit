@@ -7,6 +7,7 @@ import { compareExtensions } from './compare.js';
 import { MvxError } from './errors.js';
 import { intelRecordToText, intelStatsToText, loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
 import { SEVERITIES } from './model.js';
+import { fetchSample, planSample, samplePlanToText } from './quarantine.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
 
 const VERSION = '2.0.0';
@@ -18,6 +19,9 @@ Usage:
   mvx corpus [list|validate] [--format text|json] [--catalog file]
   mvx intel stats|validate [--format text|json]
   mvx intel lookup <extension-id|sha256> [--format text|json]
+  mvx sample plan <extension-id> [--format text|json]
+  mvx sample fetch <extension-id> --acknowledge-risk [--artifact index]
+                   [--quarantine directory] [--max-bytes number]
   mvx --help
 
 Exit codes:
@@ -29,11 +33,12 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = {};
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog', '--artifact', '--quarantine', '--max-bytes']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--help' || token === '-h') options.help = true;
     else if (token === '--version' || token === '-v') options.version = true;
+    else if (token === '--acknowledge-risk') options.acknowledgeRisk = true;
     else if (valueOptions.has(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError(`${token} requires a value`, { code: 'INVALID_ARGUMENT' });
@@ -136,6 +141,49 @@ export async function runCli(argv, streams = process) {
         return 0;
       }
       throw new MvxError('intel action must be stats, validate, or lookup <extension-id|sha256>', { code: 'INVALID_ARGUMENT' });
+    }
+
+    if (command === 'sample') {
+      const [action, extensionId] = args;
+      if (!['plan', 'fetch'].includes(action) || args.length !== 2) {
+        throw new MvxError('sample action must be plan or fetch followed by one extension ID', { code: 'INVALID_ARGUMENT' });
+      }
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported sample format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      const { meta } = await loadIntelCatalog();
+      const matches = await lookupIntel(extensionId);
+      if (matches.length === 0) throw new MvxError(`No intelligence record for ${extensionId}`, { code: 'SAMPLE_NOT_AVAILABLE' });
+      const record = matches.find((entry) => entry.extensionId === extensionId.toLowerCase()) ?? matches[0];
+      const plan = planSample(record, meta.sources);
+      if (action === 'plan') {
+        await emit(format === 'json' ? json(plan) : samplePlanToText(plan), options.output, streams.stdout);
+        return 0;
+      }
+      const artifactIndex = options.artifact === undefined ? 0 : Number.parseInt(options.artifact, 10);
+      const maxBytes = options.maxBytes === undefined ? undefined : Number.parseInt(options.maxBytes, 10);
+      if (!Number.isSafeInteger(artifactIndex) || String(artifactIndex) !== String(options.artifact ?? '0')) {
+        throw new MvxError('--artifact must be a non-negative integer', { code: 'INVALID_ARGUMENT' });
+      }
+      if (artifactIndex < 0) throw new MvxError('--artifact must be a non-negative integer', { code: 'INVALID_ARGUMENT' });
+      if (options.maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || String(maxBytes) !== options.maxBytes)) {
+        throw new MvxError('--max-bytes must be a positive integer', { code: 'INVALID_ARGUMENT' });
+      }
+      const result = await fetchSample({
+        record,
+        sources: meta.sources,
+        artifactIndex,
+        quarantineDir: options.quarantine,
+        ...(maxBytes === undefined ? {} : { maxBytes }),
+        acknowledgeRisk: options.acknowledgeRisk
+      });
+      await emit(format === 'json' ? json(result) : [
+        `${result.cached ? 'Verified cached' : 'Fetched'} quarantined sample: ${result.path}`,
+        `SHA-256: ${result.sha256}`,
+        ...(result.reportedSha256 ? [`Reported SHA-256: ${result.reportedSha256} (${result.reportedSha256Match ? 'match' : 'VERSION MISMATCH'})`] : []),
+        `Bytes: ${result.bytes}`,
+        'The sample was not unpacked, loaded, or executed.'
+      ].join('\n') + '\n', options.output, streams.stdout);
+      return 0;
     }
 
     throw new MvxError(`Unknown command: ${command}`, { code: 'INVALID_ARGUMENT' });

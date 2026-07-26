@@ -58,6 +58,12 @@ npm run corpus:validate
 node bin/mvx.js intel stats
 node bin/mvx.js intel lookup <extension-id-or-sha256>
 npm run intel:validate
+
+# Inspect a live-artifact plan; this does not download anything
+node bin/mvx.js sample plan <extension-id>
+
+# Explicit opt-in download to the Git-ignored quarantine
+node bin/mvx.js sample fetch <extension-id> --acknowledge-risk
 ```
 
 Use `npm link` if you want the equivalent `mvx` command during local
@@ -102,6 +108,12 @@ label type, verification level, store status, threat categories, SHA-256 values,
 and external artifact availability. “Reported,” “policy violation,” and
 “confirmed malware” remain separate states. See the [data-source and ground
 truth methodology](docs/data-sources.md).
+
+For indexed artifacts, `sample plan` shows the immutable source revision, size,
+Git blob identity, and any provider-reported SHA-256. `sample fetch` is an
+explicit opt-in operation that accepts only allowlisted HTTPS hosts, enforces a
+size cap, verifies the Git content hash, computes the actual SHA-256, and stores
+the file under `quarantine/`. It never unpacks, imports, or executes the CRX.
 
 ## Result semantics
 

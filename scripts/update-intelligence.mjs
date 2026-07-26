@@ -184,7 +184,7 @@ export function buildIntelCatalog(config, input) {
       path: blob.path,
       size: blob.size,
       gitBlobSha: blob.sha,
-      ...(hashes.length === 1 ? { sha256: hashes[0] } : {})
+      ...(hashes.length === 1 ? { reportedSha256: hashes[0] } : {})
     });
     artifactCount += 1;
     artifactBytes += blob.size;
