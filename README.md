@@ -9,10 +9,10 @@ unpacked Chrome extensions. It explains risky capabilities, detects selected
 source patterns, compares an MV2 extension with its MV3 migration, and produces
 human-readable, JSON, or SARIF output for CI.
 
-The repository also contains a curated corpus of **17 threat scenarios and 34
-paired MV2/MV3 fixtures**. Fixtures are synthetic and non-executing: the tool
-reads them as text and never starts Chrome, visits a website, or collects user
-data.
+The repository combines a curated corpus of **17 threat scenarios and 34
+paired MV2/MV3 fixtures** with a reproducible real-world intelligence snapshot
+covering **4,716 unique extension IDs** and **504 indexed non-empty CRX
+artifacts**. Live packages are never bundled or fetched by normal commands.
 
 ## Why this project exists
 
@@ -53,6 +53,11 @@ node bin/mvx.js compare /path/to/mv2 /path/to/mv3 \
 # Explore and validate the built-in research corpus
 node bin/mvx.js corpus list
 npm run corpus:validate
+
+# Query real-world threat intelligence without downloading malware
+node bin/mvx.js intel stats
+node bin/mvx.js intel lookup <extension-id-or-sha256>
+npm run intel:validate
 ```
 
 Use `npm link` if you want the equivalent `mvx` command during local
@@ -78,18 +83,25 @@ development.
 See the complete [rule reference](docs/rule-reference.md) and
 [methodology](docs/methodology.md).
 
-## Corpus, not malware collection
+## Synthetic corpus and real-world intelligence
 
 The old repository mixed copied proof-of-concept extensions, real public
 endpoints, different browser versions, and hundreds of duplicate CSV files.
 Those artifacts could not support a scientific MV2/MV3 conclusion and created
 an unacceptable safety risk. They were removed in version 2.0.
 
-The replacement [corpus](corpus/README.md) covers 17 distinct capability and
+The replacement [synthetic corpus](corpus/README.md) covers 17 distinct capability and
 implementation patterns with a single machine-validated registry. Every entry
 has paired manifests, an explicit MV3 effect classification, expected analyzer
 findings, and links to primary Chrome documentation. The generated [capability
 matrix](docs/research-report.md) is reproducible from the current source.
+
+The separate [real-world intelligence catalog](intel/README.md) de-duplicates
+three pinned open sources into 4,716 extension IDs. It retains provenance,
+label type, verification level, store status, threat categories, SHA-256 values,
+and external artifact availability. “Reported,” “policy violation,” and
+“confirmed malware” remain separate states. See the [data-source and ground
+truth methodology](docs/data-sources.md).
 
 ## Result semantics
 
@@ -111,6 +123,8 @@ npm test                 # unit and integration tests
 npm run test:coverage   # built-in Node coverage
 npm run lint            # syntax and repository hygiene checks
 npm run docs:generate   # regenerate the corpus report
+npm run intel:validate  # validate real-world intelligence offline
+npm run intel:check     # reproduce it from pinned upstream sources
 npm run check           # all required checks
 npm audit --omit=dev    # expected: zero dependencies, zero advisories
 ```

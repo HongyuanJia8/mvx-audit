@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "snapshotDate": "2026-07-26",
+  "sources": [
+    {
+      "id": "malext-sentry",
+      "kind": "labels",
+      "name": "MalExt Sentry",
+      "repository": "https://github.com/toborrm9/malicious_extension_sentry",
+      "license": "MIT",
+      "ref": "547451d8654a16ba5a9da38f7f2f5f0bfe658747",
+      "files": {
+        "labels": {
+          "url": "https://raw.githubusercontent.com/toborrm9/malicious_extension_sentry/547451d8654a16ba5a9da38f7f2f5f0bfe658747/malicious_extensions_detailed.csv",
+          "sha256": "e89c4ea6195fc4fdca4336b4921779c9a30fbafce9e8375dbe82140fe16cc264"
+        }
+      },
+      "attribution": "MalExt Sentry by toborrm9 and contributors"
+    },
+    {
+      "id": "tpci-chrome-mal-ids",
+      "kind": "labels",
+      "name": "Malicious Chrome Extension IOC Database",
+      "repository": "https://github.com/The-Privacy-Commons-Institute/chrome-mal-ids",
+      "license": "CC-BY-4.0",
+      "ref": "a1e8ccfceadba1826a75b717d7cfb02c1ab37141",
+      "files": {
+        "labels": {
+          "url": "https://raw.githubusercontent.com/The-Privacy-Commons-Institute/chrome-mal-ids/a1e8ccfceadba1826a75b717d7cfb02c1ab37141/data/current-list-meta.csv",
+          "sha256": "dbed1c3ca69fd5afff277051b213df36f5fb084675fee271e903e6ad9915d1e0"
+        }
+      },
+      "attribution": "Extension IOC data sourced from chrome-mal-ids by Mallory Bowes Brown and contributors"
+    },
+    {
+      "id": "gherardo-crx",
+      "kind": "artifacts",
+      "name": "MaliciousBrowserExtensions",
+      "repository": "https://github.com/GherardoFiori/MaliciousBrowserExtensions",
+      "license": "MIT",
+      "ref": "b346c095f8e33b9875da2bbede3854855b984bae",
+      "files": {
+        "metadata": {
+          "url": "https://raw.githubusercontent.com/GherardoFiori/MaliciousBrowserExtensions/b346c095f8e33b9875da2bbede3854855b984bae/database.json",
+          "sha256": "9fd6db5207cf139460d8220b2a97f0c70027ac1d1e7b9c24665c1c2665ad5e30"
+        },
+        "tree": {
+          "url": "https://api.github.com/repos/GherardoFiori/MaliciousBrowserExtensions/git/trees/b346c095f8e33b9875da2bbede3854855b984bae?recursive=1"
+        }
+      },
+      "attribution": "MaliciousBrowserExtensions by Gherardo Fiori"
+    }
+  ]
+}

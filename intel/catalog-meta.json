@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-26",
+  "sources": [
+    {
+      "id": "malext-sentry",
+      "name": "MalExt Sentry",
+      "repository": "https://github.com/toborrm9/malicious_extension_sentry",
+      "license": "MIT",
+      "ref": "547451d8654a16ba5a9da38f7f2f5f0bfe658747",
+      "records": 3775
+    },
+    {
+      "id": "tpci-chrome-mal-ids",
+      "name": "Malicious Chrome Extension IOC Database",
+      "repository": "https://github.com/The-Privacy-Commons-Institute/chrome-mal-ids",
+      "license": "CC-BY-4.0",
+      "ref": "a1e8ccfceadba1826a75b717d7cfb02c1ab37141",
+      "records": 4500
+    },
+    {
+      "id": "gherardo-crx",
+      "name": "MaliciousBrowserExtensions",
+      "repository": "https://github.com/GherardoFiori/MaliciousBrowserExtensions",
+      "license": "MIT",
+      "ref": "b346c095f8e33b9875da2bbede3854855b984bae",
+      "records": 518
+    }
+  ],
+  "summary": {
+    "records": 4716,
+    "confirmedMalware": 265,
+    "researcherReported": 3906,
+    "malwareLabeled": 1094,
+    "artifacts": 504,
+    "artifactBytes": 5952318439,
+    "recordsWithSha256": 694,
+    "labels": 12,
+    "labelCounts": {
+      "adware": 866,
+      "artifact-available": 502,
+      "behavior-confirmed-malicious": 265,
+      "browser-hijack": 162,
+      "critical-vulnerability": 2,
+      "in-store-but-not-whitelisted": 4,
+      "in-store-but-suspicious": 143,
+      "malware": 1094,
+      "policy-violation": 911,
+      "potentially-unwanted": 329,
+      "reported-malicious": 4096,
+      "unknown": 264
+    }
+  }
+}

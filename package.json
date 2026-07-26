@@ -11,6 +11,7 @@
     "bin/",
     "src/",
     "corpus/",
+    "intel/",
     "docs/",
     "CHANGELOG.md",
     "LICENSE",
@@ -19,10 +20,13 @@
   ],
   "scripts": {
     "audit:example": "node ./bin/mvx.js audit ./corpus/fixtures/cookie-access/mv3",
-    "check": "npm run lint && npm test && npm run corpus:validate && npm run docs:check",
+    "check": "npm run lint && npm test && npm run corpus:validate && npm run intel:validate && npm run docs:check",
     "corpus:validate": "node ./bin/mvx.js corpus validate",
     "docs:check": "node ./scripts/generate-report.mjs --check",
     "docs:generate": "node ./scripts/generate-report.mjs",
+    "intel:check": "node ./scripts/update-intelligence.mjs --check",
+    "intel:update": "node ./scripts/update-intelligence.mjs",
+    "intel:validate": "node ./bin/mvx.js intel validate",
     "lint": "node ./scripts/check-project.mjs",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage"

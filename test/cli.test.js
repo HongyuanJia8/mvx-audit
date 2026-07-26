@@ -81,3 +81,21 @@ test('CLI returns input error when a supported source exceeds the hard limit', a
   assert.equal(code, 2);
   assert.match(capture.output().stderr, /SCAN_LIMIT.*large\.js/);
 });
+
+test('CLI reports and validates the real-world intelligence snapshot', async () => {
+  const stats = captureStreams();
+  assert.equal(await runCli(['intel', 'stats'], stats.streams), 0);
+  assert.match(stats.output().stdout, /Unique extension IDs: 4716/);
+  const validation = captureStreams();
+  assert.equal(await runCli(['intel', 'validate', '--format', 'json'], validation.streams), 0);
+  assert.equal(JSON.parse(validation.output().stdout).valid, true);
+});
+
+test('CLI looks up threat intelligence by extension ID', async () => {
+  const capture = captureStreams();
+  const code = await runCli(['intel', 'lookup', 'acmnokigkgihogfbeooklgemindnbine', '--format', 'json'], capture.streams);
+  const records = JSON.parse(capture.output().stdout);
+  assert.equal(code, 0);
+  assert.equal(records[0].extensionId, 'acmnokigkgihogfbeooklgemindnbine');
+  assert.ok(records[0].provenance.length > 0);
+});

@@ -1,7 +1,7 @@
 # Contributing
 
 Contributions are welcome for analyzer rules, synthetic scenarios, reporting,
-documentation, and tests.
+threat-intelligence providers, documentation, and tests.
 
 ## Development workflow
 
@@ -30,5 +30,12 @@ Every rule needs a title, category, severity, confidence, concise description,
 actionable remediation, primary reference, deterministic evidence, positive
 test, and negative test. Avoid rules based only on suspicious words or filenames.
 
-By participating, you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
+## Updating real-world intelligence
 
+Do not commit CRX, ZIP, unpacked malware, or opaque binary samples. Provider
+updates must pin immutable upstream revisions, document redistribution terms,
+verify checksums, preserve source-specific labels, and retain provenance. Follow
+the review procedure in `docs/data-sources.md` and commit the source lock with
+its generated snapshot.
+
+By participating, you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).

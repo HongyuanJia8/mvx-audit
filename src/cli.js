@@ -5,6 +5,7 @@ import { auditExtension } from './analyzer.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
 import { compareExtensions } from './compare.js';
 import { MvxError } from './errors.js';
+import { intelRecordToText, intelStatsToText, loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
 import { SEVERITIES } from './model.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
 
@@ -15,6 +16,8 @@ Usage:
   mvx audit <extension> [--format text|json|sarif] [--output file] [--fail-on severity]
   mvx compare <before> <after> [--format markdown|json] [--output file]
   mvx corpus [list|validate] [--format text|json] [--catalog file]
+  mvx intel stats|validate [--format text|json]
+  mvx intel lookup <extension-id|sha256> [--format text|json]
   mvx --help
 
 Exit codes:
@@ -109,6 +112,30 @@ export async function runCli(argv, streams = process) {
       const { catalog } = await loadCatalog(options.catalog);
       await emit(options.format === 'json' ? json(catalog) : catalogToText(catalog), options.output, streams.stdout);
       return 0;
+    }
+
+    if (command === 'intel') {
+      const action = args[0] ?? 'stats';
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported intel format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      if (action === 'stats' && args.length <= 1) {
+        const { meta } = await loadIntelCatalog();
+        await emit(format === 'json' ? json(meta) : intelStatsToText(meta), options.output, streams.stdout);
+        return 0;
+      }
+      if (action === 'validate' && args.length === 1) {
+        const validation = await validateIntelCatalog();
+        await emit(format === 'json' ? json(validation) : validation.valid
+          ? `Intelligence valid: ${validation.summary.records} IDs / ${validation.summary.artifacts} CRX artifacts indexed\n`
+          : `Intelligence invalid:\n${validation.errors.map((error) => `- ${error}`).join('\n')}\n`, options.output, streams.stdout);
+        return validation.valid ? 0 : 1;
+      }
+      if (action === 'lookup' && args.length === 2) {
+        const records = await lookupIntel(args[1]);
+        await emit(format === 'json' ? json(records) : intelRecordToText(records, args[1]), options.output, streams.stdout);
+        return 0;
+      }
+      throw new MvxError('intel action must be stats, validate, or lookup <extension-id|sha256>', { code: 'INVALID_ARGUMENT' });
     }
 
     throw new MvxError(`Unknown command: ${command}`, { code: 'INVALID_ARGUMENT' });
