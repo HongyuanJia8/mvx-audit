@@ -1,0 +1,2 @@
+globalThis.__mvxFixtureLoaded = true;
+

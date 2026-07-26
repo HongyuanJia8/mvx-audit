@@ -1,0 +1,2 @@
+[{"id":1,"priority":1,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"Content-Security-Policy","operation":"remove"}]},"condition":{"urlFilter":"||127.0.0.1/","resourceTypes":["main_frame"]}}]
+

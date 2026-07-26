@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "version": "2026.1",
+  "description": "Paired, non-executing Chrome extension threat-pattern fixtures for deterministic static analysis.",
+  "safety": {
+    "execution": "Fixtures are never launched by project commands.",
+    "network": "No fixture contains a non-documentation public data collection endpoint.",
+    "data": "No real cookies, keystrokes, history, or clipboard values are stored or transmitted."
+  },
+  "effectDefinitions": {
+    "blocked": "MV3 removes or rejects the represented implementation mechanism.",
+    "constrained": "MV3 narrows or makes the capability more declarative, but does not eliminate all risk.",
+    "changed": "MV3 replaces the mechanism with a materially different API or lifecycle.",
+    "unchanged": "The capability remains available when the user grants the relevant permission.",
+    "policy-dependent": "Availability depends on installation or enterprise policy."
+  },
+  "scenarios": [
+    {
+      "id": "broad-host-content",
+      "title": "Broad host content injection",
+      "category": "content-scripts",
+      "description": "A content script is injected into every matching web page and frame.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/broad-host-content/mv2", "mv3": "fixtures/broad-host-content/mv3" },
+      "expectedFindings": { "mv2": ["MVX101", "MVX104", "MVX105"], "mv3": ["MVX101", "MVX104", "MVX105"] },
+      "references": ["https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts", "https://developer.chrome.com/docs/extensions/develop/security-privacy/stay-secure"]
+    },
+    {
+      "id": "cookie-access",
+      "title": "Broad cookie access",
+      "category": "sensitive-data",
+      "description": "Cookie enumeration is combined with access to every host.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/cookie-access/mv2", "mv3": "fixtures/cookie-access/mv3" },
+      "expectedFindings": { "mv2": ["MVX101", "MVX102", "MVX103", "MVX206"], "mv3": ["MVX101", "MVX102", "MVX103", "MVX206"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/cookies", "https://developer.chrome.com/docs/extensions/develop/security-privacy/user-privacy"]
+    },
+    {
+      "id": "remote-code",
+      "title": "Dynamic remote code",
+      "category": "code-execution",
+      "description": "Downloaded text is interpreted as JavaScript through dynamic evaluation.",
+      "mv3Effect": "blocked",
+      "fixtures": { "mv2": "fixtures/remote-code/mv2", "mv3": "fixtures/remote-code/mv3" },
+      "expectedFindings": { "mv2": ["MVX107", "MVX201"], "mv3": ["MVX201"] },
+      "references": ["https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code", "https://developer.chrome.com/docs/extensions/develop/migrate/improve-security"]
+    },
+    {
+      "id": "request-tampering",
+      "title": "Request header modification",
+      "category": "network-control",
+      "description": "Network request headers are changed by a blocking listener or declarative rule.",
+      "mv3Effect": "changed",
+      "fixtures": { "mv2": "fixtures/request-tampering/mv2", "mv3": "fixtures/request-tampering/mv3" },
+      "expectedFindings": { "mv2": ["MVX110"], "mv3": ["MVX113"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/webRequest", "https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest"]
+    },
+    {
+      "id": "csp-header-removal",
+      "title": "Response security-header removal",
+      "category": "network-control",
+      "description": "A response header modification removes Content-Security-Policy on an isolated loopback origin.",
+      "mv3Effect": "constrained",
+      "fixtures": { "mv2": "fixtures/csp-header-removal/mv2", "mv3": "fixtures/csp-header-removal/mv3" },
+      "expectedFindings": { "mv2": ["MVX110"], "mv3": ["MVX113"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/webRequest", "https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest"]
+    },
+    {
+      "id": "keystroke-observation",
+      "title": "Keystroke observation",
+      "category": "surveillance",
+      "description": "Source registers a keyboard event observer; the fixture never stores event content.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/keystroke-observation/mv2", "mv3": "fixtures/keystroke-observation/mv3" },
+      "expectedFindings": { "mv2": ["MVX205"], "mv3": ["MVX205"] },
+      "references": ["https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts", "https://developer.chrome.com/docs/extensions/develop/security-privacy/user-privacy"]
+    },
+    {
+      "id": "privileged-message-bridge",
+      "title": "Privileged message bridge",
+      "category": "messaging",
+      "description": "An unvalidated message handler reaches a privileged tabs API.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/privileged-message-bridge/mv2", "mv3": "fixtures/privileged-message-bridge/mv3" },
+      "expectedFindings": { "mv2": ["MVX102", "MVX210"], "mv3": ["MVX102", "MVX210"] },
+      "references": ["https://developer.chrome.com/docs/extensions/develop/concepts/messaging", "https://developer.chrome.com/docs/extensions/develop/security-privacy/stay-secure"]
+    },
+    {
+      "id": "external-messaging",
+      "title": "Broad external messaging",
+      "category": "messaging",
+      "description": "External extension senders are allowed through a wildcard identifier.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/external-messaging/mv2", "mv3": "fixtures/external-messaging/mv3" },
+      "expectedFindings": { "mv2": ["MVX108"], "mv3": ["MVX108"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/manifest/externally-connectable", "https://developer.chrome.com/docs/extensions/develop/concepts/messaging"]
+    },
+    {
+      "id": "web-accessible-resources",
+      "title": "Wildcard web-accessible resources",
+      "category": "exposure",
+      "description": "Extension resources are exposed through wildcard resource declarations.",
+      "mv3Effect": "constrained",
+      "fixtures": { "mv2": "fixtures/web-accessible-resources/mv2", "mv3": "fixtures/web-accessible-resources/mv3" },
+      "expectedFindings": { "mv2": ["MVX109"], "mv3": ["MVX109"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/manifest/web-accessible-resources"]
+    },
+    {
+      "id": "debugger-control",
+      "title": "DevTools protocol control",
+      "category": "browser-control",
+      "description": "The debugger permission grants access to the Chrome DevTools Protocol.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/debugger-control/mv2", "mv3": "fixtures/debugger-control/mv3" },
+      "expectedFindings": { "mv2": ["MVX102"], "mv3": ["MVX102"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/debugger", "https://developer.chrome.com/docs/extensions/reference/permissions-list"]
+    },
+    {
+      "id": "native-messaging",
+      "title": "Native application messaging",
+      "category": "system-bridge",
+      "description": "The extension can communicate with a separately installed native host.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/native-messaging/mv2", "mv3": "fixtures/native-messaging/mv3" },
+      "expectedFindings": { "mv2": ["MVX102"], "mv3": ["MVX102"] },
+      "references": ["https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging", "https://developer.chrome.com/docs/extensions/reference/permissions-list"]
+    },
+    {
+      "id": "proxy-control",
+      "title": "Proxy configuration control",
+      "category": "network-control",
+      "description": "The extension can alter browser proxy configuration.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/proxy-control/mv2", "mv3": "fixtures/proxy-control/mv3" },
+      "expectedFindings": { "mv2": ["MVX102"], "mv3": ["MVX102"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/proxy", "https://developer.chrome.com/docs/extensions/reference/permissions-list"]
+    },
+    {
+      "id": "download-creation",
+      "title": "Programmatic download creation",
+      "category": "browser-control",
+      "description": "The downloads API can create a download without a page navigation.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/download-creation/mv2", "mv3": "fixtures/download-creation/mv3" },
+      "expectedFindings": { "mv2": ["MVX102", "MVX208"], "mv3": ["MVX102", "MVX208"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/downloads", "https://developer.chrome.com/docs/extensions/reference/permissions-list"]
+    },
+    {
+      "id": "history-access",
+      "title": "Browsing history access",
+      "category": "sensitive-data",
+      "description": "The history permission exposes browsing-history records.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/history-access/mv2", "mv3": "fixtures/history-access/mv3" },
+      "expectedFindings": { "mv2": ["MVX102"], "mv3": ["MVX102"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/history", "https://developer.chrome.com/docs/extensions/develop/security-privacy/user-privacy"]
+    },
+    {
+      "id": "clipboard-read",
+      "title": "Clipboard read",
+      "category": "sensitive-data",
+      "description": "Clipboard contents are accessed through a privileged browser context.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/clipboard-read/mv2", "mv3": "fixtures/clipboard-read/mv3" },
+      "expectedFindings": { "mv2": ["MVX102", "MVX209"], "mv3": ["MVX102", "MVX209"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/permissions-list", "https://developer.chrome.com/docs/extensions/develop/security-privacy/user-privacy"]
+    },
+    {
+      "id": "extension-management",
+      "title": "Extension management",
+      "category": "browser-control",
+      "description": "The management permission can inspect or manage other installed extensions.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/extension-management/mv2", "mv3": "fixtures/extension-management/mv3" },
+      "expectedFindings": { "mv2": ["MVX102"], "mv3": ["MVX102"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/management", "https://developer.chrome.com/docs/extensions/reference/permissions-list"]
+    },
+    {
+      "id": "insecure-transport",
+      "title": "Insecure remote transport",
+      "category": "transport",
+      "description": "An extension is allowed to contact and fetch from an unencrypted public origin.",
+      "mv3Effect": "unchanged",
+      "fixtures": { "mv2": "fixtures/insecure-transport/mv2", "mv3": "fixtures/insecure-transport/mv3" },
+      "expectedFindings": { "mv2": ["MVX111", "MVX207"], "mv3": ["MVX111", "MVX207"] },
+      "references": ["https://developer.chrome.com/docs/extensions/develop/concepts/network-requests", "https://developer.chrome.com/docs/extensions/develop/security-privacy/stay-secure"]
+    }
+  ]
+}
+
