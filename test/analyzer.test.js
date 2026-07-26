@@ -119,6 +119,19 @@ test('a direct manifest.json path is accepted', async (t) => {
   assert.equal(result.target.name, 'File fixture');
 });
 
+test('manifest path input cannot bypass a symlinked extension root', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-root-link-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const realRoot = path.join(temp, 'real');
+  await writeExtension(realRoot, { manifest_version: 3, name: 'Real fixture', version: '1.0.0' });
+  const linkedRoot = path.join(temp, 'linked');
+  await symlink(realRoot, linkedRoot);
+  await assert.rejects(
+    () => auditExtension(path.join(linkedRoot, 'manifest.json')),
+    (error) => error.code === 'UNSAFE_INPUT'
+  );
+});
+
 test('missing manifest file references produce an integrity finding', async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-missing-ref-'));
   t.after(() => rm(temp, { recursive: true, force: true }));

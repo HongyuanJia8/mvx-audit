@@ -59,6 +59,18 @@ test('CLI reports malformed catalog as validation failure', async (t) => {
   assert.match(capture.output().stdout, /catalog must be a JSON object/);
 });
 
+test('CLI treats malformed nested catalog values as validation failures, not crashes', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-cli-nested-catalog-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const catalogPath = path.join(temp, 'catalog.json');
+  await writeFile(catalogPath, '{"schemaVersion":1,"scenarios":[null]}\n', 'utf8');
+  const capture = captureStreams();
+  const code = await runCli(['corpus', 'validate', '--catalog', catalogPath], capture.streams);
+  assert.equal(code, 1);
+  assert.match(capture.output().stdout, /must be a JSON object/);
+  assert.equal(capture.output().stderr, '');
+});
+
 test('CLI returns input error when a supported source exceeds the hard limit', async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-cli-limit-'));
   t.after(() => rm(temp, { recursive: true, force: true }));

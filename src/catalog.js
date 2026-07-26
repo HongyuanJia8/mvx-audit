@@ -47,28 +47,39 @@ export async function validateCatalog(catalogPath = DEFAULT_CATALOG_PATH) {
   const ids = new Set();
 
   for (const [index, scenario] of (catalog.scenarios ?? []).entries()) {
-    const label = scenario.id ?? `scenario[${index}]`;
+    const fallbackLabel = `scenario[${index}]`;
+    if (!scenario || Array.isArray(scenario) || typeof scenario !== 'object') {
+      errors.push(`${fallbackLabel}: must be a JSON object`);
+      continue;
+    }
+    const label = typeof scenario.id === 'string' && scenario.id ? scenario.id : fallbackLabel;
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(scenario.id ?? '')) errors.push(`${label}: invalid id`);
     if (ids.has(scenario.id)) errors.push(`${label}: duplicate id`);
     ids.add(scenario.id);
-    if (!scenario.title || !scenario.category || !scenario.description) errors.push(`${label}: missing descriptive metadata`);
+    if (![scenario.title, scenario.category, scenario.description].every((value) => typeof value === 'string' && value.length > 0)) {
+      errors.push(`${label}: missing descriptive metadata`);
+    }
     if (!EFFECTS.has(scenario.mv3Effect)) errors.push(`${label}: invalid mv3Effect`);
-    if (!Array.isArray(scenario.references) || scenario.references.length === 0 || scenario.references.some((url) => !url.startsWith('https://'))) {
+    if (!Array.isArray(scenario.references) || scenario.references.length === 0 || scenario.references.some((url) => typeof url !== 'string' || !url.startsWith('https://'))) {
       errors.push(`${label}: references must contain HTTPS primary sources`);
     }
     for (const mode of ['mv2', 'mv3']) {
       const fixture = scenario.fixtures?.[mode];
-      if (!fixture) {
+      if (typeof fixture !== 'string' || fixture.length === 0) {
         errors.push(`${label}: missing ${mode} fixture`);
         continue;
       }
-      const fixturePath = path.resolve(root, fixture);
       try {
+        const fixturePath = path.resolve(root, fixture);
         const result = await auditExtension(fixturePath);
         const expectedVersion = mode === 'mv2' ? 2 : 3;
         if (result.target.manifestVersion !== expectedVersion) errors.push(`${label}: ${mode} fixture has wrong manifest version`);
         const actual = new Set(result.findings.map((finding) => finding.id));
-        for (const expected of scenario.expectedFindings?.[mode] ?? []) {
+        const expectedFindings = Array.isArray(scenario.expectedFindings?.[mode]) ? scenario.expectedFindings[mode] : [];
+        if (scenario.expectedFindings?.[mode] !== undefined && !Array.isArray(scenario.expectedFindings[mode])) {
+          errors.push(`${label}: expectedFindings.${mode} must be an array`);
+        }
+        for (const expected of expectedFindings) {
           if (!actual.has(expected)) errors.push(`${label}: ${mode} fixture did not produce ${expected}`);
         }
       } catch (error) {

@@ -35,3 +35,19 @@ test('malformed catalog structure returns validation errors instead of throwing'
   assert.equal(validation.valid, false);
   assert.match(validation.errors[0], /non-empty array/);
 });
+
+test('malformed nested catalog values are accumulated as validation errors', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-nested-catalog-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const catalogPath = path.join(temp, 'catalog.json');
+  for (const scenario of [
+    null,
+    { id: 'bad-reference', title: 'x', category: 'x', description: 'x', mv3Effect: 'unchanged', references: [null], fixtures: {} },
+    { id: 'bad-fixture', title: 'x', category: 'x', description: 'x', mv3Effect: 'unchanged', references: ['https://example.invalid'], fixtures: { mv2: 7, mv3: 8 } }
+  ]) {
+    await writeFile(catalogPath, `${JSON.stringify({ schemaVersion: 1, scenarios: [scenario] })}\n`, 'utf8');
+    const validation = await validateCatalog(catalogPath);
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.length > 0);
+  }
+});

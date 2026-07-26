@@ -27,7 +27,12 @@ async function resolveRoot(inputPath) {
     if (path.basename(absolute) !== 'manifest.json') {
       throw new MvxError('A file input must be named manifest.json', { code: 'INVALID_INPUT' });
     }
-    return { root: path.dirname(absolute), manifestPath: absolute };
+    const root = path.dirname(absolute);
+    const rootStat = await lstat(root);
+    if (rootStat.isSymbolicLink()) {
+      throw new MvxError('The extension root may not be a symbolic link', { code: 'UNSAFE_INPUT' });
+    }
+    return { root, manifestPath: absolute };
   }
   if (!stat.isDirectory()) {
     throw new MvxError('Input must be an extension directory or manifest.json', { code: 'INVALID_INPUT' });
