@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { runCli } from '../src/cli.js';
-import { captureStreams } from './helpers.js';
+import { captureStreams } from '../support/helpers.js';
 
 const ROOT = path.resolve('corpus/fixtures');
 
@@ -36,3 +36,12 @@ test('CLI help documents stable exit codes', async () => {
   assert.match(capture.output().stdout, /Exit codes:/);
 });
 
+test('CLI emits valid SARIF and version output', async () => {
+  const versionCapture = captureStreams();
+  assert.equal(await runCli(['--version'], versionCapture.streams), 0);
+  assert.match(versionCapture.output().stdout, /^2\.0\.0/);
+
+  const sarifCapture = captureStreams();
+  assert.equal(await runCli(['audit', path.join(ROOT, 'cookie-access/mv3'), '--format', 'sarif'], sarifCapture.streams), 0);
+  assert.equal(JSON.parse(sarifCapture.output().stdout).version, '2.1.0');
+});

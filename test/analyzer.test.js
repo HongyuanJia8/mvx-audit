@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { auditExtension } from '../src/analyzer.js';
 import { MvxError } from '../src/errors.js';
-import { writeExtension } from './helpers.js';
+import { writeExtension } from '../support/helpers.js';
 
 const ROOT = path.resolve('corpus/fixtures');
 
@@ -70,3 +70,39 @@ test('loopback HTTP does not trigger the public insecure endpoint source rule', 
   assert.equal(result.findings.some((finding) => finding.id === 'MVX207'), false);
 });
 
+test('MV3 compatibility and exposure rules are reported together', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-manifest-rules-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, {
+    manifest_version: 3,
+    name: 'Manifest rules fixture',
+    version: '1.0.0',
+    permissions: ['webRequestBlocking'],
+    host_permissions: ['http://insecure.example.invalid/*'],
+    background: { scripts: ['legacy.js'] },
+    externally_connectable: { ids: ['*'] },
+    content_scripts: [{ matches: ['https://example.invalid/*'], js: ['content.js'], world: 'MAIN' }],
+    web_accessible_resources: [{ resources: ['assets/*'], matches: ['<all_urls>'] }]
+  }, { 'legacy.js': '', 'content.js': '' });
+  const result = await auditExtension(temp);
+  const ids = new Set(result.findings.map((finding) => finding.id));
+  for (const id of ['MVX106', 'MVX108', 'MVX109', 'MVX110', 'MVX111', 'MVX112']) assert.ok(ids.has(id), id);
+  assert.equal(result.findings.find((finding) => finding.id === 'MVX110').severity, 'critical');
+});
+
+test('unsupported manifest versions produce a critical finding instead of a crash', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-version-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, { manifest_version: 4, name: 'Future fixture', version: '1.0.0' });
+  const result = await auditExtension(temp);
+  assert.equal(result.findings[0].id, 'MVX001');
+  assert.equal(result.findings[0].severity, 'critical');
+});
+
+test('a direct manifest.json path is accepted', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-file-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, { manifest_version: 3, name: 'File fixture', version: '1.0.0' });
+  const result = await auditExtension(path.join(temp, 'manifest.json'));
+  assert.equal(result.target.name, 'File fixture');
+});

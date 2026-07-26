@@ -23,4 +23,3 @@ export function captureStreams() {
     output() { return { stdout, stderr }; }
   };
 }
-

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { auditExtension } from '../src/analyzer.js';
-import { auditToSarif, comparisonToMarkdown } from '../src/reporters.js';
+import { auditToSarif, auditToText, comparisonToMarkdown } from '../src/reporters.js';
 import { compareExtensions } from '../src/compare.js';
 
 const ROOT = path.resolve('corpus/fixtures');
@@ -23,3 +23,10 @@ test('Markdown comparison includes caveat and permission delta', async () => {
   assert.match(markdown, /does not prove exploitability/);
 });
 
+test('text output includes score, evidence, and remediation', async () => {
+  const audit = await auditExtension(path.join(ROOT, 'cookie-access/mv3'));
+  const text = auditToText(audit);
+  assert.match(text, /Risk: high \(61\/100\)/);
+  assert.match(text, /at fixture\.js:2/);
+  assert.match(text, /Fix: Avoid reading cookie values/);
+});

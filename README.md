@@ -1,118 +1,135 @@
-# Chrome Extension Manifest V2 vs V3 Security Analysis
+# MVX Audit: Chrome Manifest V2 vs V3 Security
 
-A comprehensive security analysis comparing Chrome Extension Manifest V2 and V3 through automated testing of various malicious extension types. This research evaluates the effectiveness of Manifest V3's security improvements against real-world attack vectors.
+[![CI](https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass/actions/workflows/ci.yml/badge.svg)](https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
 
-##  Project Overview
+MVX Audit is a deterministic, dependency-free static security auditor for
+unpacked Chrome extensions. It explains risky capabilities, detects selected
+source patterns, compares an MV2 extension with its MV3 migration, and produces
+human-readable, JSON, or SARIF output for CI.
 
-This project systematically tests the security implications of Chrome's transition from Manifest V2 to V3 by implementing and testing various types of malicious extensions across both manifest versions. Our automated testing framework reveals which attacks are successfully blocked by MV3's security enhancements and which vulnerabilities remain exploitable.
+The repository also contains a curated corpus of **17 threat scenarios and 34
+paired MV2/MV3 fixtures**. Fixtures are synthetic and non-executing: the tool
+reads them as text and never starts Chrome, visits a website, or collects user
+data.
 
-## Quick Start
+## Why this project exists
 
-### Prerequisites
+Manifest V3 improves important platform boundaries: extension service workers
+replace persistent background pages, remotely hosted code is disallowed, and
+most extensions use declarative network rules instead of blocking
+`webRequest`. It does **not** make every granted permission safe. Capabilities
+such as cookie access, broad content scripts, debugger access, history, proxy,
+and native messaging still deserve review.
 
-- **Node.js** (v20+) and npm
-- **Chrome/Chromium** browser (version 109.0.5413.2 recommended for testing)
-- **macOS** (tested on macOS, may work on other platforms)
+Chrome 138 was the final Chrome release with limited MV2 support; Chrome 139
+removed it, and the remaining MV2 Web Store entries are scheduled for removal
+on 31 August 2026. See the official [MV2 support
+timeline](https://developer.chrome.com/docs/extensions/develop/migrate/mv2-deprecation-timeline)
+and [MV3 overview](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3).
 
-### Installation
+## Quick start
+
+Requirements: Node.js 20 or newer. There are no runtime dependencies and no
+browser download.
 
 ```bash
+git clone https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass.git
+cd chrome-manifest-security-mv2-vs-mv3-bypass
+npm ci
 
+# Audit an unpacked extension directory
+node bin/mvx.js audit /path/to/extension
 
-# Install dependencies
-npm install
+# Fail CI when a high- or critical-severity finding exists
+node bin/mvx.js audit /path/to/extension --format sarif \
+  --output results.sarif --fail-on high
 
-# Download Chrome/Chromium for testing(It depends on the platform you use)
-# Visit: https://vikyd.github.io/download-chromium-history-version/
-# Download version 109.0.5413.2 and extract to ./chrome-mac/
+# Compare a migration
+node bin/mvx.js compare /path/to/mv2 /path/to/mv3 \
+  --format markdown --output migration-review.md
+
+# Explore and validate the built-in research corpus
+node bin/mvx.js corpus list
+npm run corpus:validate
 ```
 
-### Basic Usage
+Use `npm link` if you want the equivalent `mvx` command during local
+development.
+
+## What an audit includes
+
+- Manifest version and migration compatibility checks.
+- Broad host, content-script, external messaging, and web-resource exposure.
+- Sensitive permission review, including capability chains such as
+  `cookies` + `<all_urls>`.
+- Network-control review for blocking `webRequest` and MV3
+  `declarativeNetRequest` header rules.
+- Source indicators for dynamic evaluation, HTML injection, wildcard
+  messaging, keystroke observation, cookie enumeration, insecure transport,
+  downloads, clipboard reads, and unvalidated privileged message bridges.
+- Stable evidence locations, risk summary, explicit assumptions, and SARIF
+  2.1.0 suitable for GitHub code scanning.
+- Bounded scanning that ignores dependencies, refuses a symlinked root, skips
+  nested symlinks, and fails closed on file or byte limits.
+
+See the complete [rule reference](docs/rule-reference.md) and
+[methodology](docs/methodology.md).
+
+## Corpus, not malware collection
+
+The old repository mixed copied proof-of-concept extensions, real public
+endpoints, different browser versions, and hundreds of duplicate CSV files.
+Those artifacts could not support a scientific MV2/MV3 conclusion and created
+an unacceptable safety risk. They were removed in version 2.0.
+
+The replacement [corpus](corpus/README.md) covers 17 distinct capability and
+implementation patterns with a single machine-validated registry. Every entry
+has paired manifests, an explicit MV3 effect classification, expected analyzer
+findings, and links to primary Chrome documentation. The generated [capability
+matrix](docs/research-report.md) is reproducible from the current source.
+
+## Result semantics
+
+The risk score is a bounded review-priority score, not a probability or an
+exploitability measurement. A finding means “review this capability or pattern,”
+not “this extension is malicious.” Conversely, no static analyzer can prove an
+extension safe.
+
+MVX Audit intentionally does not claim runtime attack success rates. A future
+runtime experiment would require pinned browser builds, loopback-only origins,
+synthetic data, isolated profiles, sandboxing, staged evidence, and a result
+taxonomy that separates `blocked` from `infrastructure_error`. See
+[methodology](docs/methodology.md#runtime-experiments) for that contract.
+
+## Development
 
 ```bash
-# Run comprehensive security test (recommended)
-./run-server-test.sh
-
-# Quick test (1 round per extension)
-./run-server-test.sh quick
-
-# Test specific extension
-npm run test -- --ext cookie-hijacker --mode v2
-
-# Start test server for manual testing
-npm run server
+npm test                 # unit and integration tests
+npm run test:coverage   # built-in Node coverage
+npm run lint            # syntax and repository hygiene checks
+npm run docs:generate   # regenerate the corpus report
+npm run check           # all required checks
+npm audit --omit=dev    # expected: zero dependencies, zero advisories
 ```
 
-##  Malicious Extensions Tested
+Public API:
 
-Our test suite includes 6 different types of malicious extensions, each targeting different attack vectors:
+```js
+import { auditExtension, compareExtensions } from 'mvx-audit';
 
-### 1. **Cookie Hijacker** 
-- **Attack Vector**: Steals cookies from all visited websites
-- **Implementation**: Uses `chrome.cookies.getAll()` API to access browser cookies
-- **MV2 vs MV3**: Both versions can succeed if proper permissions are granted
-- **Files**: `extensions/v2/cookie-hijacker/`, `extensions/v3/cookie-hijacker/`
+const audit = await auditExtension('/path/to/unpacked-extension');
+const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3');
+```
 
-### 2. **Keylogger** ️
-- **Attack Vector**: Captures keystrokes on all web pages
-- **Implementation**: Content script monitors `document.onkeypress` events
-- **MV2 vs MV3**: Identical functionality - content scripts retain full DOM access
-- **Files**: `extensions/v2/keylogger/`, `extensions/v3/keylogger/`
+## Security and responsible use
 
-### 3. **Eval Loader** 
-- **Attack Vector**: Downloads and executes remote JavaScript code
-- **Implementation**: Fetches payload from remote server and uses `eval()` to execute
-- **MV2 vs MV3**: **MV3 blocks this attack** - CSP prevents `unsafe-eval`
-- **Files**: `extensions/v2/eval-loader/`, `extensions/v3/eval-loader/`
+Only analyze extensions you are authorized to inspect. Treat unknown extension
+packages as untrusted input and do not load them into your everyday browser.
+MVX Audit does not execute extension files. Please read [SECURITY.md](SECURITY.md)
+before reporting a sensitive issue and [CONTRIBUTING.md](CONTRIBUTING.md) before
+adding a scenario.
 
-### 4. **DOM XSS Injector** 
-- **Attack Vector**: Injects malicious scripts into web pages
-- **Implementation**: Content script creates and appends `<script>` elements
-- **MV2 vs MV3**: **MV3 blocks this attack** - CSP prevents inline script execution
-- **Files**: `extensions/v2/dom-xss/`, `extensions/v3/dom-xss/`
-
-### 5. **Header Modifier** 
-- **Attack Vector**: Modifies HTTP headers to bypass security policies
-- **Implementation**: 
-  - **MV2**: Uses `webRequest` API to modify headers
-  - **MV3**: Uses `declarativeNetRequest` to remove/modify CSP headers
-- **MV2 vs MV3**: **Partial success in MV3** - Can still modify headers and use HTML event handlers
-- **Files**: `extensions/v2/modify-header/`, `extensions/v3/modify-header/`
-
-### 6. **Message Hijacker** 
-- **Attack Vector**: Intercepts and manipulates postMessage communications
-- **Implementation**: Listens for window messages and responds with sensitive data
-- **MV2 vs MV3**: **MV3 restricts this attack** - Service worker limitations reduce effectiveness
-- **Files**: `extensions/v2/message-hijack/`, `extensions/v3/message-hijack/`
-
-##  Testing Framework
-
-### Server-Based Detection System
-
-Our testing framework uses a novel server-based detection system that monitors actual HTTP requests to determine attack success, providing more accurate results than client-side detection alone.
-
-#### Detection Criteria
-
-| Extension | Detection Method | Success Indicator |
-|-----------|------------------|-------------------|
-| Cookie Hijacker | Server logs | `POST /stolen` with cookie data |
-| Keylogger | Server logs | `POST /stolen` with keystroke data |
-| Eval Loader | Server logs | `GET /payload.js` requests |
-| Header Modifier | Server logs + Page execution | `GET /config` + payload execution |
-| DOM XSS | Page alerts/console | JavaScript alert dialogs |
-| Message Hijacker | Server logs | `GET /test/message-hijack` + data theft |
-
-#### Test Server Endpoints
-
-The automated test server provides:
-- `http://localhost:8000/payload.js` - Malicious JavaScript payload
-- `http://localhost:8000/config` - Configuration for dynamic attacks
-- `http://localhost:8000/stolen` - Data exfiltration endpoint
-- `http://localhost:8000/test/message-hijack` - Message hijacking test page
-
-
-
-##  Disclaimer
-
-This research is conducted for educational and security research purposes only. The malicious extensions included in this repository are proof-of-concept implementations designed to evaluate browser security mechanisms. Do not use these techniques for malicious purposes.
+Licensed under the [MIT License](LICENSE).
 

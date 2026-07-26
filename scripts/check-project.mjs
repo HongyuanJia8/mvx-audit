@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const ROOTS = ['bin', 'src', 'scripts', 'test'];
+const ROOTS = ['bin', 'src', 'scripts', 'support', 'test'];
 const checked = [];
 const errors = [];
 
@@ -40,4 +40,3 @@ if (errors.length > 0) {
 } else {
   process.stdout.write(`Lint passed: ${checked.length} JavaScript files\n`);
 }
-
