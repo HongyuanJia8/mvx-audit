@@ -1,4 +1,5 @@
 export { auditExtension } from './analyzer.js';
+export { unpackCrx } from './archive.js';
 export { compareExtensions } from './compare.js';
 export { loadCatalog, validateCatalog } from './catalog.js';
 export { loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';

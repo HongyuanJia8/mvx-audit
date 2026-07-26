@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { auditExtension } from './analyzer.js';
+import { unpackCrx } from './archive.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
 import { compareExtensions } from './compare.js';
 import { MvxError } from './errors.js';
@@ -22,6 +23,7 @@ Usage:
   mvx sample plan <extension-id> [--format text|json]
   mvx sample fetch <extension-id> --acknowledge-risk [--artifact index]
                    [--quarantine directory] [--max-bytes number]
+  mvx sample unpack <file.crx> --acknowledge-risk [--destination directory]
   mvx --help
 
 Exit codes:
@@ -33,7 +35,7 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = {};
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog', '--artifact', '--quarantine', '--max-bytes']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--destination']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--help' || token === '-h') options.help = true;
@@ -144,16 +146,32 @@ export async function runCli(argv, streams = process) {
     }
 
     if (command === 'sample') {
-      const [action, extensionId] = args;
-      if (!['plan', 'fetch'].includes(action) || args.length !== 2) {
-        throw new MvxError('sample action must be plan or fetch followed by one extension ID', { code: 'INVALID_ARGUMENT' });
+      const [action, target] = args;
+      if (!['plan', 'fetch', 'unpack'].includes(action) || args.length !== 2) {
+        throw new MvxError('sample action must be plan/fetch <extension-id> or unpack <file.crx>', { code: 'INVALID_ARGUMENT' });
       }
       const format = options.format ?? 'text';
       if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported sample format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      if (action === 'unpack') {
+        if (!options.acknowledgeRisk) throw new MvxError('Refusing live malware extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
+        const input = path.resolve(target);
+        const destination = options.destination
+          ? path.resolve(options.destination)
+          : path.join(path.dirname(input), 'unpacked', path.basename(input, path.extname(input)));
+        const result = await unpackCrx(input, destination);
+        await emit(format === 'json' ? json(result) : [
+          `Unpacked quarantined CRX: ${result.destination}`,
+          `CRX version: ${result.crxVersion}`,
+          `Files: ${result.files}`,
+          `Uncompressed bytes: ${result.uncompressedBytes}`,
+          'No extension code was executed.'
+        ].join('\n') + '\n', options.output, streams.stdout);
+        return 0;
+      }
       const { meta } = await loadIntelCatalog();
-      const matches = await lookupIntel(extensionId);
-      if (matches.length === 0) throw new MvxError(`No intelligence record for ${extensionId}`, { code: 'SAMPLE_NOT_AVAILABLE' });
-      const record = matches.find((entry) => entry.extensionId === extensionId.toLowerCase()) ?? matches[0];
+      const matches = await lookupIntel(target);
+      if (matches.length === 0) throw new MvxError(`No intelligence record for ${target}`, { code: 'SAMPLE_NOT_AVAILABLE' });
+      const record = matches.find((entry) => entry.extensionId === target.toLowerCase()) ?? matches[0];
       const plan = planSample(record, meta.sources);
       if (action === 'plan') {
         await emit(format === 'json' ? json(plan) : samplePlanToText(plan), options.output, streams.stdout);

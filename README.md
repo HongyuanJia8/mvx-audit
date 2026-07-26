@@ -64,6 +64,10 @@ node bin/mvx.js sample plan <extension-id>
 
 # Explicit opt-in download to the Git-ignored quarantine
 node bin/mvx.js sample fetch <extension-id> --acknowledge-risk
+
+# Bounded CRX2/CRX3 extraction for static analysis
+node bin/mvx.js sample unpack quarantine/<id>/<sha256>.crx --acknowledge-risk
+node bin/mvx.js audit quarantine/<id>/unpacked/<sha256>
 ```
 
 Use `npm link` if you want the equivalent `mvx` command during local
@@ -114,6 +118,12 @@ Git blob identity, and any provider-reported SHA-256. `sample fetch` is an
 explicit opt-in operation that accepts only allowlisted HTTPS hosts, enforces a
 size cap, verifies the Git content hash, computes the actual SHA-256, and stores
 the file under `quarantine/`. It never unpacks, imports, or executes the CRX.
+
+`sample unpack` is a separate explicit operation. The built-in extractor
+rejects path traversal, links, encryption, unsupported methods, duplicate
+paths, CRC failures, excessive expansion, and archive bombs before exposing an
+unpacked directory to the static auditor. It still does not make live malware
+safe to execute.
 
 ## Result semantics
 

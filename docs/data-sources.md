@@ -64,6 +64,14 @@ requires `--acknowledge-risk` and applies all of the following controls:
 malware and should be handled inside a disposable analysis VM. A successful
 download only proves artifact integrity, not malicious behavior.
 
+`mvx sample unpack` supports CRX2 and CRX3 packages with stored or deflated ZIP
+entries. It validates central/local header consistency, CRC-32, output size,
+compression ratio, entry count, path depth, and destination safety. Zip64,
+multi-disk, encrypted, linked, duplicate, absolute, parent-traversing, and
+unknown-method entries are rejected. Extraction is written to a temporary
+directory and renamed only after every entry passes. No extracted file is
+loaded as code.
+
 ## Additional research sources
 
 - The [`tweb25`](https://github.com/its-not-easy/tweb25) artifact accompanies

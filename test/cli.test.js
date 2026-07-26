@@ -99,3 +99,9 @@ test('CLI looks up threat intelligence by extension ID', async () => {
   assert.equal(records[0].extensionId, 'acmnokigkgihogfbeooklgemindnbine');
   assert.ok(records[0].provenance.length > 0);
 });
+
+test('CLI refuses CRX extraction without explicit risk acknowledgement', async () => {
+  const capture = captureStreams();
+  assert.equal(await runCli(['sample', 'unpack', 'missing.crx'], capture.streams), 2);
+  assert.match(capture.output().stderr, /RISK_ACK_REQUIRED/);
+});
