@@ -1,0 +1,1 @@
+{"manifest_version":2,"name":"MVX broad host fixture (MV2)","version":"1.0.0","permissions":["<all_urls>"],"content_scripts":[{"matches":["<all_urls>"],"js":["content.js"],"all_frames":true}]}

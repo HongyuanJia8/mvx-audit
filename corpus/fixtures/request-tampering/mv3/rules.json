@@ -1,0 +1,2 @@
+[{"id":1,"priority":1,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-MVX-Fixture","operation":"set","value":"synthetic"}]},"condition":{"urlFilter":"||127.0.0.1/","resourceTypes":["xmlhttprequest"]}}]
+

@@ -1,31 +1,50 @@
 {
-  "name": "chrome-manifest-security-mv2-vs-mv3-bypass",
-  "version": "1.0.0",
+  "name": "mvx-audit",
+  "version": "2.0.0",
+  "description": "Deterministic security auditing and MV2-to-MV3 capability comparison for Chrome extensions",
   "type": "module",
-  "description": "Chrome extension vulnerability testing framework",
-  "main": "index.js",
+  "bin": {
+    "mvx": "./bin/mvx.js"
+  },
+  "exports": "./src/index.js",
+  "files": [
+    "bin/",
+    "src/",
+    "corpus/",
+    "docs/",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md"
+  ],
   "scripts": {
-    "server": "node runner/test-server.js",
-    "report": "node runner/generate-report.js",
-    "clean": "rm -rf results/raw/*.csv",
-    "server-test": "node runner/server-based-test.js",
-    "compare": "node runner/compare-results.js"
+    "audit:example": "node ./bin/mvx.js audit ./corpus/fixtures/cookie-access/mv3",
+    "check": "npm run lint && npm test && npm run corpus:validate && npm run docs:check",
+    "corpus:validate": "node ./bin/mvx.js corpus validate",
+    "docs:check": "node ./scripts/generate-report.mjs --check",
+    "docs:generate": "node ./scripts/generate-report.mjs",
+    "lint": "node ./scripts/check-project.mjs",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "chrome-extension",
+    "manifest-v3",
+    "security",
+    "static-analysis",
+    "sarif"
+  ],
+  "author": "Hongyuan Jia and contributors",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass/issues"
   },
-  "homepage": "https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass#readme",
-  "dependencies": {
-    "commander": "^14.0.0",
-    "csv-parse": "^5.6.0",
-    "csv-writer": "^1.6.0",
-    "puppeteer-core": "^19.0.0"
-  }
+  "homepage": "https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass#readme"
 }

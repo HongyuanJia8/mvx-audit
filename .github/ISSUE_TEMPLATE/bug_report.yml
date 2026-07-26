@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible analyzer or CLI defect using synthetic input.
+title: "[bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not attach real credentials, browsing data, or harmful extension packages."
+  - type: input
+    id: version
+    attributes:
+      label: MVX Audit version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Node version and operating system
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal synthetic reproduction
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+

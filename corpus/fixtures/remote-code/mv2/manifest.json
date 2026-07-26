@@ -1,0 +1,1 @@
+{"manifest_version":2,"name":"MVX remote code fixture (MV2)","version":"1.0.0","content_security_policy":"script-src 'self' 'unsafe-eval'; object-src 'self'"}
