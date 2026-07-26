@@ -3,6 +3,27 @@
 All notable changes are documented here. The project follows semantic
 versioning from the 2.0 reset onward.
 
+## 3.0.0 - 2026-07-26
+
+### Added
+
+- Reproducible real-world intelligence for 4,716 unique extension IDs from
+  three pinned, licensed sources, including 504 indexed CRX artifacts.
+- Hash-verified single and bounded batch acquisition into Git-ignored
+  quarantine, with immutable Git blob verification and actual SHA-256.
+- Defensive CRX2/CRX3 extraction and real-sample static triage benchmarking.
+- Remote iframe and sensitive capability-delegation rules derived from real
+  sample validation.
+- Container-only dynamic canary lab and deterministic four-verdict event oracle.
+
+### Security
+
+- Live packages are never committed, installed, or executed by ordinary tests.
+- The optional runner uses a non-root browser, networkless/read-only Docker
+  isolation, synthetic data, denied downloads, and no sandbox-disabling flag.
+- Provider hash/version disagreement is retained as evidence instead of being
+  silently trusted.
+
 ## 2.0.0 - 2026-07-26
 
 ### Added
@@ -25,4 +46,3 @@ versioning from the 2.0 reset onward.
 
 - Project scope is now static capability review. Runtime claims require the
   separate acceptance contract in `docs/methodology.md`.
-

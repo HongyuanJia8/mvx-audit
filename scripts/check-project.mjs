@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ROOTS = ['bin', 'src', 'scripts', 'support', 'test'];
+const ROOTS = ['bin', 'lab', 'src', 'scripts', 'support', 'test'];
 const checked = [];
 const errors = [];
 

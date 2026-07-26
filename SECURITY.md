@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest 2.x release on `main`.
+Security fixes are provided for the latest 3.x release on `main`.
 
 ## Reporting a vulnerability
 
@@ -23,6 +23,14 @@ Still, analyze only material you are authorized to possess. Do not load unknown
 fixtures into a daily-use Chrome profile. Report parser escapes and filesystem
 boundaries must be reviewed whenever a new format or archive reader is added.
 
-Browser automation, public network collection endpoints, sandbox-disabling
-flags, and tests against real user data are outside the accepted project scope.
+The optional sample fetcher writes live CRX files only after explicit risk
+acknowledgement. Quarantine files are not safe merely because their hashes were
+verified. Keep quarantine outside backups and shared folders, never open it
+with a daily-use browser, and delete it according to your organization's
+malware-handling policy.
 
+Live browser analysis is accepted only through the documented container lab:
+no public network, no host browser profile, no real user data, no writable
+sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium
+sandbox cannot start under those controls, report `inconclusive`; weakening a
+boundary to obtain a result is a security defect.

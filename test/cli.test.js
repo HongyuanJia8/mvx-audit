@@ -41,7 +41,7 @@ test('CLI help documents stable exit codes', async () => {
 test('CLI emits valid SARIF and version output', async () => {
   const versionCapture = captureStreams();
   assert.equal(await runCli(['--version'], versionCapture.streams), 0);
-  assert.match(versionCapture.output().stdout, /^2\.0\.0/);
+  assert.match(versionCapture.output().stdout, /^3\.0\.0/);
 
   const sarifCapture = captureStreams();
   assert.equal(await runCli(['audit', path.join(ROOT, 'cookie-access/mv3'), '--format', 'sarif'], sarifCapture.streams), 0);
@@ -80,4 +80,56 @@ test('CLI returns input error when a supported source exceeds the hard limit', a
   const code = await runCli(['audit', temp], capture.streams);
   assert.equal(code, 2);
   assert.match(capture.output().stderr, /SCAN_LIMIT.*large\.js/);
+});
+
+test('CLI reports and validates the real-world intelligence snapshot', async () => {
+  const stats = captureStreams();
+  assert.equal(await runCli(['intel', 'stats'], stats.streams), 0);
+  assert.match(stats.output().stdout, /Unique extension IDs: 4716/);
+  const validation = captureStreams();
+  assert.equal(await runCli(['intel', 'validate', '--format', 'json'], validation.streams), 0);
+  assert.equal(JSON.parse(validation.output().stdout).valid, true);
+});
+
+test('CLI looks up threat intelligence by extension ID', async () => {
+  const capture = captureStreams();
+  const code = await runCli(['intel', 'lookup', 'acmnokigkgihogfbeooklgemindnbine', '--format', 'json'], capture.streams);
+  const records = JSON.parse(capture.output().stdout);
+  assert.equal(code, 0);
+  assert.equal(records[0].extensionId, 'acmnokigkgihogfbeooklgemindnbine');
+  assert.ok(records[0].provenance.length > 0);
+});
+
+test('CLI refuses CRX extraction without explicit risk acknowledgement', async () => {
+  const capture = captureStreams();
+  assert.equal(await runCli(['sample', 'unpack', 'missing.crx'], capture.streams), 2);
+  assert.match(capture.output().stderr, /RISK_ACK_REQUIRED/);
+});
+
+test('CLI evaluates recorded lab events without running extension code', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-cli-lab-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const eventsPath = path.join(temp, 'events.jsonl');
+  await writeFile(eventsPath, [
+    JSON.stringify({ schemaVersion: 1, timestamp: '2026-01-02T03:04:05.000Z', type: 'lab.completed', data: {} }),
+    ''
+  ].join('\n'), 'utf8');
+  const capture = captureStreams();
+  const code = await runCli([
+    'lab', 'evaluate', 'lab/scenarios/credential-exfiltration.json', eventsPath, '--format', 'json'
+  ], capture.streams);
+  const report = JSON.parse(capture.output().stdout);
+  assert.equal(code, 0);
+  assert.equal(report.verdict, 'no_trigger_observed');
+  assert.equal(report.summary.completed, true);
+});
+
+test('CLI creates a bounded real-sample batch plan without downloading', async () => {
+  const capture = captureStreams();
+  const code = await runCli(['sample', 'plan-many', '--limit', '3', '--max-total-bytes', '1000000', '--format', 'json'], capture.streams);
+  const plan = JSON.parse(capture.output().stdout);
+  assert.equal(code, 0);
+  assert.ok(plan.selected > 0 && plan.selected <= 3);
+  assert.ok(plan.totalBytes <= 1_000_000);
+  assert.equal(plan.selections[0].labels.includes('behavior-confirmed-malicious'), true);
 });

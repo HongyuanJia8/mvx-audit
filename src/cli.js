@@ -2,19 +2,37 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { auditExtension } from './analyzer.js';
+import { unpackCrx } from './archive.js';
+import { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
 import { compareExtensions } from './compare.js';
 import { MvxError } from './errors.js';
+import { intelRecordToText, intelStatsToText, loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
+import { evaluateLabFiles, labReportToText } from './lab.js';
 import { SEVERITIES } from './model.js';
+import { fetchSample, fetchSampleBatch, planSample, planSampleBatch, sampleBatchPlanToText, samplePlanToText } from './quarantine.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
 
-const VERSION = '2.0.0';
+const VERSION = '3.0.0';
 const HELP = `mvx-audit ${VERSION}
 
 Usage:
   mvx audit <extension> [--format text|json|sarif] [--output file] [--fail-on severity]
   mvx compare <before> <after> [--format markdown|json] [--output file]
   mvx corpus [list|validate] [--format text|json] [--catalog file]
+  mvx intel stats|validate [--format text|json]
+  mvx intel lookup <extension-id|sha256> [--format text|json]
+  mvx sample plan <extension-id> [--format text|json]
+  mvx sample fetch <extension-id> --acknowledge-risk [--artifact index]
+                   [--quarantine directory] [--max-bytes number]
+  mvx sample plan-many [--limit number] [--label label] [--max-total-bytes number]
+  mvx sample fetch-many --acknowledge-risk [--limit number] [--label label]
+                        [--quarantine directory] [--max-bytes number]
+                        [--max-total-bytes number]
+  mvx sample unpack <file.crx> --acknowledge-risk [--destination directory]
+  mvx lab evaluate <scenario.json> <events.jsonl> [--format text|json]
+  mvx benchmark static <quarantine> --acknowledge-risk [--label label]
+                       [--limit number] [--threshold severity] [--format text|json]
   mvx --help
 
 Exit codes:
@@ -26,11 +44,12 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = {};
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--help' || token === '-h') options.help = true;
     else if (token === '--version' || token === '-v') options.version = true;
+    else if (token === '--acknowledge-risk') options.acknowledgeRisk = true;
     else if (valueOptions.has(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError(`${token} requires a value`, { code: 'INVALID_ARGUMENT' });
@@ -109,6 +128,155 @@ export async function runCli(argv, streams = process) {
       const { catalog } = await loadCatalog(options.catalog);
       await emit(options.format === 'json' ? json(catalog) : catalogToText(catalog), options.output, streams.stdout);
       return 0;
+    }
+
+    if (command === 'intel') {
+      const action = args[0] ?? 'stats';
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported intel format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      if (action === 'stats' && args.length <= 1) {
+        const { meta } = await loadIntelCatalog();
+        await emit(format === 'json' ? json(meta) : intelStatsToText(meta), options.output, streams.stdout);
+        return 0;
+      }
+      if (action === 'validate' && args.length === 1) {
+        const validation = await validateIntelCatalog();
+        await emit(format === 'json' ? json(validation) : validation.valid
+          ? `Intelligence valid: ${validation.summary.records} IDs / ${validation.summary.artifacts} CRX artifacts indexed\n`
+          : `Intelligence invalid:\n${validation.errors.map((error) => `- ${error}`).join('\n')}\n`, options.output, streams.stdout);
+        return validation.valid ? 0 : 1;
+      }
+      if (action === 'lookup' && args.length === 2) {
+        const records = await lookupIntel(args[1]);
+        await emit(format === 'json' ? json(records) : intelRecordToText(records, args[1]), options.output, streams.stdout);
+        return 0;
+      }
+      throw new MvxError('intel action must be stats, validate, or lookup <extension-id|sha256>', { code: 'INVALID_ARGUMENT' });
+    }
+
+    if (command === 'sample') {
+      const [action, target] = args;
+      if (['plan-many', 'fetch-many'].includes(action)) {
+        if (args.length !== 1) throw new MvxError(`sample ${action} does not accept a target`, { code: 'INVALID_ARGUMENT' });
+        const format = options.format ?? 'text';
+        if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported sample format: ${format}`, { code: 'INVALID_ARGUMENT' });
+        const parseInteger = (value, name) => {
+          if (value === undefined) return undefined;
+          const parsed = Number.parseInt(value, 10);
+          if (!Number.isSafeInteger(parsed) || String(parsed) !== value || parsed <= 0) throw new MvxError(`${name} must be a positive integer`, { code: 'INVALID_ARGUMENT' });
+          return parsed;
+        };
+        const { meta, records } = await loadIntelCatalog();
+        const batchOptions = {
+          limit: parseInteger(options.limit, '--limit'),
+          maxBytes: parseInteger(options.maxBytes, '--max-bytes'),
+          maxTotalBytes: parseInteger(options.maxTotalBytes, '--max-total-bytes'),
+          label: options.label
+        };
+        if (action === 'plan-many') {
+          const plan = planSampleBatch(records, meta.sources, batchOptions);
+          await emit(format === 'json' ? json(plan) : sampleBatchPlanToText(plan), options.output, streams.stdout);
+          return 0;
+        }
+        const result = await fetchSampleBatch({
+          records,
+          sources: meta.sources,
+          quarantineDir: options.quarantine,
+          acknowledgeRisk: options.acknowledgeRisk,
+          ...batchOptions
+        });
+        await emit(format === 'json' ? json(result) : [
+          `Batch fetched: ${result.fetched.length}/${result.plan.selected}`,
+          `Failures: ${result.failures.length}`,
+          `Pinned bytes: ${result.plan.totalBytes}`,
+          'Samples remain packed in the ignored quarantine directory and were not executed.'
+        ].join('\n') + '\n', options.output, streams.stdout);
+        return result.complete ? 0 : 1;
+      }
+      if (!['plan', 'fetch', 'unpack'].includes(action) || args.length !== 2) {
+        throw new MvxError('sample action must be plan/fetch <extension-id>, plan-many/fetch-many, or unpack <file.crx>', { code: 'INVALID_ARGUMENT' });
+      }
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported sample format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      if (action === 'unpack') {
+        if (!options.acknowledgeRisk) throw new MvxError('Refusing live malware extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
+        const input = path.resolve(target);
+        const destination = options.destination
+          ? path.resolve(options.destination)
+          : path.join(path.dirname(input), 'unpacked', path.basename(input, path.extname(input)));
+        const result = await unpackCrx(input, destination);
+        await emit(format === 'json' ? json(result) : [
+          `Unpacked quarantined CRX: ${result.destination}`,
+          `CRX version: ${result.crxVersion}`,
+          `Files: ${result.files}`,
+          `Uncompressed bytes: ${result.uncompressedBytes}`,
+          'No extension code was executed.'
+        ].join('\n') + '\n', options.output, streams.stdout);
+        return 0;
+      }
+      const { meta } = await loadIntelCatalog();
+      const matches = await lookupIntel(target);
+      if (matches.length === 0) throw new MvxError(`No intelligence record for ${target}`, { code: 'SAMPLE_NOT_AVAILABLE' });
+      const record = matches.find((entry) => entry.extensionId === target.toLowerCase()) ?? matches[0];
+      const plan = planSample(record, meta.sources);
+      if (action === 'plan') {
+        await emit(format === 'json' ? json(plan) : samplePlanToText(plan), options.output, streams.stdout);
+        return 0;
+      }
+      const artifactIndex = options.artifact === undefined ? 0 : Number.parseInt(options.artifact, 10);
+      const maxBytes = options.maxBytes === undefined ? undefined : Number.parseInt(options.maxBytes, 10);
+      if (!Number.isSafeInteger(artifactIndex) || String(artifactIndex) !== String(options.artifact ?? '0')) {
+        throw new MvxError('--artifact must be a non-negative integer', { code: 'INVALID_ARGUMENT' });
+      }
+      if (artifactIndex < 0) throw new MvxError('--artifact must be a non-negative integer', { code: 'INVALID_ARGUMENT' });
+      if (options.maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || String(maxBytes) !== options.maxBytes)) {
+        throw new MvxError('--max-bytes must be a positive integer', { code: 'INVALID_ARGUMENT' });
+      }
+      const result = await fetchSample({
+        record,
+        sources: meta.sources,
+        artifactIndex,
+        quarantineDir: options.quarantine,
+        ...(maxBytes === undefined ? {} : { maxBytes }),
+        acknowledgeRisk: options.acknowledgeRisk
+      });
+      await emit(format === 'json' ? json(result) : [
+        `${result.cached ? 'Verified cached' : 'Fetched'} quarantined sample: ${result.path}`,
+        `SHA-256: ${result.sha256}`,
+        ...(result.reportedSha256 ? [`Reported SHA-256: ${result.reportedSha256} (${result.reportedSha256Match ? 'match' : 'VERSION MISMATCH'})`] : []),
+        `Bytes: ${result.bytes}`,
+        'The sample was not unpacked, loaded, or executed.'
+      ].join('\n') + '\n', options.output, streams.stdout);
+      return 0;
+    }
+
+    if (command === 'lab') {
+      if (args.length !== 3 || args[0] !== 'evaluate') {
+        throw new MvxError('lab action must be evaluate <scenario.json> <events.jsonl>', { code: 'INVALID_ARGUMENT' });
+      }
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported lab format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      const report = await evaluateLabFiles(args[1], args[2]);
+      await emit(format === 'json' ? json(report) : labReportToText(report), options.output, streams.stdout);
+      return report.contained ? 0 : 1;
+    }
+
+    if (command === 'benchmark') {
+      if (args.length !== 2 || args[0] !== 'static') throw new MvxError('benchmark action must be static <quarantine>', { code: 'INVALID_ARGUMENT' });
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported benchmark format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      let limit;
+      if (options.limit !== undefined) {
+        limit = Number.parseInt(options.limit, 10);
+        if (!Number.isSafeInteger(limit) || String(limit) !== options.limit || limit <= 0) throw new MvxError('--limit must be a positive integer', { code: 'INVALID_ARGUMENT' });
+      }
+      const { records } = await loadIntelCatalog();
+      const report = await runStaticBenchmark({
+        quarantineDir: args[1], records, label: options.label, limit,
+        threshold: options.threshold, acknowledgeRisk: options.acknowledgeRisk
+      });
+      await emit(format === 'json' ? json(report) : staticBenchmarkToText(report), options.output, streams.stdout);
+      return report.summary.failures === 0 ? 0 : 1;
     }
 
     throw new MvxError(`Unknown command: ${command}`, { code: 'INVALID_ARGUMENT' });

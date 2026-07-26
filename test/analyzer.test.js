@@ -188,3 +188,31 @@ test('packaged source inside vendor directories is not skipped', async (t) => {
   const result = await auditExtension(temp);
   assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
 });
+
+test('remote framed UI and sensitive iframe delegation are detected', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-remote-frame-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, {
+    manifest_version: 3,
+    name: 'Remote sidebar fixture',
+    version: '1.0.0',
+    side_panel: { default_path: 'sidepanel.html' }
+  }, {
+    'sidepanel.html': '<iframe src="https://remote.example.invalid/chat" allow="clipboard-read; clipboard-write"></iframe>\n'
+  });
+  const result = await auditExtension(temp);
+  assert.deepEqual(result.findings.map((finding) => finding.id), ['MVX211', 'MVX212']);
+  assert.equal(result.findings[0].evidence[0].file, 'sidepanel.html');
+});
+
+test('packaged iframe and ordinary remote image do not trigger remote UI rules', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-local-frame-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, { manifest_version: 3, name: 'Local frame fixture', version: '1.0.0' }, {
+    'page.html': '<iframe src="local.html" sandbox="allow-scripts"></iframe><img src="https://cdn.example.invalid/logo.png">\n',
+    'local.html': '<p>packaged</p>\n'
+  });
+  const ids = new Set((await auditExtension(temp)).findings.map((finding) => finding.id));
+  assert.equal(ids.has('MVX211'), false);
+  assert.equal(ids.has('MVX212'), false);
+});

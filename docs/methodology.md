@@ -2,10 +2,12 @@
 
 ## Scope
 
-MVX Audit performs deterministic static review of an unpacked Chrome extension.
+MVX Audit primarily performs deterministic static review of an unpacked Chrome extension.
 It reads `manifest.json`, supported text source files, and declarative rule JSON.
-It does not execute extension code, launch a browser, resolve remote resources,
-or infer author intent.
+Normal audit, corpus, intelligence, acquisition, extraction, and static
+benchmark commands do not execute extension code, launch a browser, resolve
+sample-discovered resources, or infer author intent. The separately gated
+container lab is the only live-execution path.
 
 The analyzer answers two practical questions:
 
@@ -94,20 +96,27 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 
 ## Runtime experiments
 
-Runtime MV2/MV3 research is intentionally outside version 2.0. Any future
-runner must satisfy all of these requirements before its results are accepted:
+Version 3.0 includes an experimental container-only canary runner. Accepted
+runtime evidence must satisfy all of these requirements:
 
 1. Use pinned browser artifacts with recorded versions and SHA-256 hashes.
 2. Separate manifest version from browser version as independent variables.
 3. Keep the browser sandbox enabled and use a fresh temporary profile.
-4. Bind test servers to `127.0.0.1` on an operating-system-assigned port.
-5. Block non-loopback egress and use only synthetic cookies, keystrokes, and
+4. Provide the test origin virtually through CDP without opening a host port.
+5. Block all container egress and use only synthetic cookies, keystrokes, and
    unique assertion nonces.
 6. Record `precondition`, `trigger`, `capability_invoked`, and `effect_observed`
    as separate evidence stages.
-7. Use `succeeded`, `blocked`, `inconclusive`, `infrastructure_error`, and
-   `skipped`; never count infrastructure errors as blocked attacks.
+7. Use `confirmed_attack`, `suspicious_activity`, `no_trigger_observed`, and
+   `inconclusive`; never count collection errors as blocked attacks.
 8. Produce immutable run metadata containing git SHA, scenario hash, browser,
    operating system, Node version, configuration, seed, timings, and evidence.
 
-Until such a runner exists, this project makes no measured exploit-rate claims.
+The checked-in runner enforces networkless Docker isolation, a non-root browser,
+read-only sample and scenario mounts, an ephemeral profile, resource limits,
+and no sandbox-disabling Chromium flag. The evaluator is deterministic and can
+also process externally captured JSONL. See [dynamic analysis](dynamic-analysis.md).
+
+This remains an experimental behavioral observation tool, not an exploit-rate
+benchmark. Dormant C2, environment gating, timing, region checks, and
+anti-analysis behavior can all produce `no_trigger_observed`.

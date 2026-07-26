@@ -4,15 +4,15 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
 
-MVX Audit is a deterministic, dependency-free static security auditor for
-unpacked Chrome extensions. It explains risky capabilities, detects selected
-source patterns, compares an MV2 extension with its MV3 migration, and produces
-human-readable, JSON, or SARIF output for CI.
+MVX Audit is a deterministic, dependency-free security research toolkit for
+Chrome extensions. It combines static auditing, MV2/MV3 capability comparison,
+reproducible real-world threat intelligence, hash-verified quarantine,
+real-sample triage benchmarking, and an optional networkless dynamic canary lab.
 
-The repository also contains a curated corpus of **17 threat scenarios and 34
-paired MV2/MV3 fixtures**. Fixtures are synthetic and non-executing: the tool
-reads them as text and never starts Chrome, visits a website, or collects user
-data.
+The repository combines a curated corpus of **17 threat scenarios and 34
+paired MV2/MV3 fixtures** with a reproducible real-world intelligence snapshot
+covering **4,716 unique extension IDs** and **504 indexed non-empty CRX
+artifacts**. Live packages are never bundled or fetched by normal commands.
 
 ## Why this project exists
 
@@ -53,6 +53,28 @@ node bin/mvx.js compare /path/to/mv2 /path/to/mv3 \
 # Explore and validate the built-in research corpus
 node bin/mvx.js corpus list
 npm run corpus:validate
+
+# Query real-world threat intelligence without downloading malware
+node bin/mvx.js intel stats
+node bin/mvx.js intel lookup <extension-id-or-sha256>
+npm run intel:validate
+
+# Inspect a live-artifact plan; this does not download anything
+node bin/mvx.js sample plan <extension-id>
+node bin/mvx.js sample plan-many --label behavior-confirmed-malicious --limit 100
+
+# Explicit opt-in download to the Git-ignored quarantine
+node bin/mvx.js sample fetch <extension-id> --acknowledge-risk
+node bin/mvx.js sample fetch-many --acknowledge-risk \
+  --label behavior-confirmed-malicious --limit 100 --max-total-bytes 250000000
+
+# Bounded CRX2/CRX3 extraction for static analysis
+node bin/mvx.js sample unpack quarantine/<id>/<sha256>.crx --acknowledge-risk
+node bin/mvx.js audit quarantine/<id>/unpacked/<sha256>
+
+# Benchmark quarantined real samples without executing extension code
+node bin/mvx.js benchmark static quarantine --acknowledge-risk \
+  --label behavior-confirmed-malicious --threshold high --format json
 ```
 
 Use `npm link` if you want the equivalent `mvx` command during local
@@ -69,6 +91,8 @@ development.
 - Source indicators for dynamic evaluation, HTML injection, wildcard
   messaging, keystroke observation, cookie enumeration, insecure transport,
   downloads, clipboard reads, and unvalidated privileged message bridges.
+- Remote iframe-based extension UI and sensitive capability delegation to
+  framed origins.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
   2.1.0 suitable for GitHub code scanning.
 - Bounded scanning of all packaged source (including vendored directories) that
@@ -78,18 +102,43 @@ development.
 See the complete [rule reference](docs/rule-reference.md) and
 [methodology](docs/methodology.md).
 
-## Corpus, not malware collection
+## Synthetic corpus and real-world intelligence
 
 The old repository mixed copied proof-of-concept extensions, real public
 endpoints, different browser versions, and hundreds of duplicate CSV files.
 Those artifacts could not support a scientific MV2/MV3 conclusion and created
 an unacceptable safety risk. They were removed in version 2.0.
 
-The replacement [corpus](corpus/README.md) covers 17 distinct capability and
+The replacement [synthetic corpus](corpus/README.md) covers 17 distinct capability and
 implementation patterns with a single machine-validated registry. Every entry
 has paired manifests, an explicit MV3 effect classification, expected analyzer
 findings, and links to primary Chrome documentation. The generated [capability
 matrix](docs/research-report.md) is reproducible from the current source.
+
+The separate [real-world intelligence catalog](intel/README.md) de-duplicates
+three pinned open sources into 4,716 extension IDs. It retains provenance,
+label type, verification level, store status, threat categories, SHA-256 values,
+and external artifact availability. “Reported,” “policy violation,” and
+“confirmed malware” remain separate states. See the [data-source and ground
+truth methodology](docs/data-sources.md).
+
+For indexed artifacts, `sample plan` shows the immutable source revision, size,
+Git blob identity, and any provider-reported SHA-256. `sample fetch` is an
+explicit opt-in operation that accepts only allowlisted HTTPS hosts, enforces a
+size cap, verifies the Git content hash, computes the actual SHA-256, and stores
+the file under `quarantine/`. It never unpacks, imports, or executes the CRX.
+
+`sample unpack` is a separate explicit operation. The built-in extractor
+rejects path traversal, links, encryption, unsupported methods, duplicate
+paths, CRC failures, excessive expansion, and archive bombs before exposing an
+unpacked directory to the static auditor. It still does not make live malware
+safe to execute.
+
+`sample plan-many` and `sample fetch-many` add deterministic prioritization,
+count limits, per-artifact limits, a total byte budget, and isolated failure
+reporting. `benchmark static` safely unpacks quarantined CRXs, audits them, and
+reports a **review-trigger rate**. It deliberately does not call that number
+malware-classification accuracy because extension-ID labels can span versions.
 
 ## Result semantics
 
@@ -98,11 +147,12 @@ exploitability measurement. A finding means “review this capability or pattern
 not “this extension is malicious.” Conversely, no static analyzer can prove an
 extension safe.
 
-MVX Audit intentionally does not claim runtime attack success rates. A future
-runtime experiment would require pinned browser builds, loopback-only origins,
-synthetic data, isolated profiles, sandboxing, staged evidence, and a result
-taxonomy that separates `blocked` from `infrastructure_error`. See
-[methodology](docs/methodology.md#runtime-experiments) for that contract.
+The optional [dynamic canary lab](docs/dynamic-analysis.md) runs only inside a
+read-only, non-root Docker container with `--network none`. It serves a virtual
+HTTPS canary page through Chrome DevTools Protocol, blocks and records external
+requests, denies downloads, and classifies exact canary leakage or protected
+state changes as `confirmed_attack`. Ordinary CI tests the event oracle but
+never executes a live extension. `no_trigger_observed` is not a benign verdict.
 
 ## Development
 
@@ -111,6 +161,9 @@ npm test                 # unit and integration tests
 npm run test:coverage   # built-in Node coverage
 npm run lint            # syntax and repository hygiene checks
 npm run docs:generate   # regenerate the corpus report
+npm run intel:validate  # validate real-world intelligence offline
+npm run intel:check     # reproduce it from pinned upstream sources
+npm run lab:build       # build the optional isolated Chromium image
 npm run check           # all required checks
 npm audit --omit=dev    # expected: zero dependencies, zero advisories
 ```
