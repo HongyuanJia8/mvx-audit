@@ -2,10 +2,11 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { auditExtension } from '../src/analyzer.js';
 import { loadCatalog } from '../src/catalog.js';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = path.join(ROOT, 'docs/research-report.md');
 const check = process.argv.includes('--check');
 const { catalog, root: catalogRoot } = await loadCatalog();
@@ -50,4 +51,3 @@ if (check) {
   await writeFile(OUTPUT, generated, 'utf8');
   process.stdout.write(`Wrote ${path.relative(ROOT, OUTPUT)}\n`);
 }
-

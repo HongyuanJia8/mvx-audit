@@ -9,7 +9,7 @@ const RULES = [
   },
   {
     id: 'MVX202', title: 'Remote script source assignment', severity: 'critical', category: 'code-execution',
-    pattern: /\.src\s*=\s*[`'"]https?:\/\//,
+    pattern: /createElement\s*\(\s*[`'"]script[`'"]\s*\)[\s\S]{0,500}\.src\s*=\s*[`'"]https?:\/\//,
     description: 'Code assigns an HTTP(S) URL to a resource source, which may load remotely controlled script.',
     remediation: 'Bundle executable code with the extension and treat remote responses as data only.', references: [REFERENCES.remoteCode]
   },
@@ -66,18 +66,34 @@ function locate(content, pattern) {
   return { line, snippet: lineText.slice(0, 240) };
 }
 
+function locateAll(content, pattern) {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const globalPattern = new RegExp(pattern.source, flags);
+  const matches = [];
+  for (const match of content.matchAll(globalPattern)) {
+    const prefix = content.slice(0, match.index);
+    const line = prefix.split('\n').length;
+    const lineText = content.split('\n')[line - 1]?.trim() ?? match[0];
+    matches.push({ line, snippet: lineText.slice(0, 240) });
+    if (matches.length >= 20) break;
+  }
+  return matches;
+}
+
 export function analyzeSources(sources) {
   const findings = [];
+  const executableSources = sources.filter((source) => !source.path.endsWith('.json'));
   for (const rule of RULES) {
     const matches = [];
-    for (const source of sources) {
-      const location = locate(source.content, rule.pattern);
-      if (location) matches.push({ file: source.path, ...location });
+    for (const source of executableSources) {
+      const locations = locateAll(source.content, rule.pattern);
+      matches.push(...locations.map((location) => ({ file: source.path, ...location })));
+      if (matches.length >= 20) break;
     }
     if (matches.length > 0) findings.push(createFinding(rule, matches.slice(0, 20)));
   }
 
-  for (const source of sources) {
+  for (const source of executableSources) {
     const listens = /chrome\.runtime\.onMessage(?:External)?\.addListener/.test(source.content);
     const privileged = /chrome\.(?:cookies|debugger|downloads|history|management|nativeMessaging|proxy|tabs)\./.test(source.content);
     const validatesSender = /sender\.(?:id|origin|url)/.test(source.content);
@@ -94,4 +110,3 @@ export function analyzeSources(sources) {
   }
   return findings;
 }
-

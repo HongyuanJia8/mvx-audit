@@ -68,6 +68,11 @@ export function comparisonToMarkdown(comparison) {
     ...(delta.resolvedFindings.length ? delta.resolvedFindings.map((finding) => `- ${finding.id}: ${finding.title}`) : ['- None']), '',
     '## Introduced findings', '',
     ...(delta.introducedFindings.length ? delta.introducedFindings.map((finding) => `- ${finding.id}: ${finding.title}`) : ['- None']), '',
+    '## Evidence changes', '',
+    `- Added locations: ${delta.evidenceAdded.length}`,
+    `- Removed locations: ${delta.evidenceRemoved.length}`,
+    `- Total occurrence delta: ${delta.evidenceCount.delta >= 0 ? '+' : ''}${delta.evidenceCount.delta}`,
+    ...(delta.evidenceAdded.length ? ['', 'New evidence:', ...delta.evidenceAdded.map((item) => `- ${item.findingId}: ${item.evidence.file}${item.evidence.line ? `:${item.evidence.line}` : ''}`)] : []), '',
     '## Permission changes', '',
     `- Added: ${delta.permissionsAdded.join(', ') || 'none'}`,
     `- Removed: ${delta.permissionsRemoved.join(', ') || 'none'}`,
@@ -77,4 +82,3 @@ export function comparisonToMarkdown(comparison) {
   ];
   return lines.join('\n');
 }
-

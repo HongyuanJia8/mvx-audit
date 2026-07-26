@@ -71,8 +71,9 @@ development.
   downloads, clipboard reads, and unvalidated privileged message bridges.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
   2.1.0 suitable for GitHub code scanning.
-- Bounded scanning that ignores dependencies, refuses a symlinked root, skips
-  nested symlinks, and fails closed on file or byte limits.
+- Bounded scanning of all packaged source (including vendored directories) that
+  refuses a symlinked root, skips nested symlinks, and fails closed on file or
+  byte limits.
 
 See the complete [rule reference](docs/rule-reference.md) and
 [methodology](docs/methodology.md).
@@ -132,4 +133,3 @@ before reporting a sensitive issue and [CONTRIBUTING.md](CONTRIBUTING.md) before
 adding a scenario.
 
 Licensed under the [MIT License](LICENSE).
-

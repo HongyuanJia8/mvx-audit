@@ -98,6 +98,7 @@ export async function runCli(argv, streams = process) {
     if (command === 'corpus') {
       const action = args[0] ?? 'list';
       if (args.length > 1 || !['list', 'validate'].includes(action)) throw new MvxError('corpus action must be list or validate', { code: 'INVALID_ARGUMENT' });
+      if (options.format && !['text', 'json'].includes(options.format)) throw new MvxError(`Unsupported corpus format: ${options.format}`, { code: 'INVALID_ARGUMENT' });
       if (action === 'validate') {
         const validation = await validateCatalog(options.catalog);
         await emit(options.format === 'json' ? json(validation) : validation.valid
@@ -119,4 +120,3 @@ export async function runCli(argv, streams = process) {
 }
 
 export { HELP, VERSION };
-

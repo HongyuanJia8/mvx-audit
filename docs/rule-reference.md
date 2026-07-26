@@ -9,6 +9,7 @@ within the 2.x release line.
 | ID | Default severity | Detects |
 |---|---|---|
 | MVX001 | Critical | Missing or unsupported `manifest_version`. |
+| MVX002 | High | Manifest references an absent file or unsafe parent path. |
 | MVX101 | High | Global host patterns such as `<all_urls>`. |
 | MVX102 | Varies | Sensitive API permissions; one fingerprint per permission. |
 | MVX103 | Critical | `cookies` combined with global host access. |
@@ -44,4 +45,3 @@ Version 2.0 does not support inline suppression. Security findings should remain
 visible in machine output; projects can apply their own reviewed allowlist by
 rule fingerprint outside the scanned extension. A future suppression format
 must include justification, owner, and expiry rather than a bare ignore comment.
-

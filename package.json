@@ -10,8 +10,12 @@
   "files": [
     "bin/",
     "src/",
+    "corpus/",
+    "docs/",
+    "CHANGELOG.md",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
   "scripts": {
     "audit:example": "node ./bin/mvx.js audit ./corpus/fixtures/cookie-access/mv3",

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { loadCatalog, validateCatalog } from '../src/catalog.js';
 
@@ -19,3 +22,16 @@ test('catalog identifiers and fixture paths are unique', async () => {
   assert.ok(new Set(catalog.scenarios.map((scenario) => scenario.category)).size >= 7);
 });
 
+test('malformed catalog structure returns validation errors instead of throwing', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-catalog-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const catalogPath = path.join(temp, 'catalog.json');
+  await writeFile(catalogPath, 'null\n', 'utf8');
+  let validation = await validateCatalog(catalogPath);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors[0], /JSON object/);
+  await writeFile(catalogPath, '{"schemaVersion":1,"scenarios":{}}\n', 'utf8');
+  validation = await validateCatalog(catalogPath);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors[0], /non-empty array/);
+});

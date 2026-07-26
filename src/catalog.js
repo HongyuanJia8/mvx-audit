@@ -27,8 +27,23 @@ export async function loadCatalog(catalogPath = DEFAULT_CATALOG_PATH) {
 export async function validateCatalog(catalogPath = DEFAULT_CATALOG_PATH) {
   const { catalog, path: absolute, root } = await loadCatalog(catalogPath);
   const errors = [];
+  const result = () => ({
+    valid: errors.length === 0,
+    errors,
+    path: absolute,
+    scenarios: Array.isArray(catalog?.scenarios) ? catalog.scenarios.length : 0,
+    fixturePairs: Array.isArray(catalog?.scenarios) ? catalog.scenarios.length : 0
+  });
+  if (!catalog || Array.isArray(catalog) || typeof catalog !== 'object') {
+    errors.push('catalog must be a JSON object');
+    return result();
+  }
   if (catalog.schemaVersion !== 1) errors.push('schemaVersion must equal 1');
-  if (!Array.isArray(catalog.scenarios) || catalog.scenarios.length === 0) errors.push('scenarios must be a non-empty array');
+  if (!Array.isArray(catalog.scenarios)) {
+    errors.push('scenarios must be a non-empty array');
+    return result();
+  }
+  if (catalog.scenarios.length === 0) errors.push('scenarios must be a non-empty array');
   const ids = new Set();
 
   for (const [index, scenario] of (catalog.scenarios ?? []).entries()) {
@@ -62,13 +77,7 @@ export async function validateCatalog(catalogPath = DEFAULT_CATALOG_PATH) {
     }
   }
 
-  return {
-    valid: errors.length === 0,
-    errors,
-    path: absolute,
-    scenarios: catalog.scenarios?.length ?? 0,
-    fixturePairs: catalog.scenarios?.length ?? 0
-  };
+  return result();
 }
 
 export function catalogToText(catalog) {
@@ -77,4 +86,3 @@ export function catalogToText(catalog) {
   const line = (row) => row.map((value, index) => value.padEnd(widths[index])).join('  ').trimEnd();
   return `${line(['ID', 'CATEGORY', 'MV3 EFFECT', 'TITLE'])}\n${line(widths.map((width) => '-'.repeat(width)))}\n${rows.map(line).join('\n')}\n`;
 }
-

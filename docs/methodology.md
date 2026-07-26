@@ -45,6 +45,7 @@ rate, Chrome Web Store policy status, or proof of malicious behavior.
 `mvx compare` runs the same audit on both inputs and reports:
 
 - introduced and resolved rule fingerprints;
+- added and removed evidence locations, plus occurrence-count delta;
 - permission and host additions/removals;
 - before/after scores; and
 - an explicit reminder that migration syntax is not the same as capability
@@ -71,10 +72,11 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 
 - The root must be a real directory or a real `manifest.json`, not a symlink.
 - Nested symlinks are skipped and reported.
-- `.git`, `node_modules`, `coverage`, `dist`, and `vendor` are not traversed.
-- Defaults: 5,000 visited files, 2 MB per text file, and 50 MB total scanned
-  source. Exceeding a hard limit fails the audit instead of silently truncating
-  the extension.
+- `.git` metadata is not traversed. Packaged dependency, vendor, and `dist`
+  directories are scanned because Chrome can execute code from them.
+- Defaults: 5,000 visited files, 10,000 filesystem entries, 64 directory
+  levels, 2 MB per text file, and 50 MB total scanned source. Exceeding a hard
+  limit fails the audit instead of silently truncating the extension.
 - Binary files are not parsed. Supported text extensions are JS-family files,
   HTML, and JSON.
 
@@ -109,4 +111,3 @@ runner must satisfy all of these requirements before its results are accepted:
    operating system, Node version, configuration, seed, timings, and evidence.
 
 Until such a runner exists, this project makes no measured exploit-rate claims.
-

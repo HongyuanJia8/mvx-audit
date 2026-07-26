@@ -21,6 +21,28 @@ function evidence(field, value) {
   return { file: 'manifest.json', field, snippet: JSON.stringify(value) };
 }
 
+function isBroadExternalMatch(match) {
+  return match === '<all_urls>' || match.startsWith('*://') || /^[a-z]+:\/\/\*\./.test(match) || /^[a-z]+:\/\/\*\//.test(match);
+}
+
+function hasUnsafeExtensionCsp(csp) {
+  const directives = new Map();
+  for (const rawDirective of csp.split(';')) {
+    const [rawName, ...rawTokens] = rawDirective.trim().split(/\s+/);
+    if (!rawName) continue;
+    const name = rawName.toLowerCase();
+    if (!directives.has(name)) directives.set(name, rawTokens.map((token) => token.toLowerCase()));
+  }
+  const fallback = directives.get('default-src') ?? [];
+  const script = directives.get('script-src') ?? fallback;
+  const object = directives.get('object-src') ?? fallback;
+  const worker = directives.get('worker-src') ?? directives.get('child-src') ?? script;
+  const isUnsafe = (tokens) => tokens.some((token) =>
+    token === "'unsafe-eval'" || token === "'unsafe-inline'" || token === '*' || /^(?:https?:|data:|blob:|filesystem:)/.test(token)
+  );
+  return [script, object, worker].some(isUnsafe);
+}
+
 function permissionLists(manifest) {
   const permissions = Array.isArray(manifest.permissions) ? manifest.permissions : [];
   const optional = Array.isArray(manifest.optional_permissions) ? manifest.optional_permissions : [];
@@ -110,7 +132,7 @@ export function analyzeManifest(manifest, sources = []) {
   const csp = typeof manifest.content_security_policy === 'string'
     ? manifest.content_security_policy
     : manifest.content_security_policy?.extension_pages;
-  if (typeof csp === 'string' && /(?:'unsafe-eval'|'unsafe-inline'|https?:\/\/|\*)/.test(csp)) {
+  if (typeof csp === 'string' && hasUnsafeExtensionCsp(csp)) {
     findings.push(createFinding(rule(
       'MVX107', 'Extension CSP permits unsafe code sources', 'critical', 'code-execution',
       'The extension page CSP contains a dynamic or remote code source.',
@@ -119,7 +141,9 @@ export function analyzeManifest(manifest, sources = []) {
   }
 
   const external = manifest.externally_connectable;
-  if (external && (external.ids?.includes('*') || (external.matches ?? []).some((match) => /\*/.test(match)))) {
+  const externalIds = Array.isArray(external?.ids) ? external.ids : [];
+  const externalMatches = Array.isArray(external?.matches) ? external.matches : [];
+  if (external && (externalIds.includes('*') || externalMatches.some(isBroadExternalMatch))) {
     findings.push(createFinding(rule(
       'MVX108', 'Broad external messaging surface', 'high', 'messaging',
       'A wide set of websites or extensions can initiate messages to this extension.',
@@ -164,8 +188,10 @@ export function analyzeManifest(manifest, sources = []) {
     ), evidence('background.scripts', manifest.background.scripts)));
   }
 
+  const ruleResources = Array.isArray(manifest.declarative_net_request?.rule_resources) ? manifest.declarative_net_request.rule_resources : [];
+  const dnrPaths = new Set(ruleResources.map((resource) => resource?.path).filter(Boolean));
   const dnrEvidence = sources
-    .filter((source) => source.path.endsWith('.json') && /"type"\s*:\s*"modifyHeaders"/.test(source.content))
+    .filter((source) => dnrPaths.has(source.path) && /"type"\s*:\s*"modifyHeaders"/.test(source.content))
     .map((source) => ({ file: source.path, line: source.content.slice(0, source.content.search(/"type"\s*:\s*"modifyHeaders"/)).split('\n').length, snippet: '"type": "modifyHeaders"' }));
   if (dnrEvidence.length > 0) {
     findings.push(createFinding(rule(
@@ -177,4 +203,3 @@ export function analyzeManifest(manifest, sources = []) {
 
   return findings;
 }
-

@@ -3,8 +3,14 @@ import path from 'node:path';
 import { MvxError } from './errors.js';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.html', '.htm', '.json']);
-const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'coverage', 'dist', 'vendor']);
-const DEFAULT_LIMITS = Object.freeze({ maxFiles: 5_000, maxFileBytes: 2_000_000, maxTotalBytes: 50_000_000 });
+const IGNORED_DIRECTORIES = new Set(['.git']);
+const DEFAULT_LIMITS = Object.freeze({
+  maxFiles: 5_000,
+  maxEntries: 10_000,
+  maxDepth: 64,
+  maxFileBytes: 2_000_000,
+  maxTotalBytes: 50_000_000
+});
 
 async function resolveRoot(inputPath) {
   const absolute = path.resolve(inputPath);
@@ -29,13 +35,15 @@ async function resolveRoot(inputPath) {
   return { root: absolute, manifestPath: path.join(absolute, 'manifest.json') };
 }
 
-async function walk(root, current, state, limits) {
+async function walk(root, current, state, limits, depth = 0) {
+  if (depth > limits.maxDepth) {
+    throw new MvxError(`Extension directory depth exceeds ${limits.maxDepth}`, { code: 'SCAN_LIMIT' });
+  }
   const entries = await readdir(current, { withFileTypes: true });
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    if (state.fileCount >= limits.maxFiles) {
-      throw new MvxError(`Extension contains more than ${limits.maxFiles} files`, { code: 'SCAN_LIMIT' });
-    }
+    state.entryCount += 1;
+    if (state.entryCount > limits.maxEntries) throw new MvxError(`Extension contains more than ${limits.maxEntries} entries`, { code: 'SCAN_LIMIT' });
     const absolute = path.join(current, entry.name);
     const relative = path.relative(root, absolute).split(path.sep).join('/');
     if (entry.isSymbolicLink()) {
@@ -43,16 +51,17 @@ async function walk(root, current, state, limits) {
       continue;
     }
     if (entry.isDirectory()) {
-      if (!IGNORED_DIRECTORIES.has(entry.name)) await walk(root, absolute, state, limits);
+      if (!IGNORED_DIRECTORIES.has(entry.name)) await walk(root, absolute, state, limits, depth + 1);
       continue;
     }
     if (!entry.isFile()) continue;
+    if (state.fileCount >= limits.maxFiles) throw new MvxError(`Extension contains more than ${limits.maxFiles} files`, { code: 'SCAN_LIMIT' });
     state.fileCount += 1;
+    state.files.push(relative);
     if (relative === 'manifest.json' || !SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
     const stat = await lstat(absolute);
     if (stat.size > limits.maxFileBytes) {
-      state.warnings.push(`Skipped file larger than ${limits.maxFileBytes} bytes: ${relative}`);
-      continue;
+      throw new MvxError(`Source file exceeds ${limits.maxFileBytes} bytes: ${relative}`, { code: 'SCAN_LIMIT' });
     }
     state.totalBytes += stat.size;
     if (state.totalBytes > limits.maxTotalBytes) {
@@ -83,19 +92,20 @@ export async function loadExtension(inputPath, options = {}) {
   if (!manifest || Array.isArray(manifest) || typeof manifest !== 'object') {
     throw new MvxError('manifest.json must contain a JSON object', { code: 'INVALID_MANIFEST' });
   }
-  const state = { fileCount: 0, totalBytes: 0, sources: [], warnings: [] };
+  const state = { entryCount: 0, fileCount: 0, totalBytes: 0, files: [], sources: [], warnings: [] };
   await walk(root, root, state, limits);
   return {
     root: await realpath(root),
     manifest,
     manifestSource,
+    files: state.files,
     sources: state.sources,
     metadata: {
       filesVisited: state.fileCount,
+      entriesVisited: state.entryCount,
       sourceFilesScanned: state.sources.length,
       sourceBytesScanned: state.totalBytes,
       warnings: state.warnings
     }
   };
 }
-

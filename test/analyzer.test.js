@@ -62,6 +62,18 @@ test('scan byte limits fail closed', async (t) => {
   await assert.rejects(() => auditExtension(temp, { limits: { maxFileBytes: 10 } }), (error) => error.code === 'SCAN_LIMIT');
 });
 
+test('oversized supported source fails closed instead of returning clean', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-source-limit-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, { manifest_version: 3, name: 'Large source fixture', version: '1.0.0' }, {
+    'evil.js': `eval(payload);\n${'x'.repeat(1_000)}`
+  });
+  await assert.rejects(
+    () => auditExtension(temp, { limits: { maxFileBytes: 512 } }),
+    (error) => error.code === 'SCAN_LIMIT' && /evil\.js/.test(error.message)
+  );
+});
+
 test('loopback HTTP does not trigger the public insecure endpoint source rule', async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-loopback-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
@@ -105,4 +117,61 @@ test('a direct manifest.json path is accepted', async (t) => {
   await writeExtension(temp, { manifest_version: 3, name: 'File fixture', version: '1.0.0' });
   const result = await auditExtension(path.join(temp, 'manifest.json'));
   assert.equal(result.target.name, 'File fixture');
+});
+
+test('missing manifest file references produce an integrity finding', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-missing-ref-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, {
+    manifest_version: 3,
+    name: 'Missing reference fixture',
+    version: '1.0.0',
+    background: { service_worker: 'missing.js' }
+  });
+  const result = await auditExtension(temp);
+  assert.equal(result.findings[0].id, 'MVX002');
+  assert.equal(result.findings[0].evidence[0].field, 'background.service_worker');
+});
+
+test('data-only CSP origins, exact external matches, and image sources avoid code-execution findings', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-negative-rules-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, {
+    manifest_version: 3,
+    name: 'Negative fixture',
+    version: '1.0.0',
+    content_security_policy: { extension_pages: "default-src https://api.example.invalid; script-src 'self'; object-src 'none'; connect-src https://api.example.invalid" },
+    externally_connectable: { matches: ['https://app.example.invalid/*'] }
+  }, {
+    'image.js': "const image = document.createElement('img');\nimage.src = 'https://cdn.example.invalid/image.png';\n",
+    'unused.json': '{"type":"modifyHeaders"}\n'
+  });
+  const ids = new Set((await auditExtension(temp)).findings.map((finding) => finding.id));
+  assert.equal(ids.has('MVX107'), false);
+  assert.equal(ids.has('MVX108'), false);
+  assert.equal(ids.has('MVX113'), false);
+  assert.equal(ids.has('MVX202'), false);
+});
+
+test('effective worker CSP sources are checked after directive fallback', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-worker-csp-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, {
+    manifest_version: 3,
+    name: 'Worker CSP fixture',
+    version: '1.0.0',
+    content_security_policy: { extension_pages: "default-src 'self'; script-src 'self'; object-src 'none'; worker-src https://worker.example.invalid" }
+  });
+  const result = await auditExtension(temp);
+  assert.ok(result.findings.some((finding) => finding.id === 'MVX107'));
+});
+
+test('packaged source inside vendor directories is not skipped', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-vendor-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, { manifest_version: 3, name: 'Vendor fixture', version: '1.0.0' }, {
+    'vendor/dynamic.js': 'new Function(sourceText);\n'
+  });
+  const result = await auditExtension(temp);
+  assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
 });
