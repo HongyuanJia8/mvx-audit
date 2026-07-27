@@ -114,8 +114,10 @@ runtime evidence must satisfy all of these requirements:
 
 The checked-in runner enforces networkless Docker isolation, a non-root browser,
 read-only sample and scenario mounts, an ephemeral profile, resource limits,
-and no sandbox-disabling Chromium flag. The evaluator is deterministic and can
-also process externally captured JSONL. See [dynamic analysis](dynamic-analysis.md).
+and Chromium's user-namespace plus seccomp-BPF sandbox without `--no-sandbox`.
+The setuid sandbox helper is not used because all container capabilities are
+dropped. The evaluator is deterministic and can also process externally
+captured JSONL. See [dynamic analysis](dynamic-analysis.md).
 
 This remains an experimental behavioral observation tool, not an exploit-rate
 benchmark. Dormant C2, environment gating, timing, region checks, and

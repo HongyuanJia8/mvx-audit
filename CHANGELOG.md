@@ -3,6 +3,27 @@
 All notable changes are documented here. The project follows semantic
 versioning from the 2.0 reset onward.
 
+## Unreleased
+
+### Added
+
+- Reproducible OrbStack/Docker smoke fixtures for benign behavior and synthetic
+  credential exfiltration.
+- A vendored Moby-default seccomp profile tailored to Chromium's unprivileged
+  namespace sandbox.
+
+### Changed
+
+- Dynamic requests are now recorded with precise extension initiators and
+  returned through stdout, leaving no writable host mount in the container.
+- The lab image pins its base digest and Chromium package version.
+
+### Fixed
+
+- Chromium startup on read-only containers, DevTools pipe shutdown handling,
+  same-origin extension exfiltration detection, and native Linux output
+  permissions.
+
 ## 3.0.0 - 2026-07-26
 
 ### Added
@@ -20,7 +41,7 @@ versioning from the 2.0 reset onward.
 
 - Live packages are never committed, installed, or executed by ordinary tests.
 - The optional runner uses a non-root browser, networkless/read-only Docker
-  isolation, synthetic data, denied downloads, and no sandbox-disabling flag.
+  isolation, synthetic data, denied downloads, and no `--no-sandbox` flag.
 - Provider hash/version disagreement is retained as evidence instead of being
   silently trusted.
 

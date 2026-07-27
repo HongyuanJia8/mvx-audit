@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { lstat, mkdir, readdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { evaluateLabFiles } from '../src/lab.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SECCOMP_PROFILE = path.join(ROOT, 'lab', 'seccomp-chromium.json');
 
 function parse(argv) {
   const options = {};
@@ -38,14 +41,6 @@ async function assertTreeHasNoLinks(root) {
   await visit(root, 0);
 }
 
-function run(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit' });
-    child.once('error', reject);
-    child.once('exit', (code, signal) => code === 0 ? resolve() : reject(new Error(`${command} exited with ${code ?? signal}`)));
-  });
-}
-
 function capture(command, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -56,6 +51,23 @@ function capture(command, args) {
   });
 }
 
+async function captureToFile(command, args, destination) {
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'inherit'] });
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => code === 0 ? resolve() : reject(new Error(`${command} exited with ${code ?? signal}`)));
+  });
+  try {
+    await Promise.all([
+      exited,
+      pipeline(child.stdout, createWriteStream(destination, { flags: 'wx', mode: 0o600 }))
+    ]);
+  } catch (error) {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    throw error;
+  }
+}
+
 const options = parse(process.argv.slice(2));
 const extension = await realpath(path.resolve(options.extension));
 const scenario = await realpath(path.resolve(options.scenario));
@@ -63,24 +75,30 @@ const extensionStat = await lstat(extension);
 const scenarioStat = await lstat(scenario);
 if (!extensionStat.isDirectory() || !scenarioStat.isFile()) throw new Error('Extension must be a directory and scenario must be a file');
 await assertTreeHasNoLinks(extension);
-const output = path.resolve(options.output);
-await mkdir(output, { recursive: true, mode: 0o700 });
+const requestedOutput = path.resolve(options.output);
+await mkdir(requestedOutput, { recursive: true, mode: 0o700 });
+const output = await realpath(requestedOutput);
 const outputStat = await lstat(output);
 if (outputStat.isSymbolicLink() || !outputStat.isDirectory()) throw new Error('Output must be a real directory');
+if ((await readdir(output)).length > 0) throw new Error('Output directory must be empty');
+if ([extension, scenario, output, SECCOMP_PROFILE].some((value) => value.includes(','))) {
+  throw new Error('Docker bind-mount paths cannot contain commas');
+}
 const image = options.image ?? 'mvx-lab:local';
 const imageId = await capture('docker', ['image', 'inspect', '--format', '{{.Id}}', image]);
 
-await run('docker', [
-  'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+const eventsPath = path.join(output, 'events.jsonl');
+await captureToFile('docker', [
+  'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+  '--security-opt', 'no-new-privileges', '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
   '--pids-limit', '256', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,noexec,nosuid,size=512m',
   '--env', `MVX_LAB_IMAGE_ID=${imageId}`,
   '--mount', `type=bind,src=${extension},dst=/sample,readonly`,
   '--mount', `type=bind,src=${scenario},dst=/scenario.json,readonly`,
-  '--mount', `type=bind,src=${output},dst=/output`,
   image, '--acknowledge-risk'
-]);
+], eventsPath);
 
-const report = await evaluateLabFiles(scenario, path.join(output, 'events.jsonl'));
+const report = await evaluateLabFiles(scenario, eventsPath);
 await writeFile(path.join(output, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 process.stdout.write(`Lab verdict: ${report.verdict}; contained: ${report.contained ? 'yes' : 'NO'}\n`);
 if (!report.contained) process.exitCode = 1;

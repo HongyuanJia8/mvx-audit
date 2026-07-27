@@ -164,6 +164,7 @@ npm run docs:generate   # regenerate the corpus report
 npm run intel:validate  # validate real-world intelligence offline
 npm run intel:check     # reproduce it from pinned upstream sources
 npm run lab:build       # build the optional isolated Chromium image
+npm run lab:smoke -- --acknowledge-risk  # real Docker/Chromium smoke test
 npm run check           # all required checks
 npm audit --omit=dev    # expected: zero dependencies, zero advisories
 ```

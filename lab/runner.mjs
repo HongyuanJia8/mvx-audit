@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 
-const OUTPUT = '/output/events.jsonl';
 const CHROME = '/usr/bin/chromium';
 const MAX_EVENT_STRING = 16_384;
 
@@ -18,7 +17,9 @@ function bounded(value, depth = 0) {
 let writeChain = Promise.resolve();
 function emit(type, data = {}, target) {
   const event = bounded({ schemaVersion: 1, timestamp: new Date().toISOString(), type, ...(target ? { target } : {}), data });
-  writeChain = writeChain.then(() => appendFile(OUTPUT, `${JSON.stringify(event)}\n`, 'utf8'));
+  writeChain = writeChain.then(() => new Promise((resolve, reject) => {
+    process.stdout.write(`${JSON.stringify(event)}\n`, 'utf8', (error) => error ? reject(error) : resolve());
+  }));
   return writeChain;
 }
 
@@ -30,6 +31,7 @@ class Cdp {
     this.input = input;
     this.output = output;
     this.buffer = '';
+    this.closedError = null;
     this.ready = Promise.resolve();
     output.setEncoding('utf8');
     output.on('data', (chunk) => {
@@ -41,8 +43,14 @@ class Cdp {
         if (data.length > 0) this.receive(JSON.parse(data));
       }
     });
-    output.once('close', () => this.rejectPending(new Error('Chromium DevTools pipe closed')));
-    output.once('error', (error) => this.rejectPending(error));
+    input.on('error', (error) => this.closeWithError(error));
+    output.once('close', () => this.closeWithError(new Error('Chromium DevTools pipe closed')));
+    output.on('error', (error) => this.closeWithError(error));
+  }
+
+  closeWithError(error) {
+    this.closedError ??= error;
+    this.rejectPending(error);
   }
 
   rejectPending(error) {
@@ -68,6 +76,7 @@ class Cdp {
 
   async send(method, params = {}, sessionId) {
     await this.ready;
+    if (this.closedError || this.input.destroyed) throw this.closedError ?? new Error('Chromium DevTools pipe is closed');
     const id = this.nextId++;
     const result = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -76,12 +85,19 @@ class Cdp {
       }, 5_000);
       this.pending.set(id, { resolve, reject, timer });
     });
-    this.input.write(`${JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })}\0`);
+    this.input.write(`${JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })}\0`, (error) => {
+      if (!error) return;
+      const pending = this.pending.get(id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(error);
+    });
     return result;
   }
 
   on(listener) { this.listeners.push(listener); }
-  close() { this.input.end(); }
+  close() { if (!this.input.destroyed) this.input.end(); }
 }
 
 function canaryPage(scenario) {
@@ -107,12 +123,12 @@ async function main() {
     throw new Error('Invalid scenario');
   }
   const durationMs = Math.min(30_000, Math.max(1_000, scenario.durationMs ?? 8_000));
-  await writeFile(OUTPUT, '', { encoding: 'utf8', mode: 0o600 });
   const browserVersion = spawnSync(CHROME, ['--version'], { encoding: 'utf8' }).stdout.trim();
   await emit('lab.started', { browser: browserVersion, image: process.env.MVX_LAB_IMAGE_ID ?? 'unreported', network: 'none', durationMs });
 
   const chrome = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
+    '--disable-setuid-sandbox',
     '--remote-debugging-pipe', '--user-data-dir=/tmp/chrome-profile',
     '--disable-extensions-except=/sample', '--load-extension=/sample', 'about:blank'
   ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
@@ -123,7 +139,6 @@ async function main() {
     cdp = new Cdp(chrome.stdio[3], chrome.stdio[4]);
     const sessions = new Map();
     const initialized = new Set();
-    const requestInitiators = new Map();
     const pageReady = new Promise((resolve) => {
       cdp.on((message) => {
         if (message.method === 'Target.attachedToTarget') {
@@ -135,7 +150,7 @@ async function main() {
             await Promise.all([
               cdp.send('Runtime.enable', {}, sessionId),
               cdp.send('Network.enable', {}, sessionId),
-              cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, sessionId),
+              cdp.send('Fetch.enable', { patterns: [{ urlPattern: target.href, requestStage: 'Request' }] }, sessionId),
               targetInfo.type === 'page' ? cdp.send('Page.enable', {}, sessionId) : Promise.resolve()
             ]);
             await cdp.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {});
@@ -143,25 +158,25 @@ async function main() {
           })().catch((error) => emit('lab.error', { message: `target setup: ${error.message}` }, targetInfo.url));
         }
         if (message.method === 'Network.requestWillBeSent') {
-          requestInitiators.set(message.params.requestId, message.params.initiator);
-          if (message.params.type === 'Document' && isExtensionInitiator(message.params.initiator)) {
-            void emit('navigation.attempt', { from: message.params.documentURL, to: message.params.request.url, initiator: 'extension' }, message.params.request.url);
+          const request = message.params.request;
+          const extensionInitiated = isExtensionInitiator(message.params.initiator);
+          if (message.params.type === 'Document' && extensionInitiated) {
+            void emit('navigation.attempt', { from: message.params.documentURL, to: request.url, initiator: 'extension' }, request.url);
+          }
+          if (['http:', 'https:'].includes(new URL(request.url).protocol) && request.url !== target.href) {
+            void emit('network.request', {
+              url: request.url, method: request.method, headers: request.headers, postData: request.postData ?? null,
+              initiator: extensionInitiated ? 'extension' : 'unknown', disposition: 'blocked-external',
+              containmentBoundary: 'docker-network-none'
+            }, request.url);
           }
         }
         if (message.method === 'Fetch.requestPaused') {
           const request = message.params.request;
           const url = new URL(request.url);
-          const target = new URL(scenario.targetUrl);
           if (url.href === target.href) {
             const body = Buffer.from(canaryPage(scenario)).toString('base64');
             void cdp.send('Fetch.fulfillRequest', { requestId: message.params.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }], body }, message.sessionId);
-          } else if (['http:', 'https:'].includes(url.protocol)) {
-            void emit('network.request', {
-              url: request.url, method: request.method, headers: request.headers, postData: request.postData ?? null,
-              initiator: isExtensionInitiator(requestInitiators.get(message.params.networkId)) ? 'extension' : 'unknown',
-              disposition: 'blocked-external'
-            }, request.url);
-            void cdp.send('Fetch.failRequest', { requestId: message.params.requestId, errorReason: 'Aborted' }, message.sessionId);
           } else {
             void cdp.send('Fetch.continueRequest', { requestId: message.params.requestId }, message.sessionId);
           }

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "MVX synthetic exfiltration fixture",
+  "version": "1.0.0",
+  "host_permissions": ["https://collector.evil.invalid/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://accounts.example.test/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

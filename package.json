@@ -14,6 +14,7 @@
     "intel/",
     "lab/",
     "scripts/run-lab.mjs",
+    "scripts/smoke-lab.mjs",
     "docs/",
     "CHANGELOG.md",
     "LICENSE",
@@ -31,6 +32,7 @@
     "intel:validate": "node ./bin/mvx.js intel validate",
     "lab:build": "docker build --tag mvx-lab:local ./lab",
     "lab:run": "node ./scripts/run-lab.mjs",
+    "lab:smoke": "node ./scripts/smoke-lab.mjs",
     "lint": "node ./scripts/check-project.mjs",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage"

@@ -97,7 +97,8 @@ export function evaluateLabRun(scenario, events) {
     if (event.type === 'network.request') {
       let requestUrl;
       try { requestUrl = new URL(data.url); } catch { requestUrl = null; }
-      const external = requestUrl && ['http:', 'https:'].includes(requestUrl.protocol) && data.disposition !== 'fulfilled-canary' && requestUrl.hostname !== target.hostname;
+      const external = requestUrl && ['http:', 'https:'].includes(requestUrl.protocol) && data.disposition !== 'fulfilled-canary'
+        && (requestUrl.hostname !== target.hostname || (data.initiator === 'extension' && requestUrl.href !== target.href));
       if (external && data.disposition === 'blocked-external') blockedExternal += 1;
       else if (external) uncontainedExternal += 1;
       if (external) {

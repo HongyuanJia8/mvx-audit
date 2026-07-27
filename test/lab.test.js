@@ -40,6 +40,23 @@ test('external request without a canary is suspicious rather than confirmed', ()
   assert.equal(report.summary.confirmedObjectives, 0);
 });
 
+test('extension-initiated same-origin canary exfiltration is still confirmed', () => {
+  const report = evaluateLabRun(scenario, [
+    event('network.request', {
+      url: 'https://accounts.example.test/extension-collector',
+      method: 'POST',
+      postData: scenario.canaries.credentialPassword,
+      headers: {},
+      initiator: 'extension',
+      disposition: 'blocked-external'
+    }),
+    event('lab.completed')
+  ]);
+  assert.equal(report.verdict, 'confirmed_attack');
+  assert.equal(report.contained, true);
+  assert.equal(report.objectives.credentialPassword.status, 'confirmed');
+});
+
 test('setup events containing canaries cannot create false attack evidence', () => {
   const report = evaluateLabRun(scenario, [event('lab.started', { canaries: scenario.canaries }), event('lab.completed')]);
   assert.equal(report.verdict, 'no_trigger_observed');
