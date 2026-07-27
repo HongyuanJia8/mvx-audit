@@ -29,7 +29,7 @@ export function auditToSarif(result) {
       tool: { driver: {
         name: result.tool.name,
         version: result.tool.version,
-        informationUri: 'https://github.com/HongyuanJia8/mvx-audit',
+        informationUri: 'https://github.com/hyj28/mvx-audit',
         rules: uniqueRules.map((finding) => ({
           id: finding.id,
           name: finding.title.replace(/[^A-Za-z0-9]+/g, ''),
