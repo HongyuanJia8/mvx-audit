@@ -40,7 +40,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass.git"
+    "url": "git+https://github.com/HongyuanJia8/mvx-audit.git"
   },
   "keywords": [
     "chrome-extension",
@@ -52,7 +52,7 @@
   "author": "Hongyuan Jia and contributors",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass/issues"
+    "url": "https://github.com/HongyuanJia8/mvx-audit/issues"
   },
-  "homepage": "https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass#readme"
+  "homepage": "https://github.com/HongyuanJia8/mvx-audit#readme"
 }

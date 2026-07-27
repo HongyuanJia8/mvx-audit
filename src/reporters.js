@@ -29,7 +29,7 @@ export function auditToSarif(result) {
       tool: { driver: {
         name: result.tool.name,
         version: result.tool.version,
-        informationUri: 'https://github.com/HongyuanJia8/chrome-manifest-security-mv2-vs-mv3-bypass',
+        informationUri: 'https://github.com/HongyuanJia8/mvx-audit',
         rules: uniqueRules.map((finding) => ({
           id: finding.id,
           name: finding.title.replace(/[^A-Za-z0-9]+/g, ''),
