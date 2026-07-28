@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "snapshotDate": "2026-07-26",
+  "snapshotDate": "2026-07-27",
   "sources": [
     {
       "id": "malext-sentry",
@@ -31,6 +31,21 @@
         }
       },
       "attribution": "Extension IOC data sourced from chrome-mal-ids by Mallory Bowes Brown and contributors"
+    },
+    {
+      "id": "mthcht-browser-extensions",
+      "kind": "labels",
+      "name": "Awesome Lists Browser Extensions",
+      "repository": "https://github.com/mthcht/awesome-lists",
+      "license": "MIT",
+      "ref": "6ec23d62f0e29574f0eb5fed3ee364baa8f0ecb3",
+      "files": {
+        "labels": {
+          "url": "https://raw.githubusercontent.com/mthcht/awesome-lists/6ec23d62f0e29574f0eb5fed3ee364baa8f0ecb3/Lists/Browser%20Extensions/browser_extensions_list.csv",
+          "sha256": "52d049e73d798d3bcd9fa5c6b918be39eab3ded65faee33ad951021f63ba3f9a"
+        }
+      },
+      "attribution": "Browser extension indicators curated by mthcht and contributors"
     },
     {
       "id": "gherardo-crx",

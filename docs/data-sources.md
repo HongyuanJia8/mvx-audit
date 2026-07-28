@@ -45,6 +45,15 @@ reported SHA-256 even though the pinned Git blob and byte size matched. MVX
 therefore stores this field as `reportedSha256`; it never presents it as the
 hash of the currently indexed file without checking the bytes.
 
+### Awesome Lists Browser Extensions
+
+The MIT-licensed [browser-extension indicator list](https://github.com/mthcht/awesome-lists/tree/6ec23d62f0e29574f0eb5fed3ee364baa8f0ecb3/Lists/Browser%20Extensions)
+adds community-curated names, references, comments, and occasional CRX hashes.
+MVX imports only rows explicitly marked `malicious`, validates extension IDs,
+deduplicates repeated rows, and labels them `community-reported-malicious`.
+These reports expand coverage but are deliberately not promoted to behavioral
+or vendor-confirmed ground truth.
+
 ## Opt-in artifact acquisition
 
 Use `mvx sample plan <extension-id>` before downloading. `mvx sample fetch`
@@ -73,7 +82,10 @@ download only proves artifact integrity, not malicious behavior.
 
 `mvx sample unpack` supports CRX2 and CRX3 packages with stored or deflated ZIP
 entries. It validates central/local header consistency, CRC-32, output size,
-compression ratio, entry count, path depth, and destination safety. Zip64,
+compression ratio, entry count, path depth, and destination safety. Individual
+high-ratio assets up to 5 MB remain bounded by the per-entry and 250 MB total
+expansion limits, avoiding false rejection of sparse images and source maps.
+Zip64,
 multi-disk, encrypted, linked, duplicate, absolute, parent-traversing, and
 unknown-method entries are rejected. Extraction is written to a temporary
 directory and renamed only after every entry passes. No extracted file is
@@ -86,6 +98,19 @@ the reported malicious behavior.
 
 ## Additional research sources
 
+- Monx Research's MIT-licensed [ShotBird extension malware report](https://github.com/monxresearch-sec/shotbird-extension-malware-report/tree/33ec31d39b7d1678045768e1326dcf31f3795845)
+  publishes one real MV3 sample as a ZIP. MVX verified the pinned 4,620,273-byte
+  package for `gengfhhkjekmlejbhmmopegofnoifnjp` as SHA-256
+  `8ff88e6c824c3803ed5fd3b0b97d674824c8cfa539a12dd87efedd6f3d898d85`.
+  It is not in the default CRX acquisition index because package formats and
+  third-party redistribution rights must remain explicit.
+- The SIGMETRICS 2023 `MalCryptoExt` repository exposes 116 Chrome CRX files,
+  and the MADWeb 2024 `malicious_v2_v3_extensions` artifact exposes 517
+  researcher-validated MV2 packages plus 517 mechanically converted MV3
+  derivatives. Neither repository currently has a package license. MVX does
+  not download or index those executable artifacts without written permission;
+  public readability is not redistribution authorization, and converted
+  derivatives are not counted as independent real-world samples.
 - The [`tweb25`](https://github.com/its-not-easy/tweb25) artifact accompanies
   the peer-reviewed study “It's not Easy: Applying Supervised Machine Learning
   to Detect Malicious Extensions in the Chrome Web Store.” It describes 7,140

@@ -7,6 +7,7 @@ const MAX_EVENTS = 100_000;
 const VERDICTS = ['confirmed_attack', 'suspicious_activity', 'no_trigger_observed', 'inconclusive'];
 const EVENT_TYPES = new Set([
   'lab.started',
+  'extension.loaded',
   'network.request',
   'navigation.attempt',
   'download.attempt',

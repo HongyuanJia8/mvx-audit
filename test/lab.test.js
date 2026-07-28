@@ -58,7 +58,11 @@ test('extension-initiated same-origin canary exfiltration is still confirmed', (
 });
 
 test('setup events containing canaries cannot create false attack evidence', () => {
-  const report = evaluateLabRun(scenario, [event('lab.started', { canaries: scenario.canaries }), event('lab.completed')]);
+  const report = evaluateLabRun(scenario, [
+    event('lab.started', { canaries: scenario.canaries }),
+    event('extension.loaded', { extensionId: 'abcdefghijklmnopabcdefghijklmnop', targetType: 'service_worker' }),
+    event('lab.completed')
+  ]);
   assert.equal(report.verdict, 'no_trigger_observed');
 });
 

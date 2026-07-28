@@ -8,7 +8,7 @@ const DEFAULT_LIMITS = Object.freeze({
   maxFiles: 5_000,
   maxEntries: 10_000,
   maxDepth: 64,
-  maxFileBytes: 2_000_000,
+  maxFileBytes: 10_000_000,
   maxTotalBytes: 50_000_000
 });
 

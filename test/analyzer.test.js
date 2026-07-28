@@ -74,6 +74,17 @@ test('oversized supported source fails closed instead of returning clean', async
   );
 });
 
+test('default limits scan realistic multi-megabyte bundles', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-large-bundle-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, { manifest_version: 3, name: 'Large bundle', version: '1.0.0' }, {
+    'bundle.js': `eval(payload);\n${'x'.repeat(2_100_000)}`
+  });
+  const result = await auditExtension(temp);
+  assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
+  assert.ok(result.scan.sourceBytesScanned > 2_000_000);
+});
+
 test('loopback HTTP does not trigger the public insecure endpoint source rule', async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-loopback-'));
   t.after(() => rm(temp, { recursive: true, force: true }));

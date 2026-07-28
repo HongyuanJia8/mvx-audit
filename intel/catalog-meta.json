@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-26",
+  "generatedAt": "2026-07-27",
   "sources": [
     {
       "id": "malext-sentry",
@@ -19,6 +19,14 @@
       "records": 4500
     },
     {
+      "id": "mthcht-browser-extensions",
+      "name": "Awesome Lists Browser Extensions",
+      "repository": "https://github.com/mthcht/awesome-lists",
+      "license": "MIT",
+      "ref": "6ec23d62f0e29574f0eb5fed3ee364baa8f0ecb3",
+      "records": 2129
+    },
+    {
       "id": "gherardo-crx",
       "name": "MaliciousBrowserExtensions",
       "repository": "https://github.com/GherardoFiori/MaliciousBrowserExtensions",
@@ -28,19 +36,20 @@
     }
   ],
   "summary": {
-    "records": 4716,
+    "records": 5122,
     "confirmedMalware": 265,
     "researcherReported": 3906,
     "malwareLabeled": 1094,
     "artifacts": 504,
     "artifactBytes": 5952318439,
-    "recordsWithSha256": 694,
-    "labels": 12,
+    "recordsWithSha256": 698,
+    "labels": 13,
     "labelCounts": {
       "adware": 866,
       "artifact-available": 502,
       "behavior-confirmed-malicious": 265,
       "browser-hijack": 162,
+      "community-reported-malicious": 1954,
       "critical-vulnerability": 2,
       "in-store-but-not-whitelisted": 4,
       "in-store-but-suspicious": 143,

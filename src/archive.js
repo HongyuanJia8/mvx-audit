@@ -10,6 +10,7 @@ const DEFAULT_LIMITS = Object.freeze({
   maxEntryBytes: 50_000_000,
   maxTotalBytes: 250_000_000,
   maxCompressionRatio: 200,
+  maxHighlyCompressedEntryBytes: 5_000_000,
   maxPathDepth: 64
 });
 const CRC_TABLE = new Uint32Array(256);
@@ -126,7 +127,8 @@ function parseEntries(buffer, zipOffset, limits) {
     if (flags & 1) throw new MvxError(`Encrypted entry is forbidden: ${safe.path}`, { code: 'UNSAFE_ARCHIVE' });
     if (![0, 8].includes(method)) throw new MvxError(`Unsupported compression method ${method}: ${safe.path}`, { code: 'UNSAFE_ARCHIVE' });
     if (uncompressedSize > limits.maxEntryBytes) throw new MvxError(`Archive entry exceeds ${limits.maxEntryBytes} bytes: ${safe.path}`, { code: 'ARCHIVE_LIMIT' });
-    if (uncompressedSize > 0 && uncompressedSize / Math.max(1, compressedSize) > limits.maxCompressionRatio) {
+    if (uncompressedSize > limits.maxHighlyCompressedEntryBytes
+      && uncompressedSize / Math.max(1, compressedSize) > limits.maxCompressionRatio) {
       throw new MvxError(`Suspicious compression ratio: ${safe.path}`, { code: 'ARCHIVE_LIMIT' });
     }
     totalBytes += uncompressedSize;

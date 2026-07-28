@@ -94,9 +94,18 @@ test('CRX unpacker rejects CRC corruption and suspicious compression ratios', as
   await assert.rejects(() => unpackCrx(corrupt.input, corrupt.destination), (error) => error.code === 'INVALID_ARCHIVE');
   const bomb = await withCrx(t, [{ name: 'manifest.json', content: 'a'.repeat(10_000), method: 8 }]);
   await assert.rejects(
-    () => unpackCrx(bomb.input, bomb.destination, { limits: { maxCompressionRatio: 10 } }),
+    () => unpackCrx(bomb.input, bomb.destination, { limits: { maxCompressionRatio: 10, maxHighlyCompressedEntryBytes: 1_000 } }),
     (error) => error.code === 'ARCHIVE_LIMIT'
   );
+});
+
+test('CRX unpacker permits bounded highly-compressible assets', async (t) => {
+  const fixture = await withCrx(t, [
+    { name: 'manifest.json', content: '{"manifest_version":3}', method: 8 },
+    { name: 'images/sparse.png', content: Buffer.alloc(3_000_000), method: 8 }
+  ]);
+  const result = await unpackCrx(fixture.input, fixture.destination);
+  assert.equal(result.uncompressedBytes, 3_000_022);
 });
 
 test('CRX unpacker refuses existing destinations and malformed inputs', async (t) => {

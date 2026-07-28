@@ -117,12 +117,16 @@ async function main() {
     throw new Error('Runner is container-only and requires --acknowledge-risk');
   }
   const scenario = JSON.parse(await readFile('/scenario.json', 'utf8'));
+  const manifest = JSON.parse(await readFile('/sample/manifest.json', 'utf8'));
   const target = new URL(scenario.targetUrl);
   const canaries = Object.entries(scenario.canaries ?? {});
   if (scenario.schemaVersion !== 1 || target.protocol !== 'https:' || canaries.length === 0 || canaries.some(([, value]) => typeof value !== 'string' || value.length < 16)) {
     throw new Error('Invalid scenario');
   }
   const durationMs = Math.min(30_000, Math.max(1_000, scenario.durationMs ?? 8_000));
+  const expectsBackgroundTarget = Boolean(manifest.background?.service_worker
+    || manifest.background?.page
+    || (Array.isArray(manifest.background?.scripts) && manifest.background.scripts.length > 0));
   const browserVersion = spawnSync(CHROME, ['--version'], { encoding: 'utf8' }).stdout.trim();
   await emit('lab.started', { browser: browserVersion, image: process.env.MVX_LAB_IMAGE_ID ?? 'unreported', network: 'none', durationMs });
 
@@ -139,10 +143,24 @@ async function main() {
     cdp = new Cdp(chrome.stdio[3], chrome.stdio[4]);
     const sessions = new Map();
     const initialized = new Set();
+    const loadedExtensions = new Map();
+    const trackExtension = (targetInfo) => {
+      let extensionId;
+      try {
+        const targetUrl = new URL(targetInfo?.url ?? '');
+        if (targetUrl.protocol !== 'chrome-extension:' || !/^[a-p]{32}$/.test(targetUrl.hostname)) return;
+        extensionId = targetUrl.hostname;
+      } catch { return; }
+      if (loadedExtensions.has(extensionId)) return;
+      loadedExtensions.set(extensionId, targetInfo.type);
+      void emit('extension.loaded', { extensionId, targetType: targetInfo.type, url: targetInfo.url }, targetInfo.url);
+    };
     const pageReady = new Promise((resolve) => {
       cdp.on((message) => {
+        if (message.method === 'Target.targetCreated') trackExtension(message.params.targetInfo);
         if (message.method === 'Target.attachedToTarget') {
           const { sessionId, targetInfo } = message.params;
+          trackExtension(targetInfo);
           sessions.set(sessionId, targetInfo);
           void (async () => {
             if (initialized.has(sessionId)) return;
@@ -201,7 +219,18 @@ async function main() {
     }, pageSession);
     const value = state.result?.value;
     if (!value?.exists || value.marker !== 'intact') await emit('dom.mutation', { protectedCanaryChanged: true, details: value ?? null }, scenario.targetUrl);
-    await emit('lab.completed', { sessionsObserved: sessions.size });
+    if (expectsBackgroundTarget && loadedExtensions.size === 0) {
+      await emit('lab.error', {
+        message: 'Chromium did not expose the extension background target; execution is unverified',
+        browserStderr: chromeError
+      });
+    } else {
+      await emit('lab.completed', {
+        sessionsObserved: sessions.size,
+        extensionTargetsObserved: loadedExtensions.size,
+        extensionIds: [...loadedExtensions.keys()]
+      });
+    }
   } catch (error) {
     await emit('lab.error', { message: error.message, browserStderr: chromeError });
   } finally {

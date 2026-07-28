@@ -93,15 +93,17 @@ export async function downloadSources(config, fetcher = fetch) {
   const source = (id) => config.sources.find((entry) => entry.id === id);
   const malext = source('malext-sentry');
   const tpci = source('tpci-chrome-mal-ids');
+  const mthcht = source('mthcht-browser-extensions');
   const gherardo = source('gherardo-crx');
-  if (![malext, tpci, gherardo].every(Boolean)) throw new MvxError('Required intelligence source is missing', { code: 'INVALID_INTEL_SOURCE' });
-  const [malextCsv, tpciCsv, gherardoJson, gherardoTree] = await Promise.all([
+  if (![malext, tpci, mthcht, gherardo].every(Boolean)) throw new MvxError('Required intelligence source is missing', { code: 'INVALID_INTEL_SOURCE' });
+  const [malextCsv, tpciCsv, mthchtCsv, gherardoJson, gherardoTree] = await Promise.all([
     fetchPinned(malext.files.labels, malext.id, fetcher),
     fetchPinned(tpci.files.labels, tpci.id, fetcher),
+    fetchPinned(mthcht.files.labels, mthcht.id, fetcher),
     fetchPinned(gherardo.files.metadata, gherardo.id, fetcher),
     fetchPinned(gherardo.files.tree, `${gherardo.id} tree`, fetcher)
   ]);
-  return { malextCsv, tpciCsv, gherardoJson, gherardoTree };
+  return { malextCsv, tpciCsv, mthchtCsv, gherardoJson, gherardoTree };
 }
 
 export function buildIntelCatalog(config, input) {
@@ -113,6 +115,7 @@ export function buildIntelCatalog(config, input) {
   };
   const malextRows = parseCsv(input.malextCsv);
   const tpciRows = parseCsv(input.tpciCsv);
+  const mthchtRows = parseCsv(input.mthchtCsv);
   const gherardo = parseJson(input.gherardoJson, 'gherardo-crx metadata');
   const tree = parseJson(input.gherardoTree, 'gherardo-crx tree');
 
@@ -150,6 +153,23 @@ export function buildIntelCatalog(config, input) {
     record.threatTypes.push(...String(row['THREAT-TYPE'] ?? '').split(',').map(normalizeLabel));
     if (SHA256.test(row['TPCI-CRX-HASH'] ?? '')) record.sha256.push(row['TPCI-CRX-HASH']);
     addProvenance(record, { provider: 'tpci-chrome-mal-ids', source: row.SOURCE, article: row.ARTICLE });
+  }
+
+  for (const row of mthchtRows) {
+    if (String(row.metadata_type ?? '').trim().toLowerCase() !== 'malicious') continue;
+    const record = getRecord(String(row.browser_extension_id ?? '').trim().toLowerCase());
+    if (!record) continue;
+    if (row.browser_extension) record.names.push(row.browser_extension);
+    record.stores.push('chrome');
+    record.labels.push('community-reported-malicious');
+    record.verification.communityReported = true;
+    const reportedHash = String(row.crx_file_sha256 ?? '').trim().toLowerCase();
+    if (SHA256.test(reportedHash)) record.sha256.push(reportedHash);
+    addProvenance(record, {
+      provider: 'mthcht-browser-extensions',
+      source: row.metadata_link,
+      context: row.metadata_comment
+    });
   }
 
   const hashesById = new Map();
@@ -211,6 +231,7 @@ export function buildIntelCatalog(config, input) {
   const sourceCounts = {
     'malext-sentry': malextRows.length,
     'tpci-chrome-mal-ids': tpciRows.length,
+    'mthcht-browser-extensions': mthchtRows.length,
     'gherardo-crx': Array.isArray(gherardo.extensions) ? gherardo.extensions.length : 0
   };
   const meta = {

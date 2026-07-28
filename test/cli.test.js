@@ -75,7 +75,7 @@ test('CLI returns input error when a supported source exceeds the hard limit', a
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-cli-limit-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
   await writeFile(path.join(temp, 'manifest.json'), '{"manifest_version":3,"name":"Large","version":"1.0.0"}\n', 'utf8');
-  await writeFile(path.join(temp, 'large.js'), `eval(payload);\n${'x'.repeat(2_000_000)}`, 'utf8');
+  await writeFile(path.join(temp, 'large.js'), `eval(payload);\n${'x'.repeat(10_000_000)}`, 'utf8');
   const capture = captureStreams();
   const code = await runCli(['audit', temp], capture.streams);
   assert.equal(code, 2);
@@ -85,7 +85,7 @@ test('CLI returns input error when a supported source exceeds the hard limit', a
 test('CLI reports and validates the real-world intelligence snapshot', async () => {
   const stats = captureStreams();
   assert.equal(await runCli(['intel', 'stats'], stats.streams), 0);
-  assert.match(stats.output().stdout, /Unique extension IDs: 4716/);
+  assert.match(stats.output().stdout, /Unique extension IDs: 5122/);
   const validation = captureStreams();
   assert.equal(await runCli(['intel', 'validate', '--format', 'json'], validation.streams), 0);
   assert.equal(JSON.parse(validation.output().stdout).valid, true);
