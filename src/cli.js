@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { auditExtension } from './analyzer.js';
-import { unpackCrx } from './archive.js';
+import { unpackExtensionArchive } from './archive.js';
 import { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
 import { compareExtensions } from './compare.js';
@@ -29,7 +29,7 @@ Usage:
   mvx sample fetch-many --acknowledge-risk [--limit number] [--label label]
                         [--quarantine directory] [--max-bytes number]
                         [--max-total-bytes number]
-  mvx sample unpack <file.crx> --acknowledge-risk [--destination directory]
+  mvx sample unpack <file.crx-or-zip> --acknowledge-risk [--destination directory]
   mvx lab evaluate <scenario.json> <events.jsonl> [--format text|json]
   mvx benchmark static <quarantine> --acknowledge-risk [--label label]
                        [--limit number] [--threshold severity] [--format text|json]
@@ -194,7 +194,7 @@ export async function runCli(argv, streams = process) {
         return result.complete ? 0 : 1;
       }
       if (!['plan', 'fetch', 'unpack'].includes(action) || args.length !== 2) {
-        throw new MvxError('sample action must be plan/fetch <extension-id>, plan-many/fetch-many, or unpack <file.crx>', { code: 'INVALID_ARGUMENT' });
+        throw new MvxError('sample action must be plan/fetch <extension-id>, plan-many/fetch-many, or unpack <file.crx-or-zip>', { code: 'INVALID_ARGUMENT' });
       }
       const format = options.format ?? 'text';
       if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported sample format: ${format}`, { code: 'INVALID_ARGUMENT' });
@@ -204,10 +204,10 @@ export async function runCli(argv, streams = process) {
         const destination = options.destination
           ? path.resolve(options.destination)
           : path.join(path.dirname(input), 'unpacked', path.basename(input, path.extname(input)));
-        const result = await unpackCrx(input, destination);
+        const result = await unpackExtensionArchive(input, destination);
         await emit(format === 'json' ? json(result) : [
-          `Unpacked quarantined CRX: ${result.destination}`,
-          `CRX version: ${result.crxVersion}`,
+          `Unpacked quarantined ${result.archiveFormat.toUpperCase()}: ${result.destination}`,
+          ...(result.crxVersion === null ? [] : [`CRX version: ${result.crxVersion}`]),
           `Files: ${result.files}`,
           `Uncompressed bytes: ${result.uncompressedBytes}`,
           'No extension code was executed.'

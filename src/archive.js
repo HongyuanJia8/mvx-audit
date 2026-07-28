@@ -32,9 +32,11 @@ function requireRange(buffer, offset, length, label) {
   }
 }
 
-function crxZipOffset(buffer) {
-  requireRange(buffer, 0, 12, 'header');
-  if (buffer.subarray(0, 4).toString('ascii') !== 'Cr24') throw new MvxError('Input is not a CRX file', { code: 'INVALID_ARCHIVE' });
+function archiveZipOffset(buffer, allowZip) {
+  requireRange(buffer, 0, 4, 'header');
+  if (allowZip && buffer.readUInt32LE(0) === 0x04034B50) return { format: 'zip', version: null, offset: 0 };
+  requireRange(buffer, 0, 12, 'CRX header');
+  if (buffer.subarray(0, 4).toString('ascii') !== 'Cr24') throw new MvxError('Input is not a supported CRX or ZIP archive', { code: 'INVALID_ARCHIVE' });
   const version = buffer.readUInt32LE(4);
   let offset;
   if (version === 2) {
@@ -43,7 +45,7 @@ function crxZipOffset(buffer) {
   } else if (version === 3) offset = 12 + buffer.readUInt32LE(8);
   else throw new MvxError(`Unsupported CRX version: ${version}`, { code: 'INVALID_ARCHIVE' });
   requireRange(buffer, offset, 4, 'ZIP payload');
-  return { version, offset };
+  return { format: 'crx', version, offset };
 }
 
 function decodeName(bytes, utf8) {
@@ -176,17 +178,17 @@ async function safeParent(destination) {
   return { absolute, parent: await realpath(parent) };
 }
 
-export async function unpackCrx(inputPath, destination, options = {}) {
-  if (!destination) throw new MvxError('CRX extraction requires a destination directory', { code: 'INVALID_ARGUMENT' });
+async function unpackArchive(inputPath, destination, options, allowZip) {
+  if (!destination) throw new MvxError('Archive extraction requires a destination directory', { code: 'INVALID_ARGUMENT' });
   const limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
   const input = path.resolve(inputPath);
   const inputStat = await lstat(input).catch((error) => {
-    throw new MvxError(`Cannot read CRX: ${input}`, { code: 'INPUT_NOT_FOUND', cause: error });
+    throw new MvxError(`Cannot read archive: ${input}`, { code: 'INPUT_NOT_FOUND', cause: error });
   });
-  if (inputStat.isSymbolicLink() || !inputStat.isFile()) throw new MvxError('CRX input must be a regular non-symlink file', { code: 'UNSAFE_ARCHIVE' });
-  if (inputStat.size > limits.maxArchiveBytes) throw new MvxError(`CRX exceeds ${limits.maxArchiveBytes} bytes`, { code: 'ARCHIVE_LIMIT' });
+  if (inputStat.isSymbolicLink() || !inputStat.isFile()) throw new MvxError('Archive input must be a regular non-symlink file', { code: 'UNSAFE_ARCHIVE' });
+  if (inputStat.size > limits.maxArchiveBytes) throw new MvxError(`Archive exceeds ${limits.maxArchiveBytes} bytes`, { code: 'ARCHIVE_LIMIT' });
   const buffer = await readFile(input);
-  const { version, offset: zipOffset } = crxZipOffset(buffer);
+  const { format, version, offset: zipOffset } = archiveZipOffset(buffer, allowZip);
   const entries = parseEntries(buffer, zipOffset, limits);
   const { absolute, parent } = await safeParent(destination);
   try {
@@ -222,11 +224,19 @@ export async function unpackCrx(inputPath, destination, options = {}) {
     await rename(temporary, absolute);
     const destinationStat = await stat(absolute);
     if (!destinationStat.isDirectory()) throw new MvxError('Archive destination verification failed', { code: 'UNSAFE_ARCHIVE' });
-    return { input, destination: absolute, crxVersion: version, entries: entries.length, files, uncompressedBytes: totalBytes };
+    return { input, destination: absolute, archiveFormat: format, crxVersion: version, entries: entries.length, files, uncompressedBytes: totalBytes };
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;
   }
+}
+
+export async function unpackCrx(inputPath, destination, options = {}) {
+  return unpackArchive(inputPath, destination, options, false);
+}
+
+export async function unpackExtensionArchive(inputPath, destination, options = {}) {
+  return unpackArchive(inputPath, destination, options, true);
 }
 
 export { DEFAULT_LIMITS as ARCHIVE_LIMITS, crc32 };

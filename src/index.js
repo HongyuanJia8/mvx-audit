@@ -1,5 +1,5 @@
 export { auditExtension } from './analyzer.js';
-export { unpackCrx } from './archive.js';
+export { unpackCrx, unpackExtensionArchive } from './archive.js';
 export { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 export { compareExtensions } from './compare.js';
 export { loadCatalog, validateCatalog } from './catalog.js';

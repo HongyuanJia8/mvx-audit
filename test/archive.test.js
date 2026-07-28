@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { deflateRawSync } from 'node:zlib';
 import { auditExtension } from '../src/analyzer.js';
-import { crc32, unpackCrx } from '../src/archive.js';
+import { crc32, unpackCrx, unpackExtensionArchive } from '../src/archive.js';
 
 function makeCrx(entries) {
   const localParts = [];
@@ -67,6 +67,15 @@ async function withCrx(t, entries) {
   return { temp, input, destination };
 }
 
+async function withZip(t, entries) {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-zip-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const input = path.join(temp, 'sample.zip');
+  const destination = path.join(temp, 'unpacked');
+  await writeFile(input, makeCrx(entries).subarray(12));
+  return { temp, input, destination };
+}
+
 test('CRX3 unpacker extracts stored and deflated files for static audit', async (t) => {
   const manifest = JSON.stringify({ manifest_version: 3, name: 'Realistic archive', version: '1.0.0', background: { service_worker: 'worker.js' } });
   const fixture = await withCrx(t, [
@@ -80,6 +89,26 @@ test('CRX3 unpacker extracts stored and deflated files for static audit', async 
   assert.equal(result.files, 3);
   assert.equal(await readFile(path.join(fixture.destination, 'assets/readme.txt'), 'utf8'), 'data');
   assert.ok((await auditExtension(fixture.destination)).findings.some((finding) => finding.id === 'MVX201'));
+});
+
+test('bounded extension archive unpacker supports ZIP without weakening CRX-only API', async (t) => {
+  const fixture = await withZip(t, [
+    { name: 'manifest.json', content: '{"manifest_version":3,"name":"ZIP","version":"1.0.0"}' },
+    { name: 'worker.js', content: 'console.log("loaded");', method: 8 }
+  ]);
+  await assert.rejects(() => unpackCrx(fixture.input, fixture.destination), (error) => error.code === 'INVALID_ARCHIVE');
+  const result = await unpackExtensionArchive(fixture.input, fixture.destination);
+  assert.equal(result.archiveFormat, 'zip');
+  assert.equal(result.crxVersion, null);
+  assert.equal(result.files, 2);
+  assert.match(await readFile(path.join(fixture.destination, 'manifest.json'), 'utf8'), /manifest_version/);
+});
+
+test('ZIP extension packages retain traversal and link protections', async (t) => {
+  const traversal = await withZip(t, [{ name: '../manifest.json', content: '{}' }]);
+  await assert.rejects(() => unpackExtensionArchive(traversal.input, traversal.destination), (error) => error.code === 'UNSAFE_ARCHIVE');
+  const symlink = await withZip(t, [{ name: 'manifest.json', content: '{}', externalAttributes: 0o120777 << 16 }]);
+  await assert.rejects(() => unpackExtensionArchive(symlink.input, symlink.destination), (error) => error.code === 'UNSAFE_ARCHIVE');
 });
 
 test('CRX unpacker rejects traversal and symbolic-link entries', async (t) => {

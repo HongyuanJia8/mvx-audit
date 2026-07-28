@@ -80,8 +80,8 @@ complete.
 malware and should be handled inside a disposable analysis VM. A successful
 download only proves artifact integrity, not malicious behavior.
 
-`mvx sample unpack` supports CRX2 and CRX3 packages with stored or deflated ZIP
-entries. It validates central/local header consistency, CRC-32, output size,
+`mvx sample unpack` supports CRX2, CRX3, and ordinary ZIP extension packages
+with stored or deflated entries. It validates central/local header consistency, CRC-32, output size,
 compression ratio, entry count, path depth, and destination safety. Individual
 high-ratio assets up to 5 MB remain bounded by the per-entry and 250 MB total
 expansion limits, avoiding false rejection of sparse images and source maps.
