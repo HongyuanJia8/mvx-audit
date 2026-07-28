@@ -83,6 +83,32 @@ test('collection errors without completion are inconclusive', () => {
   assert.equal(report.summary.errors, 1);
 });
 
+test('a browser error page cannot masquerade as confirmed DOM manipulation', () => {
+  const report = evaluateLabRun(scenario, [
+    event('dom.mutation', {
+      protectedCanaryChanged: true,
+      details: { url: 'chrome-error://chromewebdata/', exists: false }
+    }),
+    event('lab.completed')
+  ]);
+  assert.equal(report.verdict, 'inconclusive');
+  assert.equal(report.objectives.contentManipulation.status, 'not_observed');
+  assert.equal(report.summary.errors, 1);
+});
+
+test('extension-internal document navigation is not a navigation hijack', () => {
+  const report = evaluateLabRun(scenario, [
+    event('navigation.attempt', {
+      from: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html',
+      to: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/frame.html',
+      initiator: 'extension'
+    }),
+    event('lab.completed')
+  ]);
+  assert.equal(report.verdict, 'no_trigger_observed');
+  assert.equal(report.objectives.navigationHijack.status, 'not_observed');
+});
+
 test('event parser rejects malformed schemas and scenario rejects weak canaries', () => {
   assert.throws(() => parseLabEvents('{bad\n'), (error) => error.code === 'INVALID_LAB_EVENTS');
   assert.throws(() => evaluateLabRun({ ...scenario, canaries: { weak: 'short' } }, [event('lab.completed')]),

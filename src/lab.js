@@ -118,14 +118,22 @@ export function evaluateLabRun(scenario, events) {
     if (event.type === 'navigation.attempt') {
       let destination;
       try { destination = new URL(data.to); } catch { destination = null; }
-      if (destination && destination.href !== target.href && data.initiator === 'extension') {
+      if (destination && ['http:', 'https:'].includes(destination.protocol)
+        && destination.href !== target.href && data.initiator === 'extension') {
         objectives.navigationHijack.status = 'confirmed';
         objectives.navigationHijack.evidence.push(evidence(event, index, { from: data.from, to: data.to }));
       }
     }
     if (event.type === 'dom.mutation' && data.protectedCanaryChanged === true) {
-      objectives.contentManipulation.status = 'confirmed';
-      objectives.contentManipulation.evidence.push(evidence(event, index, { details: data.details ?? null }));
+      const observedUrl = data.details && !Array.isArray(data.details) && typeof data.details === 'object'
+        ? data.details.url
+        : null;
+      if (typeof observedUrl === 'string' && observedUrl !== target.href) {
+        errors.push(evidence(event, index, { message: 'DOM observation did not occur on the canary target', observedUrl }));
+      } else {
+        objectives.contentManipulation.status = 'confirmed';
+        objectives.contentManipulation.evidence.push(evidence(event, index, { details: data.details ?? null }));
+      }
     }
     if (event.type === 'download.attempt') {
       objectives.unauthorizedDownload.status = data.userGesture === false ? 'confirmed' : 'observed';

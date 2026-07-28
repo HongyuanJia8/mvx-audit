@@ -178,10 +178,11 @@ async function main() {
         if (message.method === 'Network.requestWillBeSent') {
           const request = message.params.request;
           const extensionInitiated = isExtensionInitiator(message.params.initiator);
-          if (message.params.type === 'Document' && extensionInitiated) {
+          const requestProtocol = new URL(request.url).protocol;
+          if (message.params.type === 'Document' && extensionInitiated && ['http:', 'https:'].includes(requestProtocol)) {
             void emit('navigation.attempt', { from: message.params.documentURL, to: request.url, initiator: 'extension' }, request.url);
           }
-          if (['http:', 'https:'].includes(new URL(request.url).protocol) && request.url !== target.href) {
+          if (['http:', 'https:'].includes(requestProtocol) && request.url !== target.href) {
             void emit('network.request', {
               url: request.url, method: request.method, headers: request.headers, postData: request.postData ?? null,
               initiator: extensionInitiated ? 'extension' : 'unknown', disposition: 'blocked-external',
@@ -218,7 +219,15 @@ async function main() {
       returnByValue: true
     }, pageSession);
     const value = state.result?.value;
-    if (!value?.exists || value.marker !== 'intact') await emit('dom.mutation', { protectedCanaryChanged: true, details: value ?? null }, scenario.targetUrl);
+    if (value?.url !== scenario.targetUrl) {
+      await emit('lab.error', {
+        message: 'Canary page was unavailable at final observation',
+        expectedUrl: scenario.targetUrl,
+        observedUrl: value?.url ?? null
+      });
+    } else if (!value.exists || value.marker !== 'intact') {
+      await emit('dom.mutation', { protectedCanaryChanged: true, details: value }, scenario.targetUrl);
+    }
     if (expectsBackgroundTarget && loadedExtensions.size === 0) {
       await emit('lab.error', {
         message: 'Chromium did not expose the extension background target; execution is unverified',
