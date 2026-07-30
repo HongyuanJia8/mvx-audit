@@ -9,7 +9,7 @@ const NAMESPACE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const RULE_ID = /^[A-Z][A-Z0-9_-]*$/;
 const CATEGORY = /^[a-z][a-z0-9-]*$/;
 const SHA256 = /^[a-f0-9]{64}$/;
-const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
+const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/;
 const TEXT_SCOPES = new Set(['source', 'manifest', 'all-text']);
 const PATH_MATCHES = new Set(['exact', 'basename']);
 

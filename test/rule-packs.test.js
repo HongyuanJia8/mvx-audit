@@ -100,6 +100,9 @@ test('strict rule-pack schema rejects executable matchers, unsafe metadata, and 
     ['path traversal', pack({ rules: [rule({ indicators: [{ type: 'path', value: '../escape.js' }] })] }), 'INVALID_RULE_PACK'],
     ['path NUL', pack({ rules: [rule({ indicators: [{ type: 'path', value: 'payload\0.js' }] })] }), 'INVALID_RULE_PACK'],
     ['path display control', pack({ rules: [rule({ indicators: [{ type: 'path', value: 'x\n# injected.md' }] })] }), 'INVALID_RULE_PACK'],
+    ['path Arabic letter mark', pack({ rules: [rule({ indicators: [{ type: 'path', value: 'x\u061c.js' }] })] }), 'INVALID_RULE_PACK'],
+    ['path left-to-right mark', pack({ rules: [rule({ indicators: [{ type: 'path', value: 'x\u200e.js' }] })] }), 'INVALID_RULE_PACK'],
+    ['path right-to-left mark', pack({ rules: [rule({ indicators: [{ type: 'path', value: 'x\u200f.js' }] })] }), 'INVALID_RULE_PACK'],
     ['literal NUL', pack({ rules: [rule({ indicators: [{ type: 'text', value: 'ioc\0marker' }] })] }), 'RULE_PACK_LIMIT'],
     ['non-ASCII folding', pack({ rules: [rule({ indicators: [{ type: 'text', value: 'İOC', caseSensitive: false }] })] }), 'INVALID_RULE_PACK'],
     ['terminal control', pack({ rules: [rule({ title: 'unsafe\nheading' })] }), 'INVALID_RULE_PACK'],
@@ -320,7 +323,7 @@ test('custom display text is escaped in Markdown and SARIF markdown fields', asy
 test('control characters in package filenames cannot inject text, Markdown, or SARIF locations', async (t) => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-rule-path-render-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
-  const unsafePath = 'x\n# injected.md';
+  const unsafePath = 'x\u061c\u200e\u200f\n# injected.md';
   const before = await writeExtension(path.join(temp, 'before'), {
     manifest_version: 3, name: 'Before', version: '1.0.0'
   });
@@ -338,14 +341,17 @@ test('control characters in package filenames cannot inject text, Markdown, or S
 
   const comparison = await compareExtensions(before, after, { rulePacks: [input] });
   const text = auditToText(comparison.after);
-  assert.doesNotMatch(text, /at x\n# injected\.md/);
-  assert.ok(text.includes('at x\\u000A# injected.md'));
+  assert.equal(text.includes(unsafePath), false);
+  assert.ok(text.includes('at x\\u061C\\u200E\\u200F\\u000A# injected.md'));
 
   const markdown = comparisonToMarkdown(comparison);
-  assert.doesNotMatch(markdown, /\n# injected\.md/);
-  assert.ok(markdown.includes('x\\\\u000A# injected.md'));
+  assert.equal(markdown.includes(unsafePath), false);
+  assert.ok(markdown.includes('x\\\\u061C\\\\u200E\\\\u200F\\\\u000A# injected.md'));
 
   const sarif = auditToSarif(comparison.after);
   const result = sarif.runs[0].results.find((item) => item.ruleId.endsWith(':FILE_HASH'));
-  assert.equal(result.locations[0].physicalLocation.artifactLocation.uri, 'x%0A%23%20injected.md');
+  assert.equal(
+    result.locations[0].physicalLocation.artifactLocation.uri,
+    'x%D8%9C%E2%80%8E%E2%80%8F%0A%23%20injected.md'
+  );
 });

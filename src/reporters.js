@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g;
+const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 function escapeText(value) {
   return String(value).replace(UNSAFE_DISPLAY, (character) => {
