@@ -18,9 +18,10 @@ The analyzer answers two practical questions:
 ## Evidence model
 
 Each finding contains a stable rule ID, severity, confidence, category,
-description, remediation, primary references, and one or more file locations.
-Manifest evidence includes a JSON field; source evidence includes a one-based
-line number and a bounded snippet.
+description, remediation, primary references, and evidence. Manifest evidence
+includes a JSON field; source evidence includes a one-based line number and a
+bounded snippet. Complete-package hash indicators have package-level evidence
+without a fictitious file location.
 
 Findings are sorted by severity, rule ID, file, and line. Corpus traversal is
 also sorted, making JSON, text, SARIF, and generated documentation reproducible
@@ -43,13 +44,15 @@ source map, or other unparsed regular file changes. It deliberately describes
 the unpacked tree rather than ZIP metadata, compression, or a CRX signature.
 Use `artifact.sha256` for the exact packed bytes.
 
-The `mvx-static-v2` analysis profile includes:
+The `mvx-static-v3` analysis profile includes:
 
 - the byte length and SHA-256 of the raw `manifest.json` bytes;
 - the relative path, byte length, and raw-byte SHA-256 of every scanned source;
 - a SHA-256 over the sorted relative package layout and entry types;
 - the `mvx-package-v1` combined SHA-256;
-- the effective file, entry, depth, and byte limits; and
+- the effective file, entry, depth, and byte limits;
+- the sorted raw-byte provenance of every analyst-supplied declarative rule
+  pack and its normalized effective limits; and
 - a combined SHA-256 over that canonical identity record.
 
 The root directory is deliberately excluded, so copying identical input to a
@@ -143,6 +146,11 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - CRX/ZIP input defaults to a 100 MB archive, 10,000 entries, 50 MB per entry,
   250 MB total expansion, ratio 200 after 5 MB, and 64 path segments. Archive
   limits accept only the documented positive safe-integer fields.
+- Rule packs are bounded, no-follow UTF-8 JSON reads. Unknown or duplicate
+  fields, executable matchers, invalid paths or hashes, and unsafe display
+  controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
+  rules, 5,000 indicators, 1 MB total literal bytes, and 10,000 matches. See
+  [declarative rule packs](rule-packs.md) for the complete limits.
 
 ## Known limitations
 

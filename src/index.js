@@ -7,5 +7,6 @@ export { loadCatalog, validateCatalog } from './catalog.js';
 export { loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
 export { evaluateLabFiles, evaluateLabRun, labReportToText, parseLabEvents, VERDICTS } from './lab.js';
 export { fetchSample, fetchSampleBatch, planSample, planSampleBatch } from './quarantine.js';
+export { loadRulePacks, rulePacksToText } from './rule-packs.js';
 export { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
 export { MvxError } from './errors.js';

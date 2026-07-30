@@ -116,3 +116,46 @@ test('packed audit refuses a symlinked temporary parent', async (t) => {
     (error) => error.code === 'TEMP_NOT_FOUND'
   );
 });
+
+test('packed audits apply declarative rules and validate packs before creating temporary state', async (t) => {
+  const sample = await fixture(t, 'zip', [
+    { name: 'manifest.json', content: '{"manifest_version":3,"name":"Rule ZIP","version":"1.0.0"}' },
+    { name: 'worker.js', content: "const endpoint = 'packed-ioc.example.invalid';\n" }
+  ]);
+  const rulePack = path.join(sample.root, 'rules.json');
+  await writeFile(rulePack, `${JSON.stringify({
+    schemaVersion: 1,
+    namespace: 'packed.test',
+    name: 'Packed test indicators',
+    version: '1.0.0',
+    rules: [{
+      id: 'PACKED_IOC',
+      title: 'Packed indicator',
+      severity: 'high',
+      confidence: 'high',
+      category: 'campaign-ioc',
+      description: 'A synthetic packed indicator matched.',
+      remediation: 'Review the matching source.',
+      references: [],
+      indicators: [{ type: 'text', value: 'packed-ioc.example.invalid', scope: 'source' }]
+    }]
+  }, null, 2)}\n`, 'utf8');
+  const result = await auditExtensionArchive(sample.input, {
+    temporaryDirectory: sample.temporaryDirectory,
+    rulePacks: [rulePack]
+  });
+  assert.ok(result.findings.some((finding) => finding.id === 'RP:packed.test:PACKED_IOC'));
+  assert.equal(result.rulePacks[0].namespace, 'packed.test');
+  assert.deepEqual(await readdir(sample.temporaryDirectory), []);
+  assert.equal(JSON.stringify(result.rulePacks).includes(rulePack), false);
+
+  await writeFile(rulePack, '{broken', 'utf8');
+  await assert.rejects(
+    () => auditExtensionArchive(sample.input, {
+      temporaryDirectory: sample.temporaryDirectory,
+      rulePacks: [rulePack]
+    }),
+    (error) => error.code === 'INVALID_RULE_PACK'
+  );
+  assert.deepEqual(await readdir(sample.temporaryDirectory), []);
+});

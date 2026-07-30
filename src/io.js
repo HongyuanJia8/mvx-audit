@@ -15,7 +15,7 @@ const DEFAULT_LIMITS = Object.freeze({
   maxPackageFileBytes: 100_000_000,
   maxPackageBytes: 250_000_000
 });
-const ANALYSIS_PROFILE = 'mvx-static-v2';
+const ANALYSIS_PROFILE = 'mvx-static-v3';
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -45,7 +45,7 @@ function normalizeLimits(options) {
   return limits;
 }
 
-function analysisProvenance(manifestBytes, state, limits, inventory) {
+function analysisProvenance(manifestBytes, state, limits, inventory, context) {
   const manifest = {
     path: 'manifest.json',
     bytes: manifestBytes.length,
@@ -65,7 +65,9 @@ function analysisProvenance(manifestBytes, state, limits, inventory) {
     packageLayoutSha256,
     packageSha256: inventory.sha256,
     sources,
-    limits
+    limits,
+    rulePacks: context.rulePacks,
+    rulePackLimits: context.rulePackLimits
   };
   return { ...identity, sha256: sha256(JSON.stringify(identity)) };
 }
@@ -168,7 +170,7 @@ async function walk(root, current, state, limits, manifestBytes, depth = 0) {
   }
 }
 
-export async function loadExtension(inputPath, options = {}) {
+export async function loadExtension(inputPath, options = {}, context = { rulePacks: [], rulePackLimits: {} }) {
   const limits = normalizeLimits(options);
   const { root, manifestPath } = await resolveRoot(inputPath);
   let manifestStat;
@@ -216,7 +218,7 @@ export async function loadExtension(inputPath, options = {}) {
     sources: state.sources,
     executableFiles: state.executableFiles,
     inventory,
-    provenance: analysisProvenance(manifestBytes, state, limits, inventory),
+    provenance: analysisProvenance(manifestBytes, state, limits, inventory, context),
     metadata: {
       filesVisited: state.fileCount,
       entriesVisited: state.entryCount,

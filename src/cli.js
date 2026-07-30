@@ -13,14 +13,18 @@ import { evaluateLabFiles, labReportToText } from './lab.js';
 import { SEVERITIES } from './model.js';
 import { fetchSample, fetchSampleBatch, planSample, planSampleBatch, sampleBatchPlanToText, samplePlanToText } from './quarantine.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
+import { loadRulePacks, rulePacksToText } from './rule-packs.js';
 
 const VERSION = '3.0.0';
 const HELP = `mvx-audit ${VERSION}
 
 Usage:
   mvx audit <extension|file.crx|file.zip> [--format text|json|sarif]
-            [--output file] [--fail-on severity] [--acknowledge-risk]
+            [--output file] [--fail-on severity] [--rule-pack file ...]
+            [--acknowledge-risk]
   mvx compare <before> <after> [--format markdown|json] [--output file]
+              [--rule-pack file ...]
+  mvx rules validate <file> [file ...] [--format text|json]
   mvx corpus [list|validate] [--format text|json] [--catalog file]
   mvx intel stats|validate [--format text|json]
   mvx intel lookup <extension-id|sha256> [--format text|json]
@@ -35,6 +39,7 @@ Usage:
   mvx lab evaluate <scenario.json> <events.jsonl> [--format text|json]
   mvx benchmark static <quarantine> --acknowledge-risk [--label label]
                        [--limit number] [--threshold severity] [--format text|json]
+                       [--rule-pack file ...]
   mvx --help
 
 Exit codes:
@@ -52,6 +57,13 @@ function parseArgs(argv) {
     if (token === '--help' || token === '-h') options.help = true;
     else if (token === '--version' || token === '-v') options.version = true;
     else if (token === '--acknowledge-risk') options.acknowledgeRisk = true;
+    else if (token === '--rule-pack') {
+      const value = argv[index + 1];
+      if (!value || value.startsWith('--')) throw new MvxError('--rule-pack requires a value', { code: 'INVALID_ARGUMENT' });
+      options.rulePacks ??= [];
+      options.rulePacks.push(value);
+      index += 1;
+    }
     else if (valueOptions.has(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError(`${token} requires a value`, { code: 'INVALID_ARGUMENT' });
@@ -114,7 +126,8 @@ export async function runCli(argv, streams = process) {
       if (packed && !options.acknowledgeRisk) {
         throw new MvxError('Refusing packed extension extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
       }
-      const result = packed ? await auditExtensionArchive(args[0]) : await auditExtension(args[0]);
+      const auditOptions = { rulePacks: options.rulePacks };
+      const result = packed ? await auditExtensionArchive(args[0], auditOptions) : await auditExtension(args[0], auditOptions);
       const content = format === 'text' ? auditToText(result) : format === 'sarif' ? json(auditToSarif(result)) : json(result);
       await emit(content, options.output, streams.stdout);
       return thresholdMet(result, options.failOn) ? 1 : 0;
@@ -124,7 +137,7 @@ export async function runCli(argv, streams = process) {
       if (args.length !== 2) throw new MvxError('compare requires before and after extension paths', { code: 'INVALID_ARGUMENT' });
       const format = options.format ?? 'markdown';
       if (!['markdown', 'json'].includes(format)) throw new MvxError(`Unsupported comparison format: ${format}`, { code: 'INVALID_ARGUMENT' });
-      const result = await compareExtensions(args[0], args[1]);
+      const result = await compareExtensions(args[0], args[1], { rulePacks: options.rulePacks });
       await emit(format === 'json' ? json(result) : comparisonToMarkdown(result), options.output, streams.stdout);
       return 0;
     }
@@ -142,6 +155,18 @@ export async function runCli(argv, streams = process) {
       }
       const { catalog } = await loadCatalog(options.catalog);
       await emit(options.format === 'json' ? json(catalog) : catalogToText(catalog), options.output, streams.stdout);
+      return 0;
+    }
+
+    if (command === 'rules') {
+      if (args.length < 2 || args[0] !== 'validate') {
+        throw new MvxError('rules action must be validate <file> [file ...]', { code: 'INVALID_ARGUMENT' });
+      }
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported rules format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      const prepared = await loadRulePacks(args.slice(1));
+      const validation = { valid: true, rulePacks: prepared.provenance, limits: prepared.limits, summary: prepared.summary };
+      await emit(format === 'json' ? json(validation) : rulePacksToText(prepared), options.output, streams.stdout);
       return 0;
     }
 
@@ -290,7 +315,8 @@ export async function runCli(argv, streams = process) {
       const { records } = await loadIntelCatalog();
       const report = await runStaticBenchmark({
         quarantineDir: args[1], records, label: options.label, limit,
-        threshold: options.threshold, acknowledgeRisk: options.acknowledgeRisk
+        threshold: options.threshold, acknowledgeRisk: options.acknowledgeRisk,
+        rulePacks: options.rulePacks
       });
       await emit(format === 'json' ? json(report) : staticBenchmarkToText(report), options.output, streams.stdout);
       return report.summary.failures === 0 ? 0 : 1;
