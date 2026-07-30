@@ -7,7 +7,8 @@ import { MvxError } from './errors.js';
 import { sortFindings, summarizeFindings } from './model.js';
 import { resolveRulePacks } from './rule-packs.js';
 import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
-import { applyDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
+import { applyDispositionPolicies, loadDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
+import { assertOptionsObject } from './options.js';
 
 async function resolveTemporaryParent(input) {
   const absolute = path.resolve(input ?? os.tmpdir());
@@ -42,8 +43,12 @@ function sanitizeTemporaryError(error, workspace) {
 }
 
 export async function auditExtensionArchive(inputPath, options = {}) {
+  assertOptionsObject(options, 'Packed audit');
   const preparedRulePacks = await resolveRulePacks(options);
   const preparedDispositionPolicies = await resolveDispositionPolicies(options);
+  const emptyDispositionPolicies = await loadDispositionPolicies([], {
+    evaluationTime: preparedDispositionPolicies.evaluationTime
+  });
   const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
   try {
@@ -58,13 +63,17 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     const audit = await auditExtension(extracted, {
       limits: options.limits,
       _preparedRulePacks: preparedRulePacks,
-      _preparedDispositionPolicies: preparedDispositionPolicies
+      _preparedDispositionPolicies: emptyDispositionPolicies
     });
     const findings = sortFindings([
       ...audit.findings,
       ...analyzeArchiveAuthenticity(archive.authenticity, archive.archiveFormat)
     ]);
-    const dispositions = applyDispositionPolicies(findings, audit.package.sha256, preparedDispositionPolicies);
+    const dispositions = applyDispositionPolicies(findings, {
+      packageSha256: audit.package.sha256,
+      analysisSha256: audit.analysis.sha256,
+      artifactSha256: archive.archiveSha256
+    }, preparedDispositionPolicies);
     const dispositionPoliciesApplied = preparedDispositionPolicies.summary.policies > 0;
     return {
       ...audit,
@@ -75,6 +84,12 @@ export async function auditExtensionArchive(inputPath, options = {}) {
         reviewSummary: dispositions.reviewSummary
       } : {}),
       findings: dispositionPoliciesApplied ? dispositions.findings : findings,
+      scan: {
+        ...audit.scan,
+        ...(dispositionPoliciesApplied ? {
+          dispositionPoliciesApplied: preparedDispositionPolicies.summary.policies
+        } : {})
+      },
       target: { ...audit.target, root: archive.input, inputType: 'archive' },
       artifact: {
         kind: 'extension-archive',
@@ -93,6 +108,9 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       },
       assumptions: [
         ...audit.assumptions,
+        ...(dispositionPoliciesApplied ? [
+          'Disposition policies are analyst-supplied review metadata: original findings and raw risk summary remain authoritative and visible.'
+        ] : []),
         ...(archive.identityPolicy.matched ? [
           'All analyst-supplied archive identity expectations matched before extraction; their trust still depends on the external source that supplied them.'
         ] : []),

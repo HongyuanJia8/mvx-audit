@@ -152,6 +152,9 @@ export async function runCli(argv, streams = process) {
     if (options.failOnUnreviewed !== undefined && command !== 'audit') {
       throw new MvxError('--fail-on-unreviewed applies only to audit', { code: 'INVALID_ARGUMENT' });
     }
+    if (options.failOn !== undefined && command !== 'audit') {
+      throw new MvxError('--fail-on applies only to audit', { code: 'INVALID_ARGUMENT' });
+    }
 
     if (command === 'audit') {
       if (args.length !== 1) throw new MvxError('audit requires exactly one extension or archive path', { code: 'INVALID_ARGUMENT' });

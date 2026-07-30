@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { evidenceFingerprint, findingFingerprint, findingKey } from './fingerprints.js';
 
-const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/g;
+const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u2028-\u202e\u2066-\u2069]/g;
 
 function escapeText(value) {
   return String(value).replace(UNSAFE_DISPLAY, (character) => {
@@ -27,13 +27,17 @@ export function auditToText(result) {
     `Risk: ${result.summary.rating} (${result.summary.riskScore}/100), ${result.summary.total} finding(s)`,
     ...(result.reviewSummary ? [
       `Unreviewed risk: ${result.reviewSummary.rating} (${result.reviewSummary.riskScore}/100), ${result.reviewSummary.total} finding(s)`,
-      `Disposition policies: ${result.dispositionEvaluation.policies}; matched entries: ${result.dispositionEvaluation.matchedEntries}/${result.dispositionEvaluation.packageEntries}; unused: ${result.dispositionEvaluation.unusedPackageEntries}; active: ${result.dispositionEvaluation.activeFindings}; expired: ${result.dispositionEvaluation.expiredFindings}; evaluated: ${result.dispositionEvaluation.evaluatedAt}`
+      `Disposition policies: ${result.dispositionEvaluation.policies}; matched entries: ${result.dispositionEvaluation.matchedEntries}/${result.dispositionEvaluation.identityEntries}; unused: ${result.dispositionEvaluation.unusedIdentityEntries}; active: ${result.dispositionEvaluation.activeFindings}; expired: ${result.dispositionEvaluation.expiredFindings}; evaluated: ${result.dispositionEvaluation.evaluatedAt}`
     ] : []),
     `Scanned: ${result.scan.sourceFilesScanned} source file(s), ${result.scan.sourceBytesScanned} bytes`,
     ...(result.package ? [
       `Package (${result.package.profile}): ${result.package.fileCount} file(s), ${result.package.totalBytes} bytes, SHA-256: ${result.package.sha256}`
     ] : []),
     ...(result.rulePacks?.length ? [`Rule packs: ${result.rulePacks.length} (${result.rulePacks.map((pack) => `${escapeText(pack.namespace)}@${escapeText(pack.version)}`).join(', ')})`] : []),
+    ...(result.dispositionPolicies?.length ? [
+      `Disposition policy provenance: ${result.dispositionPolicies.length}`,
+      ...result.dispositionPolicies.map((policy) => `  ${escapeText(policy.policyId)}@${escapeText(policy.version)}: ${policy.bytes} bytes, SHA-256 ${policy.sha256}, ${policy.entries} entry/entries`)
+    ] : []),
     ...(result.artifact ? [
       `Archive (${result.artifact.format === 'crx' ? `CRX${result.artifact.crxVersion}` : result.artifact.format.toUpperCase()}) SHA-256: ${result.artifact.sha256}`,
       ...(result.artifact.authenticity?.status === 'verified' ? [
@@ -56,6 +60,7 @@ export function auditToText(result) {
   if (result.findings.length === 0) lines.push('No supported risk patterns were detected. This is not a guarantee of safety.');
   for (const finding of result.findings) {
     lines.push(`[${finding.severity.toUpperCase()}] ${escapeText(finding.id)} ${escapeText(finding.title)}`);
+    lines.push(`  Fingerprint: ${escapeText(findingKey(finding))}`);
     lines.push(`  ${escapeText(finding.description)}`);
     for (const item of finding.evidence) {
       const location = escapeText(item.file ?? item.scope ?? 'package');
@@ -64,6 +69,8 @@ export function auditToText(result) {
     if (finding.disposition) {
       lines.push(`  Disposition: ${finding.disposition.status.toUpperCase()} ${escapeText(finding.disposition.disposition)} by ${escapeText(finding.disposition.owner)} until ${finding.disposition.expiresAt}`);
       lines.push(`  Justification: ${escapeText(finding.disposition.justification)}`);
+      lines.push(`  Policy: ${escapeText(finding.disposition.policyId)}@${escapeText(finding.disposition.policyVersion)} SHA-256: ${finding.disposition.policySha256}`);
+      if (finding.disposition.ticketUrl) lines.push(`  Ticket: ${escapeText(finding.disposition.ticketUrl)}`);
     }
     lines.push(`  Fix: ${escapeText(finding.remediation)}`, '');
   }

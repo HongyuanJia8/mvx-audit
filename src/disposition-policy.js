@@ -3,13 +3,14 @@ import path from 'node:path';
 import { MvxError } from './errors.js';
 import { findingKey } from './fingerprints.js';
 import { summarizeFindings } from './model.js';
+import { assertOptionsObject } from './options.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
 const PREPARED = new WeakSet();
 const POLICY_ID = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const FINGERPRINT = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
-const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/;
+const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u2028-\u202e\u2066-\u2069]/;
 const DISPOSITIONS = new Set(['accepted-risk', 'false-positive', 'compensating-control']);
 
 export const DEFAULT_DISPOSITION_POLICY_LIMITS = Object.freeze({
@@ -118,7 +119,7 @@ function canonicalTime(value, label, code = 'INVALID_DISPOSITION_POLICY') {
 
 function ticketUrl(value, label) {
   if (value === undefined) return null;
-  string(value, label, { max: 2_048 });
+  string(value, label, { max: 2_048, display: true });
   let parsed;
   try { parsed = new URL(value); } catch {
     throw new MvxError(`${label} must be an absolute HTTPS URL`, { code: 'INVALID_DISPOSITION_POLICY' });
@@ -132,13 +133,17 @@ function ticketUrl(value, label) {
 function normalizeEntry(input, label) {
   const entry = object(input, label);
   keys(entry, new Set([
-    'fingerprint', 'packageSha256', 'disposition', 'owner', 'justification', 'expiresAt', 'ticketUrl'
+    'fingerprint', 'packageSha256', 'analysisSha256', 'artifactSha256', 'disposition', 'owner', 'justification', 'expiresAt', 'ticketUrl'
   ]), label);
   const disposition = string(entry.disposition, `${label}.disposition`, { max: 32 });
   if (!DISPOSITIONS.has(disposition)) throw new MvxError(`${label}.disposition is unsupported`, { code: 'INVALID_DISPOSITION_POLICY' });
   return {
     fingerprint: string(entry.fingerprint, `${label}.fingerprint`, { max: 256, pattern: FINGERPRINT }),
     packageSha256: string(entry.packageSha256, `${label}.packageSha256`, { max: 64, pattern: SHA256 }),
+    analysisSha256: string(entry.analysisSha256, `${label}.analysisSha256`, { max: 64, pattern: SHA256 }),
+    artifactSha256: entry.artifactSha256 === null
+      ? null
+      : string(entry.artifactSha256, `${label}.artifactSha256`, { max: 64, pattern: SHA256 }),
     disposition,
     owner: string(entry.owner, `${label}.owner`, { max: 200, display: true }),
     justification: string(entry.justification, `${label}.justification`, { min: 20, max: 2_000, display: true }),
@@ -178,9 +183,7 @@ export async function loadDispositionPolicies(inputs = [], options = {}) {
   if (!Array.isArray(inputs) || inputs.some((input) => typeof input !== 'string' || input.length === 0)) {
     throw new MvxError('dispositionPolicies must be an array of file paths', { code: 'INVALID_ARGUMENT' });
   }
-  if (!options || Array.isArray(options) || typeof options !== 'object') {
-    throw new MvxError('Disposition-policy options must be an object', { code: 'INVALID_ARGUMENT' });
-  }
+  assertOptionsObject(options, 'Disposition-policy loader');
   const { evaluationTime: requestedTime, ...limitOptions } = options;
   const limits = normalizeLimits(limitOptions);
   if (inputs.length > limits.maxPolicies) throw new MvxError(`More than ${limits.maxPolicies} disposition policies requested`, { code: 'DISPOSITION_POLICY_LIMIT' });
@@ -222,8 +225,8 @@ export async function loadDispositionPolicies(inputs = [], options = {}) {
     if (policyIds.has(policy.policyId)) throw new MvxError(`Duplicate disposition policy ID: ${policy.policyId}`, { code: 'INVALID_DISPOSITION_POLICY' });
     policyIds.add(policy.policyId);
     for (const entry of policy.entries) {
-      const identity = `${entry.packageSha256}\0${entry.fingerprint}`;
-      if (identities.has(identity)) throw new MvxError(`Conflicting disposition for ${entry.packageSha256}:${entry.fingerprint}`, { code: 'INVALID_DISPOSITION_POLICY' });
+      const identity = `${entry.packageSha256}\0${entry.analysisSha256}\0${entry.artifactSha256 ?? '<unpacked>'}\0${entry.fingerprint}`;
+      if (identities.has(identity)) throw new MvxError(`Conflicting disposition for ${entry.packageSha256}:${entry.analysisSha256}:${entry.artifactSha256 ?? '<unpacked>'}:${entry.fingerprint}`, { code: 'INVALID_DISPOSITION_POLICY' });
       identities.add(identity);
     }
   }
@@ -239,7 +242,13 @@ export async function loadDispositionPolicies(inputs = [], options = {}) {
 }
 
 export async function resolveDispositionPolicies(options = {}) {
+  assertOptionsObject(options, 'Disposition-policy resolver');
   if (options._preparedDispositionPolicies !== undefined) {
+    const conflicts = ['dispositionPolicies', 'dispositionPolicyLimits', 'dispositionAt']
+      .filter((key) => Object.hasOwn(options, key));
+    if (conflicts.length > 0) {
+      throw new MvxError(`Prepared disposition policies cannot be combined with public option(s): ${conflicts.join(', ')}`, { code: 'INVALID_ARGUMENT' });
+    }
     if (!PREPARED.has(options._preparedDispositionPolicies)) throw new MvxError('Prepared disposition policies are invalid', { code: 'INVALID_ARGUMENT' });
     return options._preparedDispositionPolicies;
   }
@@ -249,14 +258,26 @@ export async function resolveDispositionPolicies(options = {}) {
   });
 }
 
-export function applyDispositionPolicies(findings, packageSha256, prepared) {
+export function applyDispositionPolicies(findings, identity, prepared) {
   if (!PREPARED.has(prepared)) throw new MvxError('Prepared disposition policies are invalid', { code: 'INVALID_ARGUMENT' });
   if (!Array.isArray(findings)) throw new MvxError('Disposition evaluation requires a findings array', { code: 'INVALID_ARGUMENT' });
-  if (!SHA256.test(packageSha256)) throw new MvxError('Disposition evaluation requires a package SHA-256', { code: 'INVALID_ARGUMENT' });
+  assertOptionsObject(identity, 'Disposition identity');
+  const identityKeys = Object.keys(identity).sort(compareText);
+  if (identityKeys.join(',') !== 'analysisSha256,artifactSha256,packageSha256'
+    || typeof identity.packageSha256 !== 'string' || !SHA256.test(identity.packageSha256)
+    || typeof identity.analysisSha256 !== 'string' || !SHA256.test(identity.analysisSha256)
+    || (identity.artifactSha256 !== null
+      && (typeof identity.artifactSha256 !== 'string' || !SHA256.test(identity.artifactSha256)))) {
+    throw new MvxError('Disposition evaluation requires package, analysis, and artifact SHA-256 identities', { code: 'INVALID_ARGUMENT' });
+  }
   const entries = new Map();
   for (const policy of prepared.policies) {
     for (const entry of policy.entries) {
-      if (entry.packageSha256 === packageSha256) entries.set(entry.fingerprint, { policy, entry });
+      if (entry.packageSha256 === identity.packageSha256
+        && entry.analysisSha256 === identity.analysisSha256
+        && entry.artifactSha256 === identity.artifactSha256) {
+        entries.set(entry.fingerprint, { policy, entry });
+      }
     }
   }
   const matchedEntries = new Set();
@@ -284,9 +305,9 @@ export function applyDispositionPolicies(findings, packageSha256, prepared) {
     evaluation: {
       profile: 'mvx-disposition-v1', evaluatedAt: prepared.evaluationTime,
       policies: prepared.summary.policies, entries: prepared.summary.entries,
-      packageEntries: entries.size, matchedEntries: matchedEntries.size,
+      identityEntries: entries.size, matchedEntries: matchedEntries.size,
       activeFindings, expiredFindings,
-      unusedPackageEntries: entries.size - matchedEntries.size
+      unusedIdentityEntries: entries.size - matchedEntries.size
     }
   };
 }

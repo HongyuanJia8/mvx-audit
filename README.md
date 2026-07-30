@@ -57,7 +57,7 @@ node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
 node bin/mvx.js audit /path/to/extension --format sarif \
   --output results.sarif --fail-on high
 
-# Attach package-bound review metadata without deleting raw findings
+# Attach complete identity-bound review metadata without deleting raw findings
 node bin/mvx.js dispositions validate examples/disposition-policy.json
 node bin/mvx.js audit /path/to/extension \
   --disposition-policy review.json --fail-on-unreviewed high
@@ -118,8 +118,9 @@ development.
   2.1.0 suitable for GitHub code scanning.
 - Stable finding keys and domain-separated SARIF finding/evidence fingerprints
   for reproducible deduplication without hiding the underlying findings.
-- Strict package-bound disposition policies with owner, justification, expiry,
-  byte provenance, raw/unreviewed summaries, and explicit CI semantics.
+- Strict disposition policies bound to finding, package, analysis semantics, and
+  packed-artifact identity, with owner, justification, expiry, byte provenance,
+  raw/unreviewed summaries, and explicit CI semantics.
 - Path-independent analysis provenance in JSON and SARIF, with raw manifest and
   per-source SHA-256 values, a full-package digest, the effective scan limits,
   and one combined identity also shown in text and comparison output.

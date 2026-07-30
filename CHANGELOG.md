@@ -8,8 +8,9 @@ versioning from the 2.0 reset onward.
 ### Added
 
 - Strict external disposition policies bound to finding fingerprint and exact
-  package SHA-256, retaining raw findings while adding review metadata, expiry
-  evaluation, validation CLI, and explicit unreviewed CI thresholds.
+  package, analysis, and packed-artifact identities, retaining raw findings
+  while adding review metadata, expiry evaluation, validation CLI, and explicit
+  unreviewed CI thresholds.
 - Stable fingerprints on every finding plus canonical, domain-separated SARIF
   finding and evidence partial fingerprints.
 - Fail-closed external archive identity policy for expected SHA-256 and verified

@@ -65,10 +65,13 @@ trustworthiness and freshness of the external source that supplied the values.
 
 Treat disposition policies as privileged review inputs. Keep them outside the
 extension package, review changes like code, and require exact package SHA-256,
-owner, justification, and expiry. MVX rejects ambiguous entries and never
-removes the original finding or raw summary. Prefer `--fail-on` when policy
-provenance is not independently trusted; `--fail-on-unreviewed` explicitly
-chooses to rely on active external dispositions.
+analysis SHA-256, the exact archive SHA-256 for packed input (`null` for an
+unpacked directory), owner, justification, and expiry. This prevents review
+transfer across changed analyzer/rule-pack semantics or a different CRX/ZIP
+wrapper with the same payload. MVX rejects ambiguous entries and never removes
+the original finding or raw summary. Prefer `--fail-on` when policy provenance
+is not independently trusted; `--fail-on-unreviewed` explicitly chooses to rely
+on active external dispositions.
 
 Live browser analysis is accepted only through the documented container lab:
 no public network, no host browser profile, no real user data, no writable

@@ -6,11 +6,15 @@ repeatable analyst review and CI triage, not for declaring an extension safe.
 
 ## Trust and binding
 
-Every entry binds the stable finding `fingerprint` and exact `mvx-package-v1`
-lowercase SHA-256. Changing any packaged byte invalidates that binding. A
-fingerprint alone identifies a review category, not package contents. Policy
-files remain external to the audited extension, and reports retain their exact
-byte length and SHA-256 provenance.
+Every entry binds the stable finding `fingerprint`, exact `mvx-package-v1`
+package SHA-256, exact analysis SHA-256, and artifact identity. The analysis
+digest binds the analyzer profile, effective limits, package identity, and
+exact rule-pack provenance, so changing rule semantics invalidates prior
+review. `artifactSha256` must be `null` for an unpacked directory and the exact
+archive SHA-256 for CRX/ZIP input; therefore a disposition cannot transfer to a
+different archive wrapper with the same extracted payload. Policy files remain
+external to the audited extension, and reports retain their exact byte length
+and SHA-256 provenance.
 
 ## Schema
 
@@ -23,6 +27,8 @@ byte length and SHA-256 provenance.
   "entries": [{
     "fingerprint": "MVX102:cookies",
     "packageSha256": "<64 lowercase hex characters>",
+    "analysisSha256": "<64 lowercase hex characters>",
+    "artifactSha256": null,
     "disposition": "accepted-risk",
     "owner": "extension-security@example.invalid",
     "justification": "Reviewed against the exact package and approved under ticket 123.",
@@ -36,8 +42,8 @@ Allowed dispositions are `accepted-risk`, `false-positive`, and
 `compensating-control`. Owner, a justification of at least 20 characters, and a
 canonical UTC expiry with milliseconds are required. `ticketUrl` is optional
 and must be HTTPS without credentials. Duplicate JSON keys, unknown fields,
-unsafe display controls, symlinks, non-UTF-8 files, and duplicate
-package/fingerprint declarations across loaded policies are rejected.
+unsafe display controls, symlinks, non-UTF-8 files, and duplicate complete
+identity/fingerprint declarations across loaded policies are rejected.
 
 An entry is active only when `expiresAt` is strictly later than the recorded
 evaluation time. Equality is expired. Use `--disposition-at` to reproduce an
@@ -79,5 +85,6 @@ not emit SARIF `suppressions`, because downstream tools may hide them by
 default.
 
 The [checked-in example](../examples/disposition-policy.json) uses an
-intentionally non-matching zero package digest that must be replaced after
-review.
+intentionally non-matching zero package and analysis digests that must be
+replaced after review. Its `artifactSha256` is `null` for unpacked input; use
+the reported `artifact.sha256` for a packed audit.

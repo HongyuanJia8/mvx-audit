@@ -7,6 +7,7 @@ import { analyzeCustomRules } from './rules/custom-rules.js';
 import { resolveRulePacks } from './rule-packs.js';
 import { createFinding } from './model.js';
 import { applyDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
+import { assertOptionsObject } from './options.js';
 
 function manifestReferences(manifest) {
   const references = [];
@@ -50,6 +51,7 @@ function analyzeIntegrity(manifest, files) {
 }
 
 export async function auditExtension(inputPath, options = {}) {
+  assertOptionsObject(options, 'Audit');
   const preparedRulePacks = await resolveRulePacks(options);
   const preparedDispositionPolicies = await resolveDispositionPolicies(options);
   const snapshot = await loadExtension(inputPath, options.limits, {
@@ -67,7 +69,11 @@ export async function auditExtension(inputPath, options = {}) {
     ...analyzeSources(snapshot.sources),
     ...analyzeCustomRules(snapshot, preparedRulePacks)
   ]);
-  const dispositions = applyDispositionPolicies(findings, snapshot.inventory.sha256, preparedDispositionPolicies);
+  const dispositions = applyDispositionPolicies(findings, {
+    packageSha256: snapshot.inventory.sha256,
+    analysisSha256: snapshot.provenance.sha256,
+    artifactSha256: null
+  }, preparedDispositionPolicies);
   const dispositionPoliciesApplied = preparedDispositionPolicies.summary.policies > 0;
   return {
     schemaVersion: 1,

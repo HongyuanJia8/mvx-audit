@@ -7,6 +7,8 @@
     {
       "fingerprint": "MVX102:cookies",
       "packageSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "analysisSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "artifactSha256": null,
       "disposition": "accepted-risk",
       "owner": "extension-security@example.invalid",
       "justification": "Example only: replace the package digest after reviewing the exact package.",
