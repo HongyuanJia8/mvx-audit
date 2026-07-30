@@ -7,7 +7,7 @@ export { loadCatalog, validateCatalog } from './catalog.js';
 export { loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
 export { evaluateLabFiles, evaluateLabRun, labReportToText, parseLabEvents, VERDICTS } from './lab.js';
 export {
-  EVIDENCE_FINGERPRINT_PROFILE, FINDING_FINGERPRINT_PROFILE,
+  EVIDENCE_FINGERPRINT_PROFILE, FINDING_FINGERPRINT_PROFILE, FINGERPRINT_LIMITS,
   evidenceFingerprint, findingFingerprint, findingKey
 } from './fingerprints.js';
 export { fetchSample, fetchSampleBatch, planSample, planSampleBatch } from './quarantine.js';

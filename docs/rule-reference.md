@@ -66,7 +66,9 @@ domain-separated SHA-256 `partialFingerprints` under `mvxFinding/v1` and
 that fingerprint together with the complete canonical evidence object. Their
 exported domain profiles are `mvx-finding-v1` and `mvx-evidence-v1`. Object key
 order and checkout location do not affect either value, while an evidence field
-change does affect the evidence fingerprint.
+change does affect the evidence fingerprint. The exact input domain, resource
+limits, canonical encoding, and fixed digest vectors are specified in the
+[methodology](methodology.md#finding-and-evidence-fingerprints).
 
 Finding fingerprints identify a review category, not package contents. Any
 future disposition policy must bind the fingerprint to the exact

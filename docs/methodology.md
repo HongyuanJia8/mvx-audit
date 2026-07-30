@@ -68,8 +68,24 @@ Every finding carries a stable semantic fingerprint. SARIF stores digests under
 profile name, one NUL byte, and canonical JSON. The finding object contains only
 the semantic fingerprint. The evidence object contains that fingerprint plus
 the complete evidence value. Canonical JSON sorts object keys recursively,
-preserves array order, omits undefined object members, and otherwise follows
-JSON primitive encoding.
+using ascending UTF-16 code-unit order, preserves array order, converts sparse
+array positions and array `undefined` to `null`, omits undefined object members,
+and uses `JSON.stringify` encoding for finite numbers, booleans, strings, and
+object keys. Thus negative zero encodes as `0`; strings use JSON escaping,
+including escaped lone surrogate code units. Non-finite numbers, BigInt,
+functions, symbols, accessors, cycles, symbol-keyed properties, non-plain
+objects/arrays, extra array properties, and a top-level undefined evidence value
+are rejected. The complete canonical envelope is bounded to maximum depth 512,
+5,000,000 visited values, and 12,000,000 canonical UTF-8 bytes. The byte bound
+is above the default 10 MB per-source scan limit while still bounding direct API
+use.
+
+Fixed vectors (the `\0` below denotes one NUL byte, not two text characters):
+
+| SARIF key | Exact UTF-8 hash preimage | SHA-256 |
+|---|---|---|
+| `mvxFinding/v1` | `mvx-finding-v1\0{"fingerprint":"MVX102:cookies"}` | `15af11ff59e5cd84b0b221d0c01c52bcc55f0b73804e2f766dcf53827e1c1eb3` |
+| `mvxEvidence/v1` | `mvx-evidence-v1\0{"evidence":{"details":{"allowed":true,"count":1},"file":"worker.js","line":2},"fingerprint":"MVX102:cookies"}` | `3345df6c9467b08da1e4b3f1ef1c06ea2ff15c3fa058f41ac678ce899b5490c9` |
 
 Relative evidence paths and canonical object-key ordering make the result
 independent of checkout root and JavaScript insertion order. Any evidence field
