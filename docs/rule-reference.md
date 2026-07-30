@@ -42,6 +42,19 @@ within the 3.x release line.
 | MVX211 | High | Medium | A remote origin embedded as extension UI in an iframe. |
 | MVX212 | High | High | Sensitive clipboard, camera, microphone, or geolocation delegation to an iframe. |
 
+## Analyst-supplied declarative rules
+
+Validated rule-pack findings use `RP:<namespace>:<rule-id>` as both the rule ID
+and stable fingerprint. Their severity, confidence, category, explanation,
+remediation, and HTTPS references come from the exact pack bytes recorded in
+the report. Supported indicators are literal text, normalized regular-file
+paths, regular-file SHA-256, and the complete `mvx-package-v1` SHA-256. See the
+[rule-pack guide](rule-packs.md) for schema, limits, and interpretation.
+
+These findings are local review indicators. MVX does not promote them to
+malware verdicts, authenticate their publisher, or imply that the matched
+package executed the represented behavior.
+
 ## Suppression policy
 
 Version 3.0 does not support inline suppression. Security findings should remain

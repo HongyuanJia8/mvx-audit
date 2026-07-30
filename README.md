@@ -53,6 +53,11 @@ node bin/mvx.js audit /path/to/extension --format sarif \
 node bin/mvx.js compare /path/to/mv2 /path/to/mv3 \
   --format markdown --output migration-review.md
 
+# Validate and apply local declarative campaign indicators
+node bin/mvx.js rules validate examples/campaign-rule-pack.json
+node bin/mvx.js audit /path/to/extension \
+  --rule-pack examples/campaign-rule-pack.json
+
 # Explore and validate the built-in research corpus
 node bin/mvx.js corpus list
 npm run corpus:validate
@@ -107,12 +112,16 @@ development.
 - Direct CRX/ZIP audit through a private, automatically removed extraction,
   binding the exact archive SHA-256, byte length, format, version, and
   extraction statistics to the static report.
+- Strict, bounded declarative JSON rule packs for literal text, package path,
+  regular-file SHA-256, and complete-package SHA-256 indicators. Packs are
+  treated as untrusted data and their exact raw-byte provenance is included in
+  the analysis identity.
 - Bounded scanning of all packaged source (including vendored directories) that
   refuses a symlinked root, skips nested symlinks, and fails closed on file or
   byte limits.
 
-See the complete [rule reference](docs/rule-reference.md) and
-[methodology](docs/methodology.md).
+See the complete [rule reference](docs/rule-reference.md), [declarative rule
+pack guide](docs/rule-packs.md), and [methodology](docs/methodology.md).
 
 ## Synthetic corpus and real-world intelligence
 
@@ -192,20 +201,24 @@ npm audit --omit=dev    # expected: zero dependencies, zero advisories
 Public API:
 
 ```js
-import { auditExtension, auditExtensionArchive, compareExtensions } from 'mvx-audit';
+import {
+  auditExtension, auditExtensionArchive, compareExtensions, loadRulePacks
+} from 'mvx-audit';
 
-const audit = await auditExtension('/path/to/unpacked-extension');
-const packedAudit = await auditExtensionArchive('/path/to/extension.crx');
-const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3');
+const rulePacks = ['./team-iocs.json'];
+await loadRulePacks(rulePacks); // standalone validation and provenance
+const audit = await auditExtension('/path/to/unpacked-extension', { rulePacks });
+const packedAudit = await auditExtensionArchive('/path/to/extension.crx', { rulePacks });
+const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3', { rulePacks });
 ```
 
 Every successful audit includes `package.sha256` and `analysis.sha256`.
 Matching package values mean the same `mvx-package-v1` profile inventoried the
 same extension-relative entries and regular-file bytes, even when directories
-differ. The analysis identity additionally binds the text-analysis profile and
-effective limits. Neither value is a signature or a digest of the original
-CRX/ZIP container; retain `artifact.sha256` or the quarantine SHA-256 for exact
-packed-artifact identity.
+differ. The analysis identity additionally binds the text-analysis profile,
+effective limits, and exact declarative rule-pack provenance. Neither value is
+a signature or a digest of the original CRX/ZIP container; retain
+`artifact.sha256` or the quarantine SHA-256 for exact packed-artifact identity.
 
 ## Security and responsible use
 

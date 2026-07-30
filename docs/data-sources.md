@@ -9,6 +9,11 @@ MVX separates three data planes:
 3. `quarantine/` is ignored by Git and reserved for explicitly acquired,
    untrusted artifacts. Nothing in quarantine is used by ordinary tests.
 
+Analyst-supplied declarative rule packs form a separate local input plane. MVX
+does not download or update them. Their exact raw-byte SHA-256 and descriptive
+version are recorded in each audit, but their claims retain the trust and
+licensing status assigned by the analyst who selected them.
+
 ## Pinned default sources
 
 ### MalExt Sentry

@@ -32,7 +32,7 @@ test('text output includes score, evidence, and remediation', async () => {
   const text = auditToText(audit);
   assert.match(text, /Risk: high \(61\/100\)/);
   assert.match(text, /Package \(mvx-package-v1\): 2 file\(s\), 246 bytes, SHA-256: [a-f0-9]{64}/);
-  assert.match(text, /Analysis \(mvx-static-v2\) SHA-256: [a-f0-9]{64}/);
+  assert.match(text, /Analysis \(mvx-static-v3\) SHA-256: [a-f0-9]{64}/);
   assert.match(text, /at fixture\.js:2/);
   assert.match(text, /Fix: Avoid reading cookie values/);
 });

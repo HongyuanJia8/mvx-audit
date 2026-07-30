@@ -7,9 +7,13 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Strict local declarative JSON rule packs for literal text, path, file digest,
+  and complete-package digest indicators, with `any`/`all` composition,
+  bounded deterministic matching, CLI validation, report integration, and
+  raw-byte provenance bound into the new `mvx-static-v3` identity.
 - Path-independent full-package inventory with per-file SHA-256 values, bounded
   hashing of unparsed assets, and review findings for WebAssembly, PE/DOS, ELF,
-  and Mach-O magic signatures. The `mvx-static-v2` identity binds the complete
+  and Mach-O magic signatures. The `mvx-static-v3` identity binds the complete
   `mvx-package-v1` digest.
 - One-command CRX/ZIP static audit with explicit CLI risk acknowledgement,
   private temporary extraction and `finally`-based cleanup, plus exact archive

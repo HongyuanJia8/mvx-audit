@@ -4,6 +4,7 @@ import path from 'node:path';
 import { auditExtension } from './analyzer.js';
 import { unpackExtensionArchive } from './archive.js';
 import { MvxError } from './errors.js';
+import { resolveRulePacks } from './rule-packs.js';
 
 async function resolveTemporaryParent(input) {
   const absolute = path.resolve(input ?? os.tmpdir());
@@ -38,13 +39,14 @@ function sanitizeTemporaryError(error, workspace) {
 }
 
 export async function auditExtensionArchive(inputPath, options = {}) {
+  const preparedRulePacks = await resolveRulePacks(options);
   const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
   try {
     await chmod(workspace, 0o700);
     const extracted = path.join(workspace, 'extension');
     const archive = await unpackExtensionArchive(inputPath, extracted, { limits: options.archiveLimits });
-    const audit = await auditExtension(extracted, { limits: options.limits });
+    const audit = await auditExtension(extracted, { limits: options.limits, _preparedRulePacks: preparedRulePacks });
     return {
       ...audit,
       target: { ...audit.target, root: archive.input, inputType: 'archive' },

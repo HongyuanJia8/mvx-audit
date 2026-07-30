@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { runStaticBenchmark } from '../src/benchmark.js';
+import { runStaticBenchmark, staticBenchmarkToText } from '../src/benchmark.js';
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
 const HASH = 'a'.repeat(64);
@@ -14,22 +14,42 @@ test('static benchmark measures review triggers without claiming malware accurac
   const extensionRoot = path.join(root, ID);
   await mkdir(extensionRoot);
   await writeFile(path.join(extensionRoot, `${HASH}.crx`), 'fixture');
+  const rulePack = path.join(root, 'benchmark-rules.json');
+  await writeFile(rulePack, `${JSON.stringify({
+    schemaVersion: 1,
+    namespace: 'benchmark.test',
+    name: 'Benchmark indicators',
+    version: '1.0.0',
+    rules: [{
+      id: 'BENCHMARK_IOC', title: 'Benchmark indicator', severity: 'high', confidence: 'high',
+      category: 'campaign-ioc', description: 'Synthetic benchmark indicator.', remediation: 'Review it.',
+      references: [], indicators: [{ type: 'path', value: 'worker.js' }]
+    }]
+  })}\n`, 'utf8');
+  let observedRulePacks;
   const report = await runStaticBenchmark({
     quarantineDir: root,
     records: [{ extensionId: ID, labels: ['behavior-confirmed-malicious'] }],
     label: 'behavior-confirmed-malicious',
     acknowledgeRisk: true,
+    rulePacks: [rulePack],
     unpacker: async (_input, destination) => ({ destination, files: 2 }),
-    auditor: async () => ({
-      target: { manifestVersion: 3, version: '1.0' },
-      summary: { counts: { critical: 0, high: 1, medium: 0, low: 0, info: 0 } },
-      scan: { filesVisited: 2 },
-      findings: [{ id: 'MVX999', severity: 'high' }]
-    })
+    auditor: async (_destination, options) => {
+      observedRulePacks = options._preparedRulePacks.provenance;
+      return {
+        target: { manifestVersion: 3, version: '1.0' },
+        summary: { counts: { critical: 0, high: 1, medium: 0, low: 0, info: 0 } },
+        scan: { filesVisited: 2 },
+        findings: [{ id: 'MVX999', severity: 'high' }]
+      };
+    }
   });
   assert.equal(report.summary.reviewTriggerRate, 1);
   assert.equal(report.ruleCounts.MVX999, 1);
+  assert.equal(report.rulePacks[0].namespace, 'benchmark.test');
+  assert.deepEqual(observedRulePacks, report.rulePacks);
   assert.match(report.caveats[0], /not malware-classification accuracy/);
+  assert.match(staticBenchmarkToText({ ...report, rulePacks: undefined }), /Rule packs: 0/);
 });
 
 test('static benchmark safely reuses an existing extraction', async (t) => {

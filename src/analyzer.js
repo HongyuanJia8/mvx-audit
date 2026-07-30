@@ -3,6 +3,8 @@ import { sortFindings, summarizeFindings } from './model.js';
 import { analyzeManifest, hostPermissions } from './rules/manifest-rules.js';
 import { analyzeSources } from './rules/source-rules.js';
 import { analyzePackage } from './rules/package-rules.js';
+import { analyzeCustomRules } from './rules/custom-rules.js';
+import { resolveRulePacks } from './rule-packs.js';
 import { createFinding } from './model.js';
 
 function manifestReferences(manifest) {
@@ -47,7 +49,11 @@ function analyzeIntegrity(manifest, files) {
 }
 
 export async function auditExtension(inputPath, options = {}) {
-  const snapshot = await loadExtension(inputPath, options.limits);
+  const preparedRulePacks = await resolveRulePacks(options);
+  const snapshot = await loadExtension(inputPath, options.limits, {
+    rulePacks: preparedRulePacks.provenance,
+    rulePackLimits: preparedRulePacks.limits
+  });
   const declaredPermissions = [
     ...(Array.isArray(snapshot.manifest.permissions) ? snapshot.manifest.permissions : []),
     ...(Array.isArray(snapshot.manifest.optional_permissions) ? snapshot.manifest.optional_permissions : [])
@@ -56,7 +62,8 @@ export async function auditExtension(inputPath, options = {}) {
     ...analyzeIntegrity(snapshot.manifest, snapshot.files),
     ...analyzePackage(snapshot.executableFiles),
     ...analyzeManifest(snapshot.manifest, snapshot.sources),
-    ...analyzeSources(snapshot.sources)
+    ...analyzeSources(snapshot.sources),
+    ...analyzeCustomRules(snapshot, preparedRulePacks)
   ]);
   return {
     schemaVersion: 1,
@@ -74,12 +81,21 @@ export async function auditExtension(inputPath, options = {}) {
     },
     analysis: snapshot.provenance,
     package: snapshot.inventory,
+    rulePacks: preparedRulePacks.provenance,
     findings,
-    scan: snapshot.metadata,
+    scan: {
+      ...snapshot.metadata,
+      rulePacksApplied: preparedRulePacks.summary.packs,
+      customRulesApplied: preparedRulePacks.summary.rules,
+      customIndicatorsApplied: preparedRulePacks.summary.indicators
+    },
     assumptions: [
       'Static findings describe capability and suspicious implementation patterns, not proof of malicious intent.',
       'Absence of a finding is not proof that an extension is safe.',
-      'Manifest V3 reduces selected attack surfaces but does not make granted privileges harmless.'
+      'Manifest V3 reduces selected attack surfaces but does not make granted privileges harmless.',
+      ...(preparedRulePacks.packs.length > 0 ? [
+        'Analyst-supplied declarative rule-pack matches are review indicators, not proof of malicious intent.'
+      ] : [])
     ]
   };
 }

@@ -4,6 +4,7 @@ import { auditExtension } from './analyzer.js';
 import { unpackCrx } from './archive.js';
 import { MvxError } from './errors.js';
 import { SEVERITIES } from './model.js';
+import { resolveRulePacks } from './rule-packs.js';
 
 const EXTENSION_ID = /^[a-p]{32}$/;
 const SHA256_CRX = /^([a-f0-9]{64})\.crx$/;
@@ -44,11 +45,15 @@ export async function runStaticBenchmark({
   limit = 100,
   threshold = 'high',
   acknowledgeRisk = false,
+  rulePacks,
+  rulePackLimits,
+  _preparedRulePacks,
   unpacker = unpackCrx,
   auditor = auditExtension
 } = {}) {
   if (!acknowledgeRisk) throw new MvxError('Refusing malware extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
   if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 1000) throw new MvxError('Benchmark limit must be between 1 and 1000', { code: 'INVALID_ARGUMENT' });
+  const preparedRulePacks = await resolveRulePacks({ rulePacks, rulePackLimits, _preparedRulePacks });
   const severityLimit = thresholdIndex(threshold);
   const catalog = new Map(records.map((record) => [record.extensionId, record]));
   const discovered = await discoverSamples(quarantineDir);
@@ -69,7 +74,7 @@ export async function runStaticBenchmark({
         if (existing.isSymbolicLink() || !existing.isDirectory()) throw new MvxError('Cached extraction is unsafe', { code: 'UNSAFE_QUARANTINE' });
         archive = { files: null, cached: true };
       }
-      const audit = await auditor(destination);
+      const audit = await auditor(destination, { _preparedRulePacks: preparedRulePacks });
       const triggering = audit.findings.filter((finding) => SEVERITIES.indexOf(finding.severity) <= severityLimit);
       results.push({
         extensionId: sample.extensionId,
@@ -96,6 +101,8 @@ export async function runStaticBenchmark({
     benchmark: 'static-triage',
     label: label ?? null,
     threshold,
+    rulePacks: preparedRulePacks.provenance,
+    rulePackLimits: preparedRulePacks.limits,
     summary: {
       quarantinedArtifacts: discovered.samples.length,
       selected: selected.length,
@@ -121,6 +128,7 @@ export function staticBenchmarkToText(report) {
     'MVX real-sample static triage benchmark',
     `Label filter: ${report.label ?? 'none'}`,
     `Threshold: ${report.threshold}`,
+    `Rule packs: ${report.rulePacks?.length ?? 0}`,
     `Analyzed: ${report.summary.analyzed}/${report.summary.selected}`,
     `Failures: ${report.summary.failures}`,
     `Review triggered: ${report.summary.reviewTriggered} (${rate})`,

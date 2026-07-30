@@ -82,6 +82,8 @@ test('CLI help documents stable exit codes', async () => {
   assert.match(capture.output().stdout, /Exit codes:/);
   assert.match(capture.output().stdout, /file\.crx\|file\.zip/);
   assert.match(capture.output().stdout, /--acknowledge-risk/);
+  assert.match(capture.output().stdout, /rules validate/);
+  assert.match(capture.output().stdout, /--rule-pack/);
 });
 
 test('CLI emits valid SARIF and version output', async () => {

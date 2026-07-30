@@ -11,6 +11,7 @@
     "bin/",
     "src/",
     "corpus/",
+    "examples/",
     "intel/",
     "lab/",
     "scripts/run-lab.mjs",

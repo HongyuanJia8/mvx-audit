@@ -27,6 +27,14 @@ set of executable magic signatures; recognition never imports, disassembles,
 or executes those files. Inventory limits fail closed instead of silently
 claiming a complete content identity.
 
+Declarative rule packs are also untrusted input, not plugins. The loader uses
+bounded no-follow regular-file reads, strict UTF-8 and schema validation,
+duplicate-key rejection, normalized safe paths, literal rather than regular-
+expression matching, bounded nesting and match counts, and escaped report
+rendering. It never imports code or fetches pack references. A valid pack is not
+trusted intelligence: operators remain responsible for its source, license,
+expiry, integrity, and conclusions.
+
 The optional sample fetcher writes live CRX files only after explicit risk
 acknowledgement. Quarantine files are not safe merely because their hashes were
 verified. Keep quarantine outside backups and shared folders, never open it

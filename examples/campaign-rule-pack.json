@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "namespace": "example.campaign",
+  "name": "Example campaign indicators",
+  "version": "2026.07.30",
+  "rules": [
+    {
+      "id": "NETWORK_MARKER",
+      "title": "Example campaign endpoint marker",
+      "severity": "high",
+      "confidence": "high",
+      "category": "campaign-ioc",
+      "description": "A locally curated, synthetic campaign endpoint marker appears in extension text.",
+      "remediation": "Verify the indicator source and inspect the surrounding network behavior before drawing a conclusion.",
+      "references": [
+        "https://example.invalid/research/campaign"
+      ],
+      "condition": "any",
+      "indicators": [
+        {
+          "type": "text",
+          "value": "telemetry.campaign.example.invalid",
+          "scope": "source",
+          "caseSensitive": false
+        }
+      ]
+    },
+    {
+      "id": "PAYLOAD_CHAIN",
+      "title": "Example payload filename and digest chain",
+      "severity": "critical",
+      "confidence": "medium",
+      "category": "campaign-ioc",
+      "description": "Both the expected payload basename and its exact file digest occur in the package.",
+      "remediation": "Quarantine the exact artifact and correlate its hashes with independently verified intelligence.",
+      "references": [],
+      "condition": "all",
+      "indicators": [
+        {
+          "type": "path",
+          "value": "campaign-payload.wasm",
+          "match": "basename"
+        },
+        {
+          "type": "file-sha256",
+          "value": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    }
+  ]
+}

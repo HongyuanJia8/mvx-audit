@@ -1,4 +1,5 @@
 import { auditExtension } from './analyzer.js';
+import { resolveRulePacks } from './rule-packs.js';
 
 function findingKey(finding) {
   return finding.fingerprint ?? finding.id;
@@ -27,9 +28,11 @@ function difference(left, right) {
 }
 
 export async function compareExtensions(beforePath, afterPath, options = {}) {
+  const preparedRulePacks = await resolveRulePacks(options);
+  const auditOptions = { ...options, _preparedRulePacks: preparedRulePacks };
   const [before, after] = await Promise.all([
-    auditExtension(beforePath, options),
-    auditExtension(afterPath, options)
+    auditExtension(beforePath, auditOptions),
+    auditExtension(afterPath, auditOptions)
   ]);
   const beforeMap = new Map(before.findings.map((finding) => [findingKey(finding), finding]));
   const afterMap = new Map(after.findings.map((finding) => [findingKey(finding), finding]));
