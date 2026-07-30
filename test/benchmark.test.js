@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { runStaticBenchmark, staticBenchmarkToText } from '../src/benchmark.js';
+import { makeCrx } from '../support/archive-fixture.js';
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
 const HASH = 'a'.repeat(64);
@@ -27,13 +28,18 @@ test('static benchmark measures review triggers without claiming malware accurac
     }]
   })}\n`, 'utf8');
   let observedRulePacks;
+  let observedUnpackOptions;
   const report = await runStaticBenchmark({
     quarantineDir: root,
     records: [{ extensionId: ID, labels: ['behavior-confirmed-malicious'] }],
     label: 'behavior-confirmed-malicious',
     acknowledgeRisk: true,
     rulePacks: [rulePack],
-    unpacker: async (_input, destination) => ({ destination, files: 2 }),
+    requireValidSignature: true,
+    unpacker: async (_input, destination, options) => {
+      observedUnpackOptions = options;
+      return { destination, files: 2 };
+    },
     auditor: async (_destination, options) => {
       observedRulePacks = options._preparedRulePacks.provenance;
       return {
@@ -48,6 +54,7 @@ test('static benchmark measures review triggers without claiming malware accurac
   assert.equal(report.ruleCounts.MVX999, 1);
   assert.equal(report.rulePacks[0].namespace, 'benchmark.test');
   assert.deepEqual(observedRulePacks, report.rulePacks);
+  assert.deepEqual(observedUnpackOptions, { requireValidSignature: true });
   assert.match(report.caveats[0], /not malware-classification accuracy/);
   assert.match(staticBenchmarkToText({ ...report, rulePacks: undefined }), /Rule packs: 0/);
 });
@@ -69,6 +76,41 @@ test('static benchmark safely reuses an existing extraction', async (t) => {
   assert.equal(report.summary.failures, 0);
   assert.equal(report.results[0].cachedExtraction, true);
   assert.equal(report.results[0].files, 4);
+});
+
+test('strict benchmark verifies the CRX before accepting a cached extraction', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-strict-cache-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const destination = path.join(root, ID, 'unpacked', HASH);
+  await mkdir(destination, { recursive: true });
+  await writeFile(path.join(destination, 'manifest.json'), '{"manifest_version":3}');
+  await writeFile(path.join(root, ID, `${HASH}.crx`), makeCrx([{
+    name: 'manifest.json', content: '{"manifest_version":3}'
+  }]));
+  const report = await runStaticBenchmark({
+    quarantineDir: root,
+    acknowledgeRisk: true,
+    requireValidSignature: true
+  });
+  assert.equal(report.summary.analyzed, 0);
+  assert.equal(report.summary.failures, 1);
+  assert.equal(report.failures[0].code, 'CRX_SIGNATURE_REQUIRED');
+});
+
+test('benchmark counts invalid CRX authenticity as an MVX004 review trigger', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-authenticity-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ID));
+  await writeFile(path.join(root, ID, `${HASH}.crx`), makeCrx([{
+    name: 'manifest.json',
+    content: '{"manifest_version":3,"name":"Benchmark authenticity","version":"1.0.0"}'
+  }]));
+  const report = await runStaticBenchmark({ quarantineDir: root, acknowledgeRisk: true });
+  assert.equal(report.summary.analyzed, 1);
+  assert.equal(report.results[0].authenticity.status, 'invalid');
+  assert.equal(report.results[0].reviewTriggered, true);
+  assert.deepEqual(report.results[0].triggeringRules, ['MVX004']);
+  assert.equal(report.results[0].severityCounts.high, 1);
 });
 
 test('static benchmark requires explicit risk acknowledgement and validates threshold', async () => {

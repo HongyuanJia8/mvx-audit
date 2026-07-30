@@ -21,7 +21,7 @@ const HELP = `mvx-audit ${VERSION}
 Usage:
   mvx audit <extension|file.crx|file.zip> [--format text|json|sarif]
             [--output file] [--fail-on severity] [--rule-pack file ...]
-            [--acknowledge-risk]
+            [--acknowledge-risk] [--require-valid-signature]
   mvx compare <before> <after> [--format markdown|json] [--output file]
               [--rule-pack file ...]
   mvx rules validate <file> [file ...] [--format text|json]
@@ -36,10 +36,11 @@ Usage:
                         [--quarantine directory] [--max-bytes number]
                         [--max-total-bytes number]
   mvx sample unpack <file.crx-or-zip> --acknowledge-risk [--destination directory]
+                    [--require-valid-signature]
   mvx lab evaluate <scenario.json> <events.jsonl> [--format text|json]
   mvx benchmark static <quarantine> --acknowledge-risk [--label label]
                        [--limit number] [--threshold severity] [--format text|json]
-                       [--rule-pack file ...]
+                       [--rule-pack file ...] [--require-valid-signature]
   mvx --help
 
 Exit codes:
@@ -57,6 +58,7 @@ function parseArgs(argv) {
     if (token === '--help' || token === '-h') options.help = true;
     else if (token === '--version' || token === '-v') options.version = true;
     else if (token === '--acknowledge-risk') options.acknowledgeRisk = true;
+    else if (token === '--require-valid-signature') options.requireValidSignature = true;
     else if (token === '--rule-pack') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError('--rule-pack requires a value', { code: 'INVALID_ARGUMENT' });
@@ -123,10 +125,16 @@ export async function runCli(argv, streams = process) {
       const format = options.format ?? 'text';
       if (!['text', 'json', 'sarif'].includes(format)) throw new MvxError(`Unsupported audit format: ${format}`, { code: 'INVALID_ARGUMENT' });
       const packed = await isPackedAuditInput(args[0]);
+      if (!packed && options.requireValidSignature) {
+        throw new MvxError('--require-valid-signature applies only to packed CRX/ZIP audit input', { code: 'INVALID_ARGUMENT' });
+      }
       if (packed && !options.acknowledgeRisk) {
         throw new MvxError('Refusing packed extension extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
       }
-      const auditOptions = { rulePacks: options.rulePacks };
+      const auditOptions = {
+        rulePacks: options.rulePacks,
+        requireValidSignature: options.requireValidSignature
+      };
       const result = packed ? await auditExtensionArchive(args[0], auditOptions) : await auditExtension(args[0], auditOptions);
       const content = format === 'text' ? auditToText(result) : format === 'sarif' ? json(auditToSarif(result)) : json(result);
       await emit(content, options.output, streams.stdout);
@@ -244,11 +252,18 @@ export async function runCli(argv, streams = process) {
         const destination = options.destination
           ? path.resolve(options.destination)
           : path.join(path.dirname(input), 'unpacked', path.basename(input, path.extname(input)));
-        const result = await unpackExtensionArchive(input, destination);
+        const result = await unpackExtensionArchive(input, destination, {
+          requireValidSignature: options.requireValidSignature
+        });
         await emit(format === 'json' ? json(result) : [
           `Unpacked quarantined ${result.archiveFormat.toUpperCase()}: ${result.destination}`,
           ...(result.crxVersion === null ? [] : [`CRX version: ${result.crxVersion}`]),
           `Archive SHA-256: ${result.archiveSha256}`,
+          ...(result.authenticity.status === 'verified'
+            ? [`Authenticity: VERIFIED (${result.authenticity.extensionId})`]
+            : result.authenticity.status === 'invalid'
+              ? [`Authenticity: INVALID (${result.authenticity.error})`]
+              : ['Authenticity: not applicable']),
           `Archive bytes: ${result.archiveBytes}`,
           `Files: ${result.files}`,
           `Uncompressed bytes: ${result.uncompressedBytes}`,
@@ -316,6 +331,7 @@ export async function runCli(argv, streams = process) {
       const report = await runStaticBenchmark({
         quarantineDir: args[1], records, label: options.label, limit,
         threshold: options.threshold, acknowledgeRisk: options.acknowledgeRisk,
+        requireValidSignature: options.requireValidSignature,
         rulePacks: options.rulePacks
       });
       await emit(format === 'json' ? json(report) : staticBenchmarkToText(report), options.output, streams.stdout);

@@ -2,11 +2,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
+import { verifyCrxAuthenticity } from './crx-authenticity.js';
 import { MvxError } from './errors.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
 const DEFAULT_LIMITS = Object.freeze({
   maxArchiveBytes: 100_000_000,
+  maxCrxHeaderBytes: 262_144,
+  maxCrxProofs: 32,
+  maxCrxKeyBytes: 65_536,
+  maxCrxSignatureBytes: 65_536,
   maxEntries: 10_000,
   maxEntryBytes: 50_000_000,
   maxTotalBytes: 250_000_000,
@@ -202,6 +207,9 @@ async function safeParent(destination) {
 
 async function unpackArchive(inputPath, destination, options, allowZip) {
   if (!destination) throw new MvxError('Archive extraction requires a destination directory', { code: 'INVALID_ARGUMENT' });
+  if (options.requireValidSignature !== undefined && typeof options.requireValidSignature !== 'boolean') {
+    throw new MvxError('requireValidSignature must be boolean', { code: 'INVALID_ARGUMENT' });
+  }
   const limits = normalizeLimits(options.limits ?? {});
   const input = path.resolve(inputPath);
   const inputStat = await lstat(input).catch((error) => {
@@ -217,6 +225,11 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
   });
   const archiveSha256 = createHash('sha256').update(buffer).digest('hex');
   const { format, version, offset: zipOffset } = archiveZipOffset(buffer, allowZip);
+  const authenticity = verifyCrxAuthenticity(buffer, { format, version, zipOffset }, limits);
+  if (options.requireValidSignature && authenticity.status !== 'verified') {
+    const reason = authenticity.error ?? authenticity.status;
+    throw new MvxError(`A valid CRX signature is required: ${reason}`, { code: 'CRX_SIGNATURE_REQUIRED' });
+  }
   const entries = parseEntries(buffer, zipOffset, limits);
   const { absolute, parent } = await safeParent(destination);
   try {
@@ -259,6 +272,7 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
       crxVersion: version,
       archiveBytes: buffer.length,
       archiveSha256,
+      authenticity,
       entries: entries.length,
       files,
       uncompressedBytes: totalBytes

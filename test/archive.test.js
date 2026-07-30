@@ -37,6 +37,8 @@ test('CRX3 unpacker extracts stored and deflated files for static audit', async 
   const result = await unpackCrx(fixture.input, fixture.destination);
   const archiveBytes = await readFile(fixture.input);
   assert.equal(result.crxVersion, 3);
+  assert.equal(result.authenticity.status, 'invalid');
+  assert.equal(result.authenticity.error, 'invalid-signed-header');
   assert.equal(result.archiveBytes, archiveBytes.length);
   assert.equal(result.archiveSha256, createHash('sha256').update(archiveBytes).digest('hex'));
   assert.equal(result.files, 3);
@@ -54,6 +56,7 @@ test('bounded extension archive unpacker supports ZIP without weakening CRX-only
   const result = await unpackExtensionArchive(fixture.input, fixture.destination);
   assert.equal(result.archiveFormat, 'zip');
   assert.equal(result.crxVersion, null);
+  assert.equal(result.authenticity.status, 'not-applicable');
   assert.equal(result.files, 2);
   assert.equal(result.entries, 3);
   assert.match(await readFile(path.join(fixture.destination, 'manifest.json'), 'utf8'), /manifest_version/);

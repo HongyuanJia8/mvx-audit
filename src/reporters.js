@@ -30,7 +30,14 @@ export function auditToText(result) {
     ] : []),
     ...(result.rulePacks?.length ? [`Rule packs: ${result.rulePacks.length} (${result.rulePacks.map((pack) => `${escapeText(pack.namespace)}@${escapeText(pack.version)}`).join(', ')})`] : []),
     ...(result.artifact ? [
-      `Archive (${result.artifact.format === 'crx' ? `CRX${result.artifact.crxVersion}` : result.artifact.format.toUpperCase()}) SHA-256: ${result.artifact.sha256}`
+      `Archive (${result.artifact.format === 'crx' ? `CRX${result.artifact.crxVersion}` : result.artifact.format.toUpperCase()}) SHA-256: ${result.artifact.sha256}`,
+      ...(result.artifact.authenticity?.status === 'verified' ? [
+        `Authenticity: VERIFIED (${escapeText(result.artifact.authenticity.extensionId)}, ${result.artifact.authenticity.proofs.length} proof(s))`
+      ] : result.artifact.authenticity?.status === 'invalid' ? [
+        `Authenticity: INVALID (${escapeText(result.artifact.authenticity.error)})`
+      ] : result.artifact.authenticity?.status === 'not-applicable' ? [
+        'Authenticity: not applicable (ZIP has no CRX signature)'
+      ] : [])
     ] : []),
     ...(result.analysis ? [`Analysis (${result.analysis.profile}) SHA-256: ${result.analysis.sha256}`] : []),
     ''

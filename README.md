@@ -45,6 +45,10 @@ node bin/mvx.js audit /path/to/extension
 # Audit a CRX/ZIP through an automatically removed temporary extraction
 node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk
 
+# Fail before extraction unless a CRX2/CRX3 developer signature verifies
+node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
+  --require-valid-signature
+
 # Fail CI when a high- or critical-severity finding exists
 node bin/mvx.js audit /path/to/extension --format sarif \
   --output results.sarif --fail-on high
@@ -112,6 +116,9 @@ development.
 - Direct CRX/ZIP audit through a private, automatically removed extraction,
   binding the exact archive SHA-256, byte length, format, version, and
   extraction statistics to the static report.
+- Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 verification, including
+  Chromium extension-ID derivation, per-proof digest metadata, an `MVX004`
+  integrity finding on failure, and an optional fail-closed mode.
 - Strict, bounded declarative JSON rule packs for literal text, package path,
   regular-file SHA-256, and complete-package SHA-256 indicators. Packs are
   treated as untrusted data and their exact raw-byte provenance is included in
@@ -153,7 +160,15 @@ the file under `quarantine/`. It never unpacks, imports, or executes the CRX.
 rejects path traversal, links, encryption, unsupported methods, duplicate
 paths, CRC failures, excessive expansion, and archive bombs before exposing an
 unpacked directory to the static auditor. It still does not make live malware
-safe to execute.
+safe to execute. CRX signature verification is recorded by default; add
+`--require-valid-signature` to `sample unpack`, packed `audit`, or
+`benchmark static` to reject unsigned, invalid, or ZIP input before extraction.
+
+A verified CRX signature establishes that the archive bytes are consistent
+with the embedded developer key and declared Chromium extension ID. It does
+not authenticate a human or organization, prove Chrome Web Store publication
+or authorization, or imply that the extension is benign. Ordinary ZIP files
+have no CRX signature and are reported as `not-applicable`.
 
 For static triage without retaining an unpacked copy, use
 `audit <file.crx-or-zip> --acknowledge-risk`. It uses the same bounded
@@ -208,7 +223,10 @@ import {
 const rulePacks = ['./team-iocs.json'];
 await loadRulePacks(rulePacks); // standalone validation and provenance
 const audit = await auditExtension('/path/to/unpacked-extension', { rulePacks });
-const packedAudit = await auditExtensionArchive('/path/to/extension.crx', { rulePacks });
+const packedAudit = await auditExtensionArchive('/path/to/extension.crx', {
+  rulePacks,
+  requireValidSignature: true
+});
 const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3', { rulePacks });
 ```
 
@@ -219,6 +237,8 @@ differ. The analysis identity additionally binds the text-analysis profile,
 effective limits, and exact declarative rule-pack provenance. Neither value is
 a signature or a digest of the original CRX/ZIP container; retain
 `artifact.sha256` or the quarantine SHA-256 for exact packed-artifact identity.
+Packed results also include `artifact.authenticity`; this cryptographic status
+has the narrower trust meaning described above.
 
 ## Security and responsible use
 

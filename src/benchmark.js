@@ -3,8 +3,9 @@ import path from 'node:path';
 import { auditExtension } from './analyzer.js';
 import { unpackCrx } from './archive.js';
 import { MvxError } from './errors.js';
-import { SEVERITIES } from './model.js';
+import { SEVERITIES, sortFindings, summarizeFindings } from './model.js';
 import { resolveRulePacks } from './rule-packs.js';
+import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
 
 const EXTENSION_ID = /^[a-p]{32}$/;
 const SHA256_CRX = /^([a-f0-9]{64})\.crx$/;
@@ -45,6 +46,7 @@ export async function runStaticBenchmark({
   limit = 100,
   threshold = 'high',
   acknowledgeRisk = false,
+  requireValidSignature = false,
   rulePacks,
   rulePackLimits,
   _preparedRulePacks,
@@ -67,7 +69,7 @@ export async function runStaticBenchmark({
     try {
       let archive;
       try {
-        archive = await unpacker(sample.crxPath, destination);
+        archive = await unpacker(sample.crxPath, destination, { requireValidSignature });
       } catch (error) {
         if (error.code !== 'OUTPUT_EXISTS') throw error;
         const existing = await lstat(destination);
@@ -75,7 +77,12 @@ export async function runStaticBenchmark({
         archive = { files: null, cached: true };
       }
       const audit = await auditor(destination, { _preparedRulePacks: preparedRulePacks });
-      const triggering = audit.findings.filter((finding) => SEVERITIES.indexOf(finding.severity) <= severityLimit);
+      const findings = sortFindings([
+        ...audit.findings,
+        ...analyzeArchiveAuthenticity(archive.authenticity)
+      ]);
+      const summary = summarizeFindings(findings);
+      const triggering = findings.filter((finding) => SEVERITIES.indexOf(finding.severity) <= severityLimit);
       results.push({
         extensionId: sample.extensionId,
         sha256: sample.sha256,
@@ -84,10 +91,11 @@ export async function runStaticBenchmark({
         version: audit.target.version,
         files: archive.files ?? audit.scan?.filesVisited ?? null,
         cachedExtraction: archive.cached === true,
-        findingCount: audit.findings.length,
+        authenticity: archive.authenticity ?? null,
+        findingCount: findings.length,
         reviewTriggered: triggering.length > 0,
         triggeringRules: [...new Set(triggering.map((finding) => finding.id))].sort(),
-        severityCounts: audit.summary.counts
+        severityCounts: summary.counts
       });
     } catch (error) {
       failures.push({ extensionId: sample.extensionId, sha256: sample.sha256, code: error.code ?? 'UNEXPECTED_ERROR', message: error.message });

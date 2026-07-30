@@ -7,6 +7,9 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 signature verification,
+  Chromium extension-ID derivation, integrity metadata in reports, `MVX004`
+  failure findings, and `--require-valid-signature` fail-closed extraction.
 - Strict local declarative JSON rule packs for literal text, path, file digest,
   and complete-package digest indicators, with `any`/`all` composition,
   bounded deterministic matching, CLI validation, report integration, and

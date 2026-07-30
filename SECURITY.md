@@ -47,6 +47,15 @@ original archive remains live malware and must stay under quarantine handling
 controls. The library API is non-interactive and places that acknowledgement
 responsibility on its caller.
 
+CRX2/CRX3 verification establishes byte integrity only under the public key
+embedded in the same archive and checks that a developer proof derives the
+declared extension ID. It does not identify the publisher, consult a trust
+store, establish Chrome Web Store authorization, or make signed content safe.
+Use an independently trusted extension ID and archive digest when provenance
+matters. `--require-valid-signature` rejects invalid CRX and unsigned ZIP input
+before extraction; default mode retains invalid CRX content for forensic audit
+and emits `MVX004`.
+
 Live browser analysis is accepted only through the documented container lab:
 no public network, no host browser profile, no real user data, no writable
 sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium

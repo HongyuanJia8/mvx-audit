@@ -6,14 +6,14 @@ import path from 'node:path';
 import test from 'node:test';
 import { auditExtensionArchive } from '../src/index.js';
 import { auditToSarif, auditToText } from '../src/reporters.js';
-import { makeCrx, makeZip } from '../support/archive-fixture.js';
+import { makeCrx, makeSignedCrx3, makeZip } from '../support/archive-fixture.js';
 
-async function fixture(t, format, entries) {
+async function fixture(t, format, entries, suppliedBytes) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-packed-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const temporaryDirectory = path.join(root, 'temporary');
   await mkdir(temporaryDirectory);
-  const bytes = format === 'crx' ? makeCrx(entries) : makeZip(entries);
+  const bytes = suppliedBytes ?? (format === 'crx' ? makeCrx(entries) : makeZip(entries));
   const input = path.join(root, `sample.${format}`);
   await writeFile(input, bytes);
   return { root, temporaryDirectory, input, bytes };
@@ -38,8 +38,17 @@ test('packed CRX audit binds exact archive provenance and removes its extraction
     crxVersion: 3,
     bytes: sample.bytes.length,
     sha256: expectedSha256,
+    authenticity: {
+      status: 'invalid',
+      scheme: 'crx3',
+      extensionId: null,
+      developerKeySha256: null,
+      proofs: [],
+      error: 'invalid-signed-header'
+    },
     extraction: { entries: 2, files: 2, uncompressedBytes: Buffer.byteLength(manifest) + Buffer.byteLength(worker) }
   });
+  assert.ok(result.findings.some((finding) => finding.id === 'MVX004'));
   assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
   assert.equal(result.analysis.packageSha256, result.package.sha256);
   assert.equal(result.package.fileCount, 2);
@@ -48,7 +57,37 @@ test('packed CRX audit binds exact archive provenance and removes its extraction
   assert.doesNotMatch(JSON.stringify(result), /mvx-packed-audit-/);
 
   assert.match(auditToText(result), new RegExp(`Archive \\(CRX3\\) SHA-256: ${expectedSha256}`));
+  assert.match(auditToText(result), /Authenticity: INVALID \(invalid-signed-header\)/);
   assert.deepEqual(auditToSarif(result).runs[0].properties.artifact, result.artifact);
+
+  await assert.rejects(
+    () => auditExtensionArchive(sample.input, {
+      temporaryDirectory: sample.temporaryDirectory,
+      requireValidSignature: true
+    }),
+    (error) => error.code === 'CRX_SIGNATURE_REQUIRED'
+  );
+  assert.deepEqual(await readdir(sample.temporaryDirectory), []);
+});
+
+test('packed CRX audit reports verified developer-key integrity without claiming publisher trust', async (t) => {
+  const entries = [{
+    name: 'manifest.json',
+    content: '{"manifest_version":3,"name":"Signed packed fixture","version":"1.0.0"}'
+  }];
+  const signed = makeSignedCrx3(entries, { algorithms: ['rsa', 'ecdsa'] });
+  const sample = await fixture(t, 'crx', entries, signed.bytes);
+  const result = await auditExtensionArchive(sample.input, {
+    temporaryDirectory: sample.temporaryDirectory,
+    requireValidSignature: true
+  });
+  assert.equal(result.artifact.authenticity.status, 'verified');
+  assert.equal(result.artifact.authenticity.extensionId, signed.extensionId);
+  assert.equal(result.artifact.authenticity.proofs.length, 2);
+  assert.equal(result.findings.some((finding) => finding.id === 'MVX004'), false);
+  assert.match(result.assumptions.join(' '), /does not prove publisher identity/);
+  assert.match(auditToText(result), new RegExp(`Authenticity: VERIFIED \\(${signed.extensionId}, 2 proof\\(s\\)\\)`));
+  assert.deepEqual(await readdir(sample.temporaryDirectory), []);
 });
 
 test('packed ZIP audit and archive failures always clean private temporary state', async (t) => {
