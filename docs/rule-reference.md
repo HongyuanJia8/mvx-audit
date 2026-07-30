@@ -70,15 +70,16 @@ change does affect the evidence fingerprint. The exact input domain, resource
 limits, canonical encoding, and fixed digest vectors are specified in the
 [methodology](methodology.md#finding-and-evidence-fingerprints).
 
-Finding fingerprints identify a review category, not package contents. Any
-future disposition policy must bind the fingerprint to the exact
-`mvx-package-v1` SHA-256 rather than treating the fingerprint as a global
-allowlist.
+Finding fingerprints identify a review category, not package contents. A
+disposition policy binds the fingerprint to the exact `mvx-package-v1` and
+analysis SHA-256 values, plus `artifactSha256: null` for directory input or the
+exact archive SHA-256 for packed input. It is never a global allowlist.
 
-## Suppression policy
+## Disposition policy
 
-Version 3.0 does not support inline suppression. Security findings should remain
-visible in machine output; projects can apply their own reviewed allowlist by
-finding fingerprint and exact package SHA-256 outside the scanned extension. A
-future suppression format must include justification, owner, and expiry rather
-than a bare ignore comment.
+Version 3.0 supports external complete-identity-bound disposition policies.
+They annotate rather than delete findings, retain the raw summary, and require
+fingerprint, exact package/analysis/artifact identity, justification, owner,
+and expiry. See the
+[disposition-policy guide](disposition-policies.md). Inline suppression and bare
+ignore comments remain unsupported.

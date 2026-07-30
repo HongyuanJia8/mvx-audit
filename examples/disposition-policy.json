@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "policyId": "example.review",
+  "name": "Example reviewed dispositions",
+  "version": "2026.07.30",
+  "entries": [
+    {
+      "fingerprint": "MVX102:cookies",
+      "packageSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "analysisSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "artifactSha256": null,
+      "disposition": "accepted-risk",
+      "owner": "extension-security@example.invalid",
+      "justification": "Example only: replace the package digest after reviewing the exact package.",
+      "expiresAt": "2027-01-30T00:00:00.000Z",
+      "ticketUrl": "https://example.invalid/security/reviews/123"
+    }
+  ]
+}

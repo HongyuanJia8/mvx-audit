@@ -1,6 +1,8 @@
 import { auditExtension } from './analyzer.js';
 import { evidenceFingerprint, findingKey } from './fingerprints.js';
 import { resolveRulePacks } from './rule-packs.js';
+import { resolveDispositionPolicies } from './disposition-policy.js';
+import { assertOptionsObject } from './options.js';
 
 function evidenceKey(finding, evidence) {
   return evidenceFingerprint(finding, evidence);
@@ -23,8 +25,22 @@ function difference(left, right) {
 }
 
 export async function compareExtensions(beforePath, afterPath, options = {}) {
+  assertOptionsObject(options, 'Comparison');
   const preparedRulePacks = await resolveRulePacks(options);
-  const auditOptions = { ...options, _preparedRulePacks: preparedRulePacks };
+  const preparedDispositionPolicies = await resolveDispositionPolicies(options);
+  const {
+    rulePacks: _rulePacks,
+    rulePackLimits: _rulePackLimits,
+    dispositionPolicies: _dispositionPolicies,
+    dispositionPolicyLimits: _dispositionPolicyLimits,
+    dispositionAt: _dispositionAt,
+    ...auditBaseOptions
+  } = options;
+  const auditOptions = {
+    ...auditBaseOptions,
+    _preparedRulePacks: preparedRulePacks,
+    _preparedDispositionPolicies: preparedDispositionPolicies
+  };
   const [before, after] = await Promise.all([
     auditExtension(beforePath, auditOptions),
     auditExtension(afterPath, auditOptions)
@@ -46,6 +62,9 @@ export async function compareExtensions(beforePath, afterPath, options = {}) {
     after,
     delta: {
       riskScore: after.summary.riskScore - before.summary.riskScore,
+      ...(before.reviewSummary && after.reviewSummary ? {
+        unreviewedRiskScore: after.reviewSummary.riskScore - before.reviewSummary.riskScore
+      } : {}),
       resolvedFindings: resolved,
       introducedFindings: introduced,
       evidenceAdded: afterEvidence.filter((item) => !beforeEvidenceKeys.has(item.key)).map(({ key, ...item }) => item),

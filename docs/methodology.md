@@ -94,6 +94,16 @@ uses the same identity. These values support deduplication and reviewed
 baselines. They do not authenticate a package or justify suppressing a finding
 without binding it to the package digest.
 
+Disposition policies bind that fingerprint together with exact package and
+analysis SHA-256 identities. They additionally require `artifactSha256: null`
+for directory input or the exact archive SHA-256 for packed input. Policy bytes
+are validated before analysis or packed-audit temporary extraction, and
+duplicate declarations for one complete identity/fingerprint tuple fail
+closed. Findings remain in the raw result; only the separate unreviewed summary
+excludes active dispositions. Expiry is evaluated against a recorded canonical
+UTC instant. See
+[disposition policies](disposition-policies.md).
+
 Files are captured sequentially, so this is not an atomic filesystem snapshot
 of a directory being modified concurrently. Use a fresh, immutable quarantine
 extraction when the input may be adversarial or changing during analysis.

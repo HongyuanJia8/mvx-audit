@@ -6,6 +6,7 @@ import { unpackExtensionArchive } from './archive.js';
 import { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
 import { compareExtensions } from './compare.js';
+import { dispositionPoliciesToText, loadDispositionPolicies } from './disposition-policy.js';
 import { MvxError } from './errors.js';
 import { auditExtensionArchive } from './packed-audit.js';
 import { intelRecordToText, intelStatsToText, loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
@@ -20,12 +21,17 @@ const HELP = `mvx-audit ${VERSION}
 
 Usage:
   mvx audit <extension|file.crx|file.zip> [--format text|json|sarif]
-            [--output file] [--fail-on severity] [--rule-pack file ...]
+            [--output file] [--fail-on severity|--fail-on-unreviewed severity]
+            [--rule-pack file ...] [--disposition-policy file ...]
+            [--disposition-at timestamp]
             [--acknowledge-risk] [--require-valid-signature]
             [--expected-archive-sha256 digest] [--expected-extension-id id]
   mvx compare <before> <after> [--format markdown|json] [--output file]
-              [--rule-pack file ...]
+              [--rule-pack file ...] [--disposition-policy file ...]
+              [--disposition-at timestamp]
   mvx rules validate <file> [file ...] [--format text|json]
+  mvx dispositions validate <file> [file ...] [--disposition-at timestamp]
+                           [--format text|json]
   mvx corpus [list|validate] [--format text|json] [--catalog file]
   mvx intel stats|validate [--format text|json]
   mvx intel lookup <extension-id|sha256> [--format text|json]
@@ -47,14 +53,14 @@ Usage:
 
 Exit codes:
   0  completed successfully (and no configured threshold was met)
-  1  findings met --fail-on, or corpus validation failed
+  1  findings met a configured threshold, or corpus validation failed
   2  invalid arguments or unreadable input
 `;
 
 function parseArgs(argv) {
   const positionals = [];
   const options = {};
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--help' || token === '-h') options.help = true;
@@ -66,6 +72,13 @@ function parseArgs(argv) {
       if (!value || value.startsWith('--')) throw new MvxError('--rule-pack requires a value', { code: 'INVALID_ARGUMENT' });
       options.rulePacks ??= [];
       options.rulePacks.push(value);
+      index += 1;
+    }
+    else if (token === '--disposition-policy') {
+      const value = argv[index + 1];
+      if (!value || value.startsWith('--')) throw new MvxError('--disposition-policy requires a value', { code: 'INVALID_ARGUMENT' });
+      options.dispositionPolicies ??= [];
+      options.dispositionPolicies.push(value);
       index += 1;
     }
     else if (valueOptions.has(token)) {
@@ -93,11 +106,12 @@ function json(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function thresholdMet(result, threshold) {
+function thresholdMet(result, threshold, unreviewed = false) {
   if (!threshold || threshold === 'none') return false;
   const thresholdIndex = SEVERITIES.indexOf(threshold);
   if (thresholdIndex === -1) throw new MvxError(`Invalid severity: ${threshold}`, { code: 'INVALID_ARGUMENT' });
-  return result.findings.some((finding) => SEVERITIES.indexOf(finding.severity) <= thresholdIndex);
+  return result.findings.some((finding) => (!unreviewed || finding.disposition?.status !== 'active')
+    && SEVERITIES.indexOf(finding.severity) <= thresholdIndex);
 }
 
 async function isPackedAuditInput(inputPath) {
@@ -124,16 +138,33 @@ export async function runCli(argv, streams = process) {
     const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
       || options.expectedExtensionId !== undefined;
     const signatureVerificationRequested = options.requireValidSignature === true;
+    const dispositionPolicyOptionsRequested = options.dispositionPolicies !== undefined
+      || options.dispositionAt !== undefined;
     if (archiveIdentityRequested && !['audit', 'sample'].includes(command)) {
       throw new MvxError('Archive identity options apply only to audit or sample unpack', { code: 'INVALID_ARGUMENT' });
     }
     if (signatureVerificationRequested && !['audit', 'sample', 'benchmark'].includes(command)) {
       throw new MvxError('Archive signature verification applies only to packed audit, sample unpack, or static benchmark', { code: 'INVALID_ARGUMENT' });
     }
+    if (dispositionPolicyOptionsRequested && !['audit', 'compare', 'dispositions'].includes(command)) {
+      throw new MvxError('Disposition policy options apply only to audit, compare, or dispositions validate', { code: 'INVALID_ARGUMENT' });
+    }
+    if (options.failOnUnreviewed !== undefined && command !== 'audit') {
+      throw new MvxError('--fail-on-unreviewed applies only to audit', { code: 'INVALID_ARGUMENT' });
+    }
+    if (options.failOn !== undefined && command !== 'audit') {
+      throw new MvxError('--fail-on applies only to audit', { code: 'INVALID_ARGUMENT' });
+    }
 
     if (command === 'audit') {
       if (args.length !== 1) throw new MvxError('audit requires exactly one extension or archive path', { code: 'INVALID_ARGUMENT' });
       const format = options.format ?? 'text';
+      if (options.dispositionAt !== undefined && options.dispositionPolicies === undefined) {
+        throw new MvxError('--disposition-at requires at least one --disposition-policy', { code: 'INVALID_ARGUMENT' });
+      }
+      if (options.failOn !== undefined && options.failOnUnreviewed !== undefined) {
+        throw new MvxError('--fail-on and --fail-on-unreviewed cannot be combined', { code: 'INVALID_ARGUMENT' });
+      }
       if (!['text', 'json', 'sarif'].includes(format)) throw new MvxError(`Unsupported audit format: ${format}`, { code: 'INVALID_ARGUMENT' });
       const packed = await isPackedAuditInput(args[0]);
       if (!packed && (options.requireValidSignature || options.expectedArchiveSha256 || options.expectedExtensionId)) {
@@ -146,19 +177,28 @@ export async function runCli(argv, streams = process) {
         rulePacks: options.rulePacks,
         requireValidSignature: options.requireValidSignature || options.expectedExtensionId !== undefined,
         expectedArchiveSha256: options.expectedArchiveSha256,
-        expectedExtensionId: options.expectedExtensionId
+        expectedExtensionId: options.expectedExtensionId,
+        dispositionPolicies: options.dispositionPolicies,
+        dispositionAt: options.dispositionAt
       };
       const result = packed ? await auditExtensionArchive(args[0], auditOptions) : await auditExtension(args[0], auditOptions);
       const content = format === 'text' ? auditToText(result) : format === 'sarif' ? json(auditToSarif(result)) : json(result);
       await emit(content, options.output, streams.stdout);
-      return thresholdMet(result, options.failOn) ? 1 : 0;
+      return thresholdMet(result, options.failOn ?? options.failOnUnreviewed, options.failOnUnreviewed !== undefined) ? 1 : 0;
     }
 
     if (command === 'compare') {
       if (args.length !== 2) throw new MvxError('compare requires before and after extension paths', { code: 'INVALID_ARGUMENT' });
+      if (options.dispositionAt !== undefined && options.dispositionPolicies === undefined) {
+        throw new MvxError('--disposition-at requires at least one --disposition-policy', { code: 'INVALID_ARGUMENT' });
+      }
       const format = options.format ?? 'markdown';
       if (!['markdown', 'json'].includes(format)) throw new MvxError(`Unsupported comparison format: ${format}`, { code: 'INVALID_ARGUMENT' });
-      const result = await compareExtensions(args[0], args[1], { rulePacks: options.rulePacks });
+      const result = await compareExtensions(args[0], args[1], {
+        rulePacks: options.rulePacks,
+        dispositionPolicies: options.dispositionPolicies,
+        dispositionAt: options.dispositionAt
+      });
       await emit(format === 'json' ? json(result) : comparisonToMarkdown(result), options.output, streams.stdout);
       return 0;
     }
@@ -188,6 +228,26 @@ export async function runCli(argv, streams = process) {
       const prepared = await loadRulePacks(args.slice(1));
       const validation = { valid: true, rulePacks: prepared.provenance, limits: prepared.limits, summary: prepared.summary };
       await emit(format === 'json' ? json(validation) : rulePacksToText(prepared), options.output, streams.stdout);
+      return 0;
+    }
+
+    if (command === 'dispositions') {
+      if (args.length < 2 || args[0] !== 'validate') {
+        throw new MvxError('dispositions action must be validate <file> [file ...]', { code: 'INVALID_ARGUMENT' });
+      }
+      if (options.dispositionPolicies !== undefined || options.failOnUnreviewed !== undefined) {
+        throw new MvxError('dispositions validate accepts policy paths as positional arguments', { code: 'INVALID_ARGUMENT' });
+      }
+      const format = options.format ?? 'text';
+      if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported dispositions format: ${format}`, { code: 'INVALID_ARGUMENT' });
+      const prepared = await loadDispositionPolicies(args.slice(1), {
+        ...(options.dispositionAt !== undefined ? { evaluationTime: options.dispositionAt } : {})
+      });
+      const validation = {
+        valid: true, dispositionPolicies: prepared.provenance,
+        evaluationTime: prepared.evaluationTime, limits: prepared.limits, summary: prepared.summary
+      };
+      await emit(format === 'json' ? json(validation) : dispositionPoliciesToText(prepared), options.output, streams.stdout);
       return 0;
     }
 
