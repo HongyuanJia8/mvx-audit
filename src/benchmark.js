@@ -77,7 +77,10 @@ export async function runStaticBenchmark({
       const archive = await unpacker(sample.crxPath, destination, {
         requireValidSignature,
         expectedArchiveSha256: sample.sha256,
-        ...(requireValidSignature ? { expectedExtensionId: sample.extensionId } : {})
+        // Preserve invalid CRX for MVX004 in forensic mode, but reject a verified ID mismatch before extraction.
+        ...(requireValidSignature
+          ? { expectedExtensionId: sample.extensionId }
+          : { _expectedExtensionIdIfVerified: sample.extensionId })
       });
       if (archive.archiveSha256 && archive.archiveSha256 !== sample.sha256) {
         throw new MvxError('Archive SHA-256 does not match its quarantine filename', { code: 'ARCHIVE_IDENTITY_MISMATCH' });

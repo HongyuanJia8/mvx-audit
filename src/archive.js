@@ -220,6 +220,13 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
     && (typeof options.expectedExtensionId !== 'string' || !EXTENSION_ID.test(options.expectedExtensionId))) {
     throw new MvxError('expectedExtensionId must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
   }
+  if (options._expectedExtensionIdIfVerified !== undefined
+    && (typeof options._expectedExtensionIdIfVerified !== 'string' || !EXTENSION_ID.test(options._expectedExtensionIdIfVerified))) {
+    throw new MvxError('_expectedExtensionIdIfVerified must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
+  }
+  if (options.expectedExtensionId !== undefined && options._expectedExtensionIdIfVerified !== undefined) {
+    throw new MvxError('Extension ID expectations cannot be combined', { code: 'INVALID_ARGUMENT' });
+  }
   const limits = normalizeLimits(options.limits ?? {});
   const input = path.resolve(inputPath);
   const inputStat = await lstat(input).catch((error) => {
@@ -244,7 +251,9 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
       code: 'ARCHIVE_IDENTITY_UNVERIFIABLE'
     });
   }
-  if (options.expectedExtensionId && authenticity.extensionId !== options.expectedExtensionId) {
+  const verifiedExtensionIdExpectation = options.expectedExtensionId ?? options._expectedExtensionIdIfVerified;
+  if (verifiedExtensionIdExpectation && authenticity.status === 'verified'
+    && authenticity.extensionId !== verifiedExtensionIdExpectation) {
     throw new MvxError('Verified CRX extension ID does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
   }
   if (options.requireValidSignature && authenticity.status !== 'verified') {

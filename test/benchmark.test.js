@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { unpackCrx } from '../src/archive.js';
 import { runStaticBenchmark, staticBenchmarkToText } from '../src/benchmark.js';
 import { makeCrx, makeSignedCrx3 } from '../support/archive-fixture.js';
 
@@ -159,12 +160,24 @@ test('benchmark rejects archive hash and verified extension-ID mismatches before
   t.after(() => rm(wrongIdRoot, { recursive: true, force: true }));
   await mkdir(path.join(wrongIdRoot, ID));
   await writeFile(path.join(wrongIdRoot, ID, `${actualHash}.crx`), signed.bytes);
+  let unpackCompleted = false;
+  let auditCalled = false;
   const wrongId = await runStaticBenchmark({
     quarantineDir: wrongIdRoot,
     acknowledgeRisk: true,
-    requireValidSignature: true
+    unpacker: async (...args) => {
+      const archive = await unpackCrx(...args);
+      unpackCompleted = true;
+      return archive;
+    },
+    auditor: async () => {
+      auditCalled = true;
+      throw new Error('auditor must not run for a verified ID mismatch');
+    }
   });
   assert.equal(wrongId.failures[0].code, 'ARCHIVE_IDENTITY_MISMATCH');
+  assert.equal(unpackCompleted, false);
+  assert.equal(auditCalled, false);
   await assert.rejects(
     () => lstat(path.join(wrongIdRoot, ID, 'unpacked', actualHash)),
     (error) => error.code === 'ENOENT'
