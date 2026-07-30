@@ -29,6 +29,12 @@ verified. Keep quarantine outside backups and shared folders, never open it
 with a daily-use browser, and delete it according to your organization's
 malware-handling policy.
 
+Direct CRX/ZIP audit also requires explicit CLI risk acknowledgement. It uses
+bounded parsing and an automatically removed private extraction, but the
+original archive remains live malware and must stay under quarantine handling
+controls. The library API is non-interactive and places that acknowledgement
+responsibility on its caller.
+
 Live browser analysis is accepted only through the documented container lab:
 no public network, no host browser profile, no real user data, no writable
 sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium

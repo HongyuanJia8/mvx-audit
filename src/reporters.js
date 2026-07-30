@@ -5,6 +5,9 @@ export function auditToText(result) {
     `${result.target.name ?? path.basename(result.target.root)} (Manifest V${result.target.manifestVersion ?? '?'})`,
     `Risk: ${result.summary.rating} (${result.summary.riskScore}/100), ${result.summary.total} finding(s)`,
     `Scanned: ${result.scan.sourceFilesScanned} source file(s), ${result.scan.sourceBytesScanned} bytes`,
+    ...(result.artifact ? [
+      `Archive (${result.artifact.format === 'crx' ? `CRX${result.artifact.crxVersion}` : result.artifact.format.toUpperCase()}) SHA-256: ${result.artifact.sha256}`
+    ] : []),
     ...(result.analysis ? [`Analysis (${result.analysis.profile}) SHA-256: ${result.analysis.sha256}`] : []),
     ''
   ];
@@ -23,6 +26,10 @@ export function auditToText(result) {
 
 export function auditToSarif(result) {
   const uniqueRules = [...new Map(result.findings.map((finding) => [finding.id, finding])).values()];
+  const runProperties = {
+    ...(result.analysis ? { analysis: result.analysis } : {}),
+    ...(result.artifact ? { artifact: result.artifact } : {})
+  };
   return {
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
     version: '2.1.0',
@@ -50,7 +57,7 @@ export function auditToSarif(result) {
         } }],
         properties: { severity: finding.severity, confidence: finding.confidence, category: finding.category }
       }))),
-      ...(result.analysis ? { properties: { analysis: result.analysis } } : {})
+      ...(Object.keys(runProperties).length > 0 ? { properties: runProperties } : {})
     }]
   };
 }

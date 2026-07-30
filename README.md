@@ -11,7 +11,7 @@ real-sample triage benchmarking, and an optional networkless dynamic canary lab.
 
 The repository combines a curated corpus of **17 threat scenarios and 34
 paired MV2/MV3 fixtures** with a reproducible real-world intelligence snapshot
-covering **4,716 unique extension IDs** and **504 indexed non-empty CRX
+covering **5,122 unique extension IDs** and **504 indexed non-empty CRX
 artifacts**. Live packages are never bundled or fetched by normal commands.
 
 ## Why this project exists
@@ -41,6 +41,9 @@ npm ci
 
 # Audit an unpacked extension directory
 node bin/mvx.js audit /path/to/extension
+
+# Audit a CRX/ZIP through an automatically removed temporary extraction
+node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk
 
 # Fail CI when a high- or critical-severity finding exists
 node bin/mvx.js audit /path/to/extension --format sarif \
@@ -98,6 +101,9 @@ development.
 - Path-independent analysis provenance in JSON and SARIF, with raw manifest and
   per-source SHA-256 values, a package-layout digest, the effective scan limits,
   and one combined identity also shown in text and comparison output.
+- Direct CRX/ZIP audit through a private, automatically removed extraction,
+  binding the exact archive SHA-256, byte length, format, version, and
+  extraction statistics to the static report.
 - Bounded scanning of all packaged source (including vendored directories) that
   refuses a symlinked root, skips nested symlinks, and fails closed on file or
   byte limits.
@@ -119,7 +125,7 @@ findings, and links to primary Chrome documentation. The generated [capability
 matrix](docs/research-report.md) is reproducible from the current source.
 
 The separate [real-world intelligence catalog](intel/README.md) de-duplicates
-three pinned open sources into 4,716 extension IDs. It retains provenance,
+three pinned open sources into 5,122 extension IDs. It retains provenance,
 label type, verification level, store status, threat categories, SHA-256 values,
 and external artifact availability. “Reported,” “policy violation,” and
 “confirmed malware” remain separate states. See the [data-source and ground
@@ -136,6 +142,14 @@ rejects path traversal, links, encryption, unsupported methods, duplicate
 paths, CRC failures, excessive expansion, and archive bombs before exposing an
 unpacked directory to the static auditor. It still does not make live malware
 safe to execute.
+
+For static triage without retaining an unpacked copy, use
+`audit <file.crx-or-zip> --acknowledge-risk`. It uses the same bounded
+extractor inside a private temporary directory, records the SHA-256 of the
+exact bytes parsed, runs the ordinary static analyzer, and removes the
+extraction after a returned result or thrown error. Abrupt process termination
+can bypass that cleanup. Use the persistent `sample unpack` workflow when a
+later lab run needs the files.
 
 `sample plan-many` and `sample fetch-many` add deterministic prioritization,
 count limits, per-artifact limits, a total byte budget, and isolated failure
@@ -175,9 +189,10 @@ npm audit --omit=dev    # expected: zero dependencies, zero advisories
 Public API:
 
 ```js
-import { auditExtension, compareExtensions } from 'mvx-audit';
+import { auditExtension, auditExtensionArchive, compareExtensions } from 'mvx-audit';
 
 const audit = await auditExtension('/path/to/unpacked-extension');
+const packedAudit = await auditExtensionArchive('/path/to/extension.crx');
 const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3');
 ```
 
