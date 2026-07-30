@@ -95,6 +95,9 @@ development.
   framed origins.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
   2.1.0 suitable for GitHub code scanning.
+- Path-independent analysis provenance in JSON and SARIF, with raw manifest and
+  per-source SHA-256 values, a package-layout digest, the effective scan limits,
+  and one combined identity also shown in text and comparison output.
 - Bounded scanning of all packaged source (including vendored directories) that
   refuses a symlinked root, skips nested symlinks, and fails closed on file or
   byte limits.
@@ -177,6 +180,13 @@ import { auditExtension, compareExtensions } from 'mvx-audit';
 const audit = await auditExtension('/path/to/unpacked-extension');
 const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3');
 ```
+
+Every successful audit includes `analysis.sha256`. Matching values mean the
+same static-analysis profile saw the same manifest bytes, scanned source bytes,
+package layout, and limits, even when the extension directories differ. This
+is an analysis identity, not a hash of every binary asset or of the original
+CRX/ZIP container; retain the quarantine SHA-256 when exact artifact identity
+is required.
 
 ## Security and responsible use
 

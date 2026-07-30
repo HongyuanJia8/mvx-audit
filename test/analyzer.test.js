@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,6 +17,65 @@ test('a minimal MV3 manifest produces no supported findings', async (t) => {
   assert.equal(result.summary.total, 0);
   assert.equal(result.summary.riskScore, 0);
   assert.equal(result.summary.rating, 'clean');
+  assert.match(result.analysis.sha256, /^[a-f0-9]{64}$/);
+  assert.match(result.analysis.manifest.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(result.analysis.profile, 'mvx-static-v1');
+  assert.deepEqual(result.analysis.sources, []);
+  assert.equal(result.scan.limits.maxFiles, 5_000);
+});
+
+test('analysis provenance is path-independent and changes with analyzed bytes or package layout', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-provenance-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const first = await writeExtension(path.join(temp, 'first'), {
+    manifest_version: 3, name: 'Provenance fixture', version: '1.0.0'
+  }, { 'worker.js': 'eval(payload);\n', 'a.js': '', 'a/nested.js': '', 'asset.bin': 'first' });
+  const second = path.join(temp, 'second');
+  await cp(first, second, { recursive: true });
+
+  const firstAudit = await auditExtension(first);
+  const copiedAudit = await auditExtension(second);
+  assert.equal(firstAudit.analysis.sha256, copiedAudit.analysis.sha256);
+  assert.deepEqual(firstAudit.analysis.sources.map((source) => source.path), ['a.js', 'a/nested.js', 'worker.js']);
+  const worker = firstAudit.analysis.sources.find((source) => source.path === 'worker.js');
+  assert.equal(worker.bytes, 15);
+  assert.equal(worker.sha256, 'f00a3e7d1e2d4a745f37410abd100285afa2dca484d071f080745274b7a8aeab');
+
+  await writeFile(path.join(second, 'asset.bin'), 'different unparsed bytes', 'utf8');
+  const changedBinary = await auditExtension(second);
+  assert.equal(changedBinary.analysis.sha256, firstAudit.analysis.sha256);
+
+  const differentLimits = await auditExtension(second, { limits: { maxFiles: 4_999 } });
+  assert.notEqual(differentLimits.analysis.sha256, firstAudit.analysis.sha256);
+  const orderedLimits = await auditExtension(second, { limits: { maxFiles: 4_999, maxEntries: 9_999 } });
+  const reversedLimits = await auditExtension(second, { limits: { maxEntries: 9_999, maxFiles: 4_999 } });
+  assert.equal(orderedLimits.analysis.sha256, reversedLimits.analysis.sha256);
+  await assert.rejects(
+    () => auditExtension(second, { limits: { ignoredLimit: 1 } }),
+    (error) => error.code === 'INVALID_ARGUMENT' && /Unknown scan limit/.test(error.message)
+  );
+  await assert.rejects(
+    () => auditExtension(second, { limits: { maxFiles: '5000' } }),
+    (error) => error.code === 'INVALID_ARGUMENT' && /positive safe integer/.test(error.message)
+  );
+
+  await writeFile(path.join(second, 'worker.js'), 'eval(changedPayload);\n', 'utf8');
+  const changedSource = await auditExtension(second);
+  assert.notEqual(changedSource.analysis.sha256, firstAudit.analysis.sha256);
+  assert.notEqual(changedSource.analysis.sources.find((source) => source.path === 'worker.js').sha256, worker.sha256);
+
+  await writeFile(path.join(second, 'worker.js'), 'eval(payload);\n', 'utf8');
+  await mkdir(path.join(second, 'empty-directory'));
+  const changedLayout = await auditExtension(second);
+  assert.notEqual(changedLayout.analysis.packageLayoutSha256, firstAudit.analysis.packageLayoutSha256);
+  assert.notEqual(changedLayout.analysis.sha256, firstAudit.analysis.sha256);
+
+  await writeFile(path.join(second, 'manifest.json'), JSON.stringify({
+    manifest_version: 3, name: 'Changed manifest', version: '1.0.0'
+  }), 'utf8');
+  const changedManifest = await auditExtension(second);
+  assert.notEqual(changedManifest.analysis.manifest.sha256, firstAudit.analysis.manifest.sha256);
+  assert.notEqual(changedManifest.analysis.sha256, changedLayout.analysis.sha256);
 });
 
 test('cookie capability chain is detected in both manifest and source', async () => {
@@ -24,6 +83,9 @@ test('cookie capability chain is detected in both manifest and source', async ()
   assert.deepEqual(result.findings.map((finding) => finding.id), ['MVX103', 'MVX101', 'MVX102', 'MVX206']);
   assert.equal(result.findings.find((finding) => finding.id === 'MVX206').evidence[0].line, 2);
   assert.deepEqual(result.capabilities.hostPermissions, ['<all_urls>']);
+  assert.equal(result.analysis.manifest.sha256, '3a9e7868763f271ead5caefe274ea72c63cfa19d1b197511dcbf28a0ef7a8fff');
+  assert.equal(result.analysis.packageLayoutSha256, 'b0261980aa905c75bd30450d2ffc1af5fa27454eb9923d75f1c4d25bec134744');
+  assert.equal(result.analysis.sha256, '946df0037814323233162b78904d94d917316ec0a8a4fa9521b832b0374c3308');
 });
 
 test('multiple source patterns retain deterministic evidence locations', async (t) => {
@@ -53,6 +115,20 @@ test('symbolic links are skipped and reported', async (t) => {
   const result = await auditExtension(temp);
   assert.match(result.scan.warnings[0], /Skipped symbolic link/);
   assert.equal(result.scan.sourceFilesScanned, 0);
+});
+
+test('a symlinked manifest is rejected instead of hashed and parsed outside the root', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-manifest-link-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const root = path.join(temp, 'extension');
+  await mkdir(root);
+  const outside = path.join(temp, 'outside.json');
+  await writeFile(outside, '{"manifest_version":3,"name":"Outside","version":"1.0.0"}\n', 'utf8');
+  await symlink(outside, path.join(root, 'manifest.json'));
+  await assert.rejects(
+    () => auditExtension(root),
+    (error) => error.code === 'UNSAFE_INPUT' && /manifest\.json/.test(error.message)
+  );
 });
 
 test('scan byte limits fail closed', async (t) => {
