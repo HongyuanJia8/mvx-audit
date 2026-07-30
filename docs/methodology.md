@@ -26,14 +26,29 @@ Findings are sorted by severity, rule ID, file, and line. Corpus traversal is
 also sorted, making JSON, text, SARIF, and generated documentation reproducible
 for identical inputs.
 
-## Analysis provenance
+## Package inventory and analysis provenance
 
-Every successful static audit records a path-independent `analysis` object.
-The `mvx-static-v1` profile includes:
+Every successful static audit records path-independent `package` and `analysis`
+objects. The `mvx-package-v1` inventory includes:
+
+- every traversed directory and every in-scope regular file;
+- the relative path, byte length, and raw-byte SHA-256 of each regular file;
+- a hash of the exact symlink target bytes without disclosing the target string;
+- an explicit marker for skipped special filesystem entries;
+- file and byte totals; and
+- a combined SHA-256 over the canonical, sorted entry list.
+
+The package digest therefore changes when an image, font, WebAssembly module,
+source map, or other unparsed regular file changes. It deliberately describes
+the unpacked tree rather than ZIP metadata, compression, or a CRX signature.
+Use `artifact.sha256` for the exact packed bytes.
+
+The `mvx-static-v2` analysis profile includes:
 
 - the byte length and SHA-256 of the raw `manifest.json` bytes;
 - the relative path, byte length, and raw-byte SHA-256 of every scanned source;
 - a SHA-256 over the sorted relative package layout and entry types;
+- the `mvx-package-v1` combined SHA-256;
 - the effective file, entry, depth, and byte limits; and
 - a combined SHA-256 over that canonical identity record.
 
@@ -55,11 +70,11 @@ code is imported or executed. Abrupt process or machine termination can bypass
 language-level cleanup and leave a workspace under the operating system's
 temporary directory; handle that directory according to quarantine policy.
 
-`analysis.sha256` identifies the inputs that can affect this static analysis;
-it is not an archive signature or a byte-for-byte digest of unparsed binary
-assets. For an acquired CRX, retain the hash-verified quarantine metadata as
-the authoritative packed-artifact identity. Matching analysis hashes also do
-not imply that two extensions are benign or equivalent at runtime.
+`analysis.sha256` identifies the package content and configuration used by this
+static analysis. It is not an archive or publisher signature. For an acquired
+CRX, retain the hash-verified quarantine metadata as the authoritative packed-
+artifact identity. Matching package or analysis hashes also do not imply that
+two extensions are benign or equivalent at runtime.
 
 ## Severity and score
 
@@ -110,16 +125,20 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 
 - The root and `manifest.json` must be real directory/file entries, not
   symlinks. Nested symlinks are skipped and reported.
-- Manifest and source reads use bounded chunks through a regular-file handle;
+- Manifest, source, and package inventory reads use bounded chunks through a regular-file handle;
   supported platforms also request no-follow opens to close file-symlink races.
-- `.git` metadata is not traversed. Packaged dependency, vendor, and `dist`
-  directories are scanned because Chrome can execute code from them.
+- No directory name is globally ignored: `.git`, dependency, vendor, and
+  `dist` subtrees are inventoried and their supported source files are scanned.
+  Audit a built package when development metadata would exceed the hard limits.
 - Defaults: 5,000 visited files, 10,000 filesystem entries, 64 directory
-  levels, 10 MB per text file, and 50 MB total scanned source. Exceeding a hard
-  limit fails the audit instead of silently truncating the extension.
-- Custom limits accept only those five names with positive safe-integer values.
+  levels, 10 MB per text file, 50 MB total scanned source, 100 MB per inventoried
+  regular file, and 250 MB total inventoried regular-file content. Exceeding a
+  hard limit fails the audit instead of silently truncating the extension.
+- Custom limits accept only those seven names with positive safe-integer values.
   They are normalized into a fixed order before provenance hashing.
-- Binary files are not parsed. Supported text extensions are JS-family files,
+- Binary files are hashed but not parsed. Magic bytes identify WebAssembly,
+  PE/DOS, ELF, and Mach-O payloads for manual review; a filename extension alone
+  never creates that finding. Supported text extensions are JS-family files,
   HTML, and JSON.
 - CRX/ZIP input defaults to a 100 MB archive, 10,000 entries, 50 MB per entry,
   250 MB total expansion, ratio 200 after 5 MB, and 64 path segments. Archive
@@ -131,7 +150,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   or miss obfuscated, bundled, aliased, or dynamically constructed behavior.
 - Permissions may be justified by product requirements that static input does
   not contain.
-- Data-flow, control-flow, package provenance, signature verification, and
+- Data-flow, control-flow, publisher signature verification, and
   Chrome Web Store policy checks are outside the current scope.
 - Declarative rules are recognized by selected structural strings, not a full
   Chrome ruleset schema implementation.

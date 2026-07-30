@@ -22,6 +22,10 @@ MVX Audit treats extension content as untrusted text and does not execute it.
 Still, analyze only material you are authorized to possess. Do not load unknown
 fixtures into a daily-use Chrome profile. Report parser escapes and filesystem
 boundaries must be reviewed whenever a new format or archive reader is added.
+The package inventory hashes bounded regular-file bytes and recognizes a small
+set of executable magic signatures; recognition never imports, disassembles,
+or executes those files. Inventory limits fail closed instead of silently
+claiming a complete content identity.
 
 The optional sample fetcher writes live CRX files only after explicit risk
 acknowledgement. Quarantine files are not safe merely because their hashes were

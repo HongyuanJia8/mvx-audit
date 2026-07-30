@@ -94,6 +94,7 @@ loaded as code.
 `mvx audit <file.crx-or-zip> --acknowledge-risk` uses that extractor in a
 private temporary workspace (mode 0700 on POSIX), runs only the static
 analyzer, binds the exact parsed archive SHA-256 and extraction statistics into the report,
+records a deterministic SHA-256 inventory for every extracted regular file,
 and removes the workspace after a returned result or thrown error. Abrupt
 process termination can bypass language-level cleanup. It is the preferred
 triage path when researchers do not need to retain unpacked files.
