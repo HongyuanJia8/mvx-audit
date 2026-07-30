@@ -111,6 +111,8 @@ development.
   framed origins.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
   2.1.0 suitable for GitHub code scanning.
+- Stable finding keys and domain-separated SARIF finding/evidence fingerprints
+  for reproducible deduplication without hiding the underlying findings.
 - Path-independent analysis provenance in JSON and SARIF, with raw manifest and
   per-source SHA-256 values, a full-package digest, the effective scan limits,
   and one combined identity also shown in text and comparison output.

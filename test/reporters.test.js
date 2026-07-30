@@ -14,6 +14,12 @@ test('SARIF output maps every evidence location to a result', async () => {
   assert.equal(sarif.runs.length, 1);
   assert.equal(sarif.runs[0].results.length, audit.findings.reduce((count, finding) => count + finding.evidence.length, 0));
   assert.ok(sarif.runs[0].tool.driver.rules.some((rule) => rule.id === 'MVX103'));
+  assert.ok(audit.findings.every((finding) => typeof finding.fingerprint === 'string'));
+  assert.ok(sarif.runs[0].results.every((result) => /^[a-f0-9]{64}$/.test(result.partialFingerprints['mvxFinding/v1'])));
+  assert.ok(sarif.runs[0].results.every((result) => /^[a-f0-9]{64}$/.test(result.partialFingerprints['mvxEvidence/v1'])));
+  assert.ok(sarif.runs[0].results.every((result) => typeof result.properties.fingerprint === 'string'));
+  assert.equal(new Set(sarif.runs[0].results.map((result) => result.partialFingerprints['mvxEvidence/v1'])).size,
+    sarif.runs[0].results.length);
   assert.deepEqual(sarif.runs[0].properties.analysis, audit.analysis);
   assert.deepEqual(sarif.runs[0].properties.package, audit.package);
 });
@@ -42,8 +48,12 @@ test('reporters remain compatible with schema-v1 results that predate package an
   const legacyAudit = structuredClone(audit);
   delete legacyAudit.analysis;
   delete legacyAudit.package;
+  legacyAudit.findings.forEach((finding) => { delete finding.fingerprint; });
   assert.doesNotMatch(auditToText(legacyAudit), /Analysis .* SHA-256/);
-  assert.equal(auditToSarif(legacyAudit).runs[0].properties, undefined);
+  const legacySarif = auditToSarif(legacyAudit);
+  assert.equal(legacySarif.runs[0].properties, undefined);
+  assert.ok(legacySarif.runs[0].results.every((result) => result.properties.fingerprint === result.ruleId));
+  assert.ok(legacySarif.runs[0].results.every((result) => /^[a-f0-9]{64}$/.test(result.partialFingerprints['mvxEvidence/v1'])));
 
   const comparison = await compareExtensions(path.join(ROOT, 'request-tampering/mv2'), path.join(ROOT, 'request-tampering/mv3'));
   const legacyComparison = structuredClone(comparison);

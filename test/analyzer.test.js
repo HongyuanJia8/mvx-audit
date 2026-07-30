@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { auditExtension } from '../src/analyzer.js';
 import { MvxError } from '../src/errors.js';
+import { evidenceFingerprint, findingFingerprint } from '../src/fingerprints.js';
 import { writeExtension } from '../support/helpers.js';
 
 const ROOT = path.resolve('corpus/fixtures');
@@ -42,6 +43,11 @@ test('analysis provenance is path-independent and changes with analyzed bytes or
   const copiedAudit = await auditExtension(second);
   assert.equal(firstAudit.analysis.sha256, copiedAudit.analysis.sha256);
   assert.equal(firstAudit.package.sha256, copiedAudit.package.sha256);
+  const reportFingerprints = (audit) => audit.findings.flatMap((finding) => [
+    findingFingerprint(finding),
+    ...finding.evidence.map((item) => evidenceFingerprint(finding, item))
+  ]);
+  assert.deepEqual(reportFingerprints(firstAudit), reportFingerprints(copiedAudit));
   assert.deepEqual(firstAudit.package.entries.map((entry) => entry.path), [
     'a', 'a.js', 'a/nested.js', 'asset.bin', 'manifest.json', 'worker.js'
   ]);
