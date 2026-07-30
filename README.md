@@ -57,6 +57,11 @@ node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
 node bin/mvx.js audit /path/to/extension --format sarif \
   --output results.sarif --fail-on high
 
+# Attach package-bound review metadata without deleting raw findings
+node bin/mvx.js dispositions validate examples/disposition-policy.json
+node bin/mvx.js audit /path/to/extension \
+  --disposition-policy review.json --fail-on-unreviewed high
+
 # Compare a migration
 node bin/mvx.js compare /path/to/mv2 /path/to/mv3 \
   --format markdown --output migration-review.md
@@ -113,6 +118,8 @@ development.
   2.1.0 suitable for GitHub code scanning.
 - Stable finding keys and domain-separated SARIF finding/evidence fingerprints
   for reproducible deduplication without hiding the underlying findings.
+- Strict package-bound disposition policies with owner, justification, expiry,
+  byte provenance, raw/unreviewed summaries, and explicit CI semantics.
 - Path-independent analysis provenance in JSON and SARIF, with raw manifest and
   per-source SHA-256 values, a full-package digest, the effective scan limits,
   and one combined identity also shown in text and comparison output.
@@ -136,7 +143,8 @@ development.
   byte limits.
 
 See the complete [rule reference](docs/rule-reference.md), [declarative rule
-pack guide](docs/rule-packs.md), and [methodology](docs/methodology.md).
+pack guide](docs/rule-packs.md), [disposition-policy guide](docs/disposition-policies.md),
+and [methodology](docs/methodology.md).
 
 ## Synthetic corpus and real-world intelligence
 
@@ -225,12 +233,19 @@ Public API:
 
 ```js
 import {
-  auditExtension, auditExtensionArchive, compareExtensions, loadRulePacks
+  auditExtension, auditExtensionArchive, compareExtensions,
+  loadDispositionPolicies, loadRulePacks
 } from 'mvx-audit';
 
 const rulePacks = ['./team-iocs.json'];
 await loadRulePacks(rulePacks); // standalone validation and provenance
-const audit = await auditExtension('/path/to/unpacked-extension', { rulePacks });
+const dispositionPolicies = ['./review.json'];
+await loadDispositionPolicies(dispositionPolicies, {
+  evaluationTime: '2026-07-30T12:00:00.000Z'
+});
+const audit = await auditExtension('/path/to/unpacked-extension', {
+  rulePacks, dispositionPolicies
+});
 const packedAudit = await auditExtensionArchive('/path/to/extension.crx', {
   rulePacks,
   expectedArchiveSha256: '<lowercase-sha256>',

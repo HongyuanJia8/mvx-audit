@@ -7,6 +7,7 @@ import { MvxError } from './errors.js';
 import { sortFindings, summarizeFindings } from './model.js';
 import { resolveRulePacks } from './rule-packs.js';
 import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
+import { applyDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
 
 async function resolveTemporaryParent(input) {
   const absolute = path.resolve(input ?? os.tmpdir());
@@ -42,6 +43,7 @@ function sanitizeTemporaryError(error, workspace) {
 
 export async function auditExtensionArchive(inputPath, options = {}) {
   const preparedRulePacks = await resolveRulePacks(options);
+  const preparedDispositionPolicies = await resolveDispositionPolicies(options);
   const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
   try {
@@ -53,15 +55,26 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       expectedArchiveSha256: options.expectedArchiveSha256,
       expectedExtensionId: options.expectedExtensionId
     });
-    const audit = await auditExtension(extracted, { limits: options.limits, _preparedRulePacks: preparedRulePacks });
+    const audit = await auditExtension(extracted, {
+      limits: options.limits,
+      _preparedRulePacks: preparedRulePacks,
+      _preparedDispositionPolicies: preparedDispositionPolicies
+    });
     const findings = sortFindings([
       ...audit.findings,
       ...analyzeArchiveAuthenticity(archive.authenticity, archive.archiveFormat)
     ]);
+    const dispositions = applyDispositionPolicies(findings, audit.package.sha256, preparedDispositionPolicies);
+    const dispositionPoliciesApplied = preparedDispositionPolicies.summary.policies > 0;
     return {
       ...audit,
       summary: summarizeFindings(findings),
-      findings,
+      ...(dispositionPoliciesApplied ? {
+        dispositionPolicies: preparedDispositionPolicies.provenance,
+        dispositionEvaluation: dispositions.evaluation,
+        reviewSummary: dispositions.reviewSummary
+      } : {}),
+      findings: dispositionPoliciesApplied ? dispositions.findings : findings,
       target: { ...audit.target, root: archive.input, inputType: 'archive' },
       artifact: {
         kind: 'extension-archive',

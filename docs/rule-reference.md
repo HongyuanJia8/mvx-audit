@@ -75,10 +75,10 @@ future disposition policy must bind the fingerprint to the exact
 `mvx-package-v1` SHA-256 rather than treating the fingerprint as a global
 allowlist.
 
-## Suppression policy
+## Disposition policy
 
-Version 3.0 does not support inline suppression. Security findings should remain
-visible in machine output; projects can apply their own reviewed allowlist by
-finding fingerprint and exact package SHA-256 outside the scanned extension. A
-future suppression format must include justification, owner, and expiry rather
-than a bare ignore comment.
+Version 3.0 supports external package-bound disposition policies. They annotate
+rather than delete findings, retain the raw summary, and require fingerprint,
+exact package SHA-256, justification, owner, and expiry. See the
+[disposition-policy guide](disposition-policies.md). Inline suppression and bare
+ignore comments remain unsupported.

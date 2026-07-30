@@ -6,6 +6,7 @@ import { analyzePackage } from './rules/package-rules.js';
 import { analyzeCustomRules } from './rules/custom-rules.js';
 import { resolveRulePacks } from './rule-packs.js';
 import { createFinding } from './model.js';
+import { applyDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
 
 function manifestReferences(manifest) {
   const references = [];
@@ -50,6 +51,7 @@ function analyzeIntegrity(manifest, files) {
 
 export async function auditExtension(inputPath, options = {}) {
   const preparedRulePacks = await resolveRulePacks(options);
+  const preparedDispositionPolicies = await resolveDispositionPolicies(options);
   const snapshot = await loadExtension(inputPath, options.limits, {
     rulePacks: preparedRulePacks.provenance,
     rulePackLimits: preparedRulePacks.limits
@@ -65,6 +67,8 @@ export async function auditExtension(inputPath, options = {}) {
     ...analyzeSources(snapshot.sources),
     ...analyzeCustomRules(snapshot, preparedRulePacks)
   ]);
+  const dispositions = applyDispositionPolicies(findings, snapshot.inventory.sha256, preparedDispositionPolicies);
+  const dispositionPoliciesApplied = preparedDispositionPolicies.summary.policies > 0;
   return {
     schemaVersion: 1,
     tool: { name: 'mvx-audit', version: '3.0.0' },
@@ -82,12 +86,18 @@ export async function auditExtension(inputPath, options = {}) {
     analysis: snapshot.provenance,
     package: snapshot.inventory,
     rulePacks: preparedRulePacks.provenance,
-    findings,
+    ...(dispositionPoliciesApplied ? {
+      dispositionPolicies: preparedDispositionPolicies.provenance,
+      dispositionEvaluation: dispositions.evaluation,
+      reviewSummary: dispositions.reviewSummary
+    } : {}),
+    findings: dispositionPoliciesApplied ? dispositions.findings : findings,
     scan: {
       ...snapshot.metadata,
       rulePacksApplied: preparedRulePacks.summary.packs,
       customRulesApplied: preparedRulePacks.summary.rules,
-      customIndicatorsApplied: preparedRulePacks.summary.indicators
+      customIndicatorsApplied: preparedRulePacks.summary.indicators,
+      ...(dispositionPoliciesApplied ? { dispositionPoliciesApplied: preparedDispositionPolicies.summary.policies } : {})
     },
     assumptions: [
       'Static findings describe capability and suspicious implementation patterns, not proof of malicious intent.',
@@ -95,6 +105,9 @@ export async function auditExtension(inputPath, options = {}) {
       'Manifest V3 reduces selected attack surfaces but does not make granted privileges harmless.',
       ...(preparedRulePacks.packs.length > 0 ? [
         'Analyst-supplied declarative rule-pack matches are review indicators, not proof of malicious intent.'
+      ] : []),
+      ...(dispositionPoliciesApplied ? [
+        'Disposition policies are analyst-supplied review metadata: original findings and raw risk summary remain authoritative and visible.'
       ] : [])
     ]
   };

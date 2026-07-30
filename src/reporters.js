@@ -25,6 +25,10 @@ export function auditToText(result) {
   const lines = [
     `${escapeText(result.target.name ?? path.basename(result.target.root))} (Manifest V${result.target.manifestVersion ?? '?'})`,
     `Risk: ${result.summary.rating} (${result.summary.riskScore}/100), ${result.summary.total} finding(s)`,
+    ...(result.reviewSummary ? [
+      `Unreviewed risk: ${result.reviewSummary.rating} (${result.reviewSummary.riskScore}/100), ${result.reviewSummary.total} finding(s)`,
+      `Disposition policies: ${result.dispositionEvaluation.policies}; matched entries: ${result.dispositionEvaluation.matchedEntries}/${result.dispositionEvaluation.packageEntries}; unused: ${result.dispositionEvaluation.unusedPackageEntries}; active: ${result.dispositionEvaluation.activeFindings}; expired: ${result.dispositionEvaluation.expiredFindings}; evaluated: ${result.dispositionEvaluation.evaluatedAt}`
+    ] : []),
     `Scanned: ${result.scan.sourceFilesScanned} source file(s), ${result.scan.sourceBytesScanned} bytes`,
     ...(result.package ? [
       `Package (${result.package.profile}): ${result.package.fileCount} file(s), ${result.package.totalBytes} bytes, SHA-256: ${result.package.sha256}`
@@ -57,6 +61,10 @@ export function auditToText(result) {
       const location = escapeText(item.file ?? item.scope ?? 'package');
       lines.push(`  at ${location}${item.line ? `:${item.line}` : ''}${item.field ? ` (${escapeText(item.field)})` : ''}`);
     }
+    if (finding.disposition) {
+      lines.push(`  Disposition: ${finding.disposition.status.toUpperCase()} ${escapeText(finding.disposition.disposition)} by ${escapeText(finding.disposition.owner)} until ${finding.disposition.expiresAt}`);
+      lines.push(`  Justification: ${escapeText(finding.disposition.justification)}`);
+    }
     lines.push(`  Fix: ${escapeText(finding.remediation)}`, '');
   }
   for (const warning of result.scan.warnings) lines.push(`Warning: ${escapeText(warning)}`);
@@ -69,6 +77,11 @@ export function auditToSarif(result) {
     ...(result.analysis ? { analysis: result.analysis } : {}),
     ...(result.package ? { package: result.package } : {}),
     ...(result.rulePacks?.length ? { rulePacks: result.rulePacks } : {}),
+    ...(result.dispositionPolicies?.length ? {
+      dispositionPolicies: result.dispositionPolicies,
+      dispositionEvaluation: result.dispositionEvaluation,
+      reviewSummary: result.reviewSummary
+    } : {}),
     ...(result.artifact ? { artifact: result.artifact } : {})
   };
   return {
@@ -105,6 +118,7 @@ export function auditToSarif(result) {
           confidence: finding.confidence,
           category: finding.category,
           fingerprint: findingKey(finding),
+          ...(finding.disposition ? { disposition: finding.disposition } : {}),
           ...(finding.rulePack ? { rulePack: finding.rulePack } : {}),
           ...(finding.condition ? { condition: finding.condition } : {})
         }
@@ -121,6 +135,10 @@ export function comparisonToMarkdown(comparison) {
     `| Metric | Before (MV${before.target.manifestVersion}) | After (MV${after.target.manifestVersion}) |`,
     '|---|---:|---:|',
     `| Risk score | ${before.summary.riskScore} | ${after.summary.riskScore} |`,
+    ...(before.reviewSummary && after.reviewSummary ? [
+      `| Unreviewed risk score | ${before.reviewSummary.riskScore} | ${after.reviewSummary.riskScore} |`,
+      `| Unreviewed findings | ${before.reviewSummary.total} | ${after.reviewSummary.total} |`
+    ] : []),
     `| Critical | ${before.summary.counts.critical} | ${after.summary.counts.critical} |`,
     `| High | ${before.summary.counts.high} | ${after.summary.counts.high} |`,
     `| Total findings | ${before.summary.total} | ${after.summary.total} |`,
@@ -128,6 +146,9 @@ export function comparisonToMarkdown(comparison) {
     ...(before.package && after.package ? [`| Package SHA-256 | \`${before.package.sha256}\` | \`${after.package.sha256}\` |`] : []),
     ...(before.analysis && after.analysis ? [`| Analysis SHA-256 | \`${before.analysis.sha256}\` | \`${after.analysis.sha256}\` |`] : []), '',
     `Risk score delta: ${delta.riskScore >= 0 ? '+' : ''}${delta.riskScore}`, '',
+    ...(delta.unreviewedRiskScore !== undefined ? [
+      `Unreviewed risk score delta: ${delta.unreviewedRiskScore >= 0 ? '+' : ''}${delta.unreviewedRiskScore}`, ''
+    ] : []),
     '## Resolved findings', '',
     ...(delta.resolvedFindings.length ? delta.resolvedFindings.map((finding) => `- ${escapeMarkdown(finding.id)}: ${escapeMarkdown(finding.title)}`) : ['- None']), '',
     '## Introduced findings', '',

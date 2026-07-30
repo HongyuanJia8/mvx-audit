@@ -1,0 +1,253 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { auditExtension } from '../src/analyzer.js';
+import { runCli } from '../src/cli.js';
+import { compareExtensions } from '../src/compare.js';
+import {
+  applyDispositionPolicies, loadDispositionPolicies, resolveDispositionPolicies
+} from '../src/disposition-policy.js';
+import { auditExtensionArchive } from '../src/packed-audit.js';
+import { auditToSarif, auditToText, comparisonToMarkdown } from '../src/reporters.js';
+import { makeCrx } from '../support/archive-fixture.js';
+import { captureStreams, writeExtension } from '../support/helpers.js';
+
+const ROOT = path.resolve('corpus/fixtures/cookie-access/mv3');
+const AT = '2026-07-30T12:00:00.000Z';
+
+function entry(packageSha256, fingerprint, overrides = {}) {
+  return {
+    fingerprint,
+    packageSha256,
+    disposition: 'accepted-risk',
+    owner: 'security-team@example.invalid',
+    justification: 'Reviewed against the exact package and accepted for this test.',
+    expiresAt: '2026-08-30T12:00:00.000Z',
+    ticketUrl: 'https://example.invalid/reviews/123',
+    ...overrides
+  };
+}
+
+function policy(entries, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    policyId: 'research.review',
+    name: 'Research review dispositions',
+    version: '2026.07.30',
+    entries,
+    ...overrides
+  };
+}
+
+async function writePolicy(filePath, value) {
+  const source = `${JSON.stringify(value, null, 2)}\n`;
+  await writeFile(filePath, source, 'utf8');
+  return Buffer.from(source);
+}
+
+test('disposition policies bind exact package and finding identities without hiding raw findings', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-disposition-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const baseline = await auditExtension(ROOT);
+  assert.equal('reviewSummary' in baseline, false);
+  const input = path.join(temp, 'policy.json');
+  const bytes = await writePolicy(input, policy([
+    entry(baseline.package.sha256, 'MVX103'),
+    entry(baseline.package.sha256, 'MVX101', { expiresAt: AT, disposition: 'false-positive' }),
+    entry(baseline.package.sha256, 'MVX999', { disposition: 'compensating-control' }),
+    entry('f'.repeat(64), 'MVX103')
+  ]));
+  const copied = path.join(temp, 'copied.json');
+  await writeFile(copied, bytes);
+  const prepared = await loadDispositionPolicies([input], { evaluationTime: AT });
+  const copiedPrepared = await loadDispositionPolicies([copied], { evaluationTime: AT });
+  assert.deepEqual(prepared.provenance, copiedPrepared.provenance);
+  assert.equal(prepared.provenance[0].sha256, createHash('sha256').update(bytes).digest('hex'));
+  assert.equal(JSON.stringify(prepared.provenance).includes(temp), false);
+  assert.equal(Object.isFrozen(prepared.policies[0].entries[0]), true);
+
+  const result = await auditExtension(ROOT, { dispositionPolicies: [input], dispositionAt: AT });
+  assert.deepEqual(result.summary, baseline.summary);
+  assert.equal(result.findings.length, baseline.findings.length);
+  assert.equal(result.findings.find((finding) => finding.fingerprint === 'MVX103').disposition.status, 'active');
+  assert.equal(result.findings.find((finding) => finding.fingerprint === 'MVX101').disposition.status, 'expired');
+  assert.equal(result.reviewSummary.total, baseline.summary.total - 1);
+  assert.equal(result.dispositionEvaluation.packageEntries, 3);
+  assert.equal(result.dispositionEvaluation.matchedEntries, 2);
+  assert.equal(result.dispositionEvaluation.unusedPackageEntries, 1);
+  assert.equal(result.dispositionEvaluation.activeFindings, 1);
+  assert.equal(result.dispositionEvaluation.expiredFindings, 1);
+  assert.match(result.assumptions.at(-1), /original findings and raw risk summary remain/);
+
+  const text = auditToText(result);
+  assert.match(text, /Unreviewed risk:/);
+  assert.match(text, /Disposition: ACTIVE accepted-risk/);
+  assert.match(text, /Disposition: EXPIRED false-positive/);
+  const sarif = auditToSarif(result);
+  assert.deepEqual(sarif.runs[0].properties.dispositionEvaluation, result.dispositionEvaluation);
+  assert.ok(sarif.runs[0].results.some((item) => item.properties.disposition?.status === 'active'));
+  assert.ok(sarif.runs[0].results.every((item) => item.suppressions === undefined));
+  assert.equal(sarif.runs[0].results.length, result.findings.reduce((count, finding) => count + finding.evidence.length, 0));
+
+  await assert.rejects(
+    () => resolveDispositionPolicies({ _preparedDispositionPolicies: structuredClone(prepared) }),
+    (error) => error.code === 'INVALID_ARGUMENT'
+  );
+  assert.throws(() => applyDispositionPolicies(result.findings, 'A'.repeat(64), prepared),
+    (error) => error.code === 'INVALID_ARGUMENT');
+});
+
+test('disposition loader rejects conflicts, unsafe files, duplicate keys, and non-canonical fields', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-disposition-invalid-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const hash = 'a'.repeat(64);
+  const first = path.join(temp, 'first.json');
+  const duplicate = path.join(temp, 'duplicate.json');
+  await writePolicy(first, policy([entry(hash, 'MVX103')]));
+  await writePolicy(duplicate, policy([entry(hash, 'MVX103')], { policyId: 'other.review' }));
+  await assert.rejects(() => loadDispositionPolicies([first, duplicate], { evaluationTime: AT }),
+    (error) => error.code === 'INVALID_DISPOSITION_POLICY' && /Conflicting disposition/.test(error.message));
+
+  const linked = path.join(temp, 'linked.json');
+  await symlink(first, linked);
+  await assert.rejects(() => loadDispositionPolicies([linked]), (error) => error.code === 'UNSAFE_DISPOSITION_POLICY');
+  await assert.rejects(() => loadDispositionPolicies(first), (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => loadDispositionPolicies([first], { evaluationTime: '2026-07-30' }),
+    (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => loadDispositionPolicies([first], null), (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => loadDispositionPolicies([first], { maxPolicyBytes: 10 }),
+    (error) => error.code === 'DISPOSITION_POLICY_LIMIT');
+  await assert.rejects(() => loadDispositionPolicies([first], { unknown: 1 }),
+    (error) => error.code === 'INVALID_ARGUMENT');
+
+  const duplicateKeys = path.join(temp, 'duplicate-keys.json');
+  await writeFile(duplicateKeys, '{"schemaVersion":1,"policyId":"a","policyId":"b","name":"Name","version":"1","entries":[]}');
+  await assert.rejects(() => loadDispositionPolicies([duplicateKeys]),
+    (error) => error.code === 'INVALID_DISPOSITION_POLICY' && /duplicate JSON field/.test(error.message));
+
+  const invalid = [
+    policy([entry(hash, 'bad fingerprint!')]),
+    policy([entry(hash.toUpperCase(), 'MVX103')]),
+    policy([entry(hash, 'MVX103', { justification: 'too short' })]),
+    policy([entry(hash, 'MVX103', { owner: 'unsafe\nowner' })]),
+    policy([entry(hash, 'MVX103', { expiresAt: '2026-08-30T12:00:00Z' })]),
+    policy([entry(hash, 'MVX103', { ticketUrl: 'http://example.invalid/ticket' })]),
+    policy([entry(hash, 'MVX103', { disposition: 'ignored' })]),
+    { ...policy([entry(hash, 'MVX103')]), unknown: true }
+  ];
+  for (let index = 0; index < invalid.length; index += 1) {
+    const input = path.join(temp, `invalid-${index}.json`);
+    await writePolicy(input, invalid[index]);
+    await assert.rejects(() => loadDispositionPolicies([input]),
+      (error) => error.code === 'INVALID_DISPOSITION_POLICY');
+  }
+});
+
+test('CLI validates policies and only explicit unreviewed thresholds honor active dispositions', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-disposition-cli-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const baseline = await auditExtension(ROOT);
+  const input = path.join(temp, 'policy.json');
+  await writePolicy(input, policy([entry(baseline.package.sha256, 'MVX103')]));
+
+  const validation = captureStreams();
+  assert.equal(await runCli(['dispositions', 'validate', input, '--disposition-at', AT, '--format', 'json'], validation.streams), 0);
+  assert.equal(JSON.parse(validation.output().stdout).valid, true);
+  assert.equal((await loadDispositionPolicies([path.resolve('examples/disposition-policy.json')], {
+    evaluationTime: AT
+  })).summary.policies, 1);
+
+  const raw = captureStreams();
+  assert.equal(await runCli([
+    'audit', ROOT, '--disposition-policy', input, '--disposition-at', AT, '--fail-on', 'critical'
+  ], raw.streams), 1);
+  const unreviewed = captureStreams();
+  assert.equal(await runCli([
+    'audit', ROOT, '--disposition-policy', input, '--disposition-at', AT,
+    '--fail-on-unreviewed', 'critical', '--format', 'json'
+  ], unreviewed.streams), 0);
+  assert.equal(JSON.parse(unreviewed.output().stdout).dispositionEvaluation.activeFindings, 1);
+
+  const conflict = captureStreams();
+  assert.equal(await runCli([
+    'audit', ROOT, '--disposition-policy', input, '--fail-on', 'high', '--fail-on-unreviewed', 'high'
+  ], conflict.streams), 2);
+  assert.match(conflict.output().stderr, /INVALID_ARGUMENT.*cannot be combined/);
+  const ignored = captureStreams();
+  assert.equal(await runCli(['intel', 'stats', '--disposition-policy', input], ignored.streams), 2);
+  assert.match(ignored.output().stderr, /INVALID_ARGUMENT.*Disposition policy options/);
+  const timeOnly = captureStreams();
+  assert.equal(await runCli(['audit', ROOT, '--disposition-at', AT], timeOnly.streams), 2);
+  assert.match(timeOnly.output().stderr, /INVALID_ARGUMENT.*requires at least one/);
+
+  const comparison = await compareExtensions(ROOT, ROOT, {
+    dispositionPolicies: [input], dispositionAt: AT
+  });
+  assert.equal(comparison.before.dispositionEvaluation.evaluatedAt, AT);
+  assert.equal(comparison.after.dispositionEvaluation.evaluatedAt, AT);
+  assert.equal(comparison.delta.unreviewedRiskScore, 0);
+  assert.match(comparisonToMarkdown(comparison), /Unreviewed risk score/);
+
+  const compareCli = captureStreams();
+  assert.equal(await runCli([
+    'compare', ROOT, ROOT, '--disposition-policy', input, '--disposition-at', AT, '--format', 'json'
+  ], compareCli.streams), 0);
+  assert.equal(JSON.parse(compareCli.output().stdout).before.dispositionEvaluation.evaluatedAt, AT);
+});
+
+test('packed audit applies dispositions to archive-authenticity findings', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-disposition-packed-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const temporaryDirectory = path.join(temp, 'temporary');
+  await mkdir(temporaryDirectory);
+  const input = path.join(temp, 'invalid.crx');
+  await writeFile(input, makeCrx([{
+    name: 'manifest.json', content: '{"manifest_version":3,"name":"Disposition packed","version":"1.0.0"}'
+  }]));
+  const invalidPolicy = path.join(temp, 'invalid-policy.json');
+  await writeFile(invalidPolicy, '{}');
+  await assert.rejects(() => auditExtensionArchive(input, {
+    temporaryDirectory, dispositionPolicies: [invalidPolicy], dispositionAt: AT
+  }), (error) => error.code === 'INVALID_DISPOSITION_POLICY');
+  assert.deepEqual(await readdir(temporaryDirectory), []);
+  const baseline = await auditExtensionArchive(input, { temporaryDirectory });
+  assert.deepEqual(baseline.findings.map((finding) => finding.id), ['MVX004']);
+  const policyPath = path.join(temp, 'policy.json');
+  await writePolicy(policyPath, policy([entry(baseline.package.sha256, 'MVX004')]));
+  const result = await auditExtensionArchive(input, {
+    temporaryDirectory, dispositionPolicies: [policyPath], dispositionAt: AT
+  });
+  assert.equal(result.findings[0].disposition.status, 'active');
+  assert.equal(result.summary.total, 1);
+  assert.equal(result.reviewSummary.total, 0);
+  assert.equal(result.dispositionEvaluation.activeFindings, 1);
+});
+
+test('rule-pack dispositions use the complete scoped fingerprint and invalidate on any package change', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-disposition-rule-pack-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const extension = await writeExtension(path.join(temp, 'extension'), {
+    manifest_version: 3, name: 'Disposition rule pack', version: '1.0.0'
+  }, { 'worker.js': "fetch('https://telemetry.campaign.example.invalid/collect');\n" });
+  const rulePack = path.resolve('examples/campaign-rule-pack.json');
+  const baseline = await auditExtension(extension, { rulePacks: [rulePack] });
+  const fingerprint = 'RP:example.campaign:NETWORK_MARKER';
+  assert.ok(baseline.findings.some((finding) => finding.fingerprint === fingerprint));
+  const policyPath = path.join(temp, 'policy.json');
+  await writePolicy(policyPath, policy([entry(baseline.package.sha256, fingerprint)]));
+  const reviewed = await auditExtension(extension, {
+    rulePacks: [rulePack], dispositionPolicies: [policyPath], dispositionAt: AT
+  });
+  assert.equal(reviewed.findings.find((finding) => finding.fingerprint === fingerprint).disposition.status, 'active');
+
+  await writeFile(path.join(extension, 'asset.bin'), 'one changed package byte');
+  const changed = await auditExtension(extension, {
+    rulePacks: [rulePack], dispositionPolicies: [policyPath], dispositionAt: AT
+  });
+  assert.notEqual(changed.package.sha256, baseline.package.sha256);
+  assert.equal(changed.findings.find((finding) => finding.fingerprint === fingerprint).disposition, undefined);
+  assert.equal(changed.dispositionEvaluation.packageEntries, 0);
+});
