@@ -56,6 +56,13 @@ matters. `--require-valid-signature` rejects invalid CRX and unsigned ZIP input
 before extraction; default mode retains invalid CRX content for forensic audit
 and emits `MVX004`.
 
+Use `--expected-archive-sha256` and `--expected-extension-id` when those values
+come from an independent trusted channel. A requested extension ID can match
+only a cryptographically verified CRX; MVX rejects invalid CRX and ZIP input as
+unverifiable instead of comparing an untrusted self-declaration. Successful
+reports retain the exact expectations and match state. These checks inherit the
+trustworthiness and freshness of the external source that supplied the values.
+
 Live browser analysis is accepted only through the documented container lab:
 no public network, no host browser profile, no real user data, no writable
 sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium

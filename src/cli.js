@@ -22,6 +22,7 @@ Usage:
   mvx audit <extension|file.crx|file.zip> [--format text|json|sarif]
             [--output file] [--fail-on severity] [--rule-pack file ...]
             [--acknowledge-risk] [--require-valid-signature]
+            [--expected-archive-sha256 digest] [--expected-extension-id id]
   mvx compare <before> <after> [--format markdown|json] [--output file]
               [--rule-pack file ...]
   mvx rules validate <file> [file ...] [--format text|json]
@@ -37,6 +38,7 @@ Usage:
                         [--max-total-bytes number]
   mvx sample unpack <file.crx-or-zip> --acknowledge-risk [--destination directory]
                     [--require-valid-signature]
+                    [--expected-archive-sha256 digest] [--expected-extension-id id]
   mvx lab evaluate <scenario.json> <events.jsonl> [--format text|json]
   mvx benchmark static <quarantine> --acknowledge-risk [--label label]
                        [--limit number] [--threshold severity] [--format text|json]
@@ -52,7 +54,7 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = {};
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--help' || token === '-h') options.help = true;
@@ -119,21 +121,32 @@ export async function runCli(argv, streams = process) {
       return 0;
     }
     const [command, ...args] = positionals;
+    const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
+      || options.expectedExtensionId !== undefined;
+    const signatureVerificationRequested = options.requireValidSignature === true;
+    if (archiveIdentityRequested && !['audit', 'sample'].includes(command)) {
+      throw new MvxError('Archive identity options apply only to audit or sample unpack', { code: 'INVALID_ARGUMENT' });
+    }
+    if (signatureVerificationRequested && !['audit', 'sample', 'benchmark'].includes(command)) {
+      throw new MvxError('Archive signature verification applies only to packed audit, sample unpack, or static benchmark', { code: 'INVALID_ARGUMENT' });
+    }
 
     if (command === 'audit') {
       if (args.length !== 1) throw new MvxError('audit requires exactly one extension or archive path', { code: 'INVALID_ARGUMENT' });
       const format = options.format ?? 'text';
       if (!['text', 'json', 'sarif'].includes(format)) throw new MvxError(`Unsupported audit format: ${format}`, { code: 'INVALID_ARGUMENT' });
       const packed = await isPackedAuditInput(args[0]);
-      if (!packed && options.requireValidSignature) {
-        throw new MvxError('--require-valid-signature applies only to packed CRX/ZIP audit input', { code: 'INVALID_ARGUMENT' });
+      if (!packed && (options.requireValidSignature || options.expectedArchiveSha256 || options.expectedExtensionId)) {
+        throw new MvxError('Archive signature and identity options apply only to packed CRX/ZIP audit input', { code: 'INVALID_ARGUMENT' });
       }
       if (packed && !options.acknowledgeRisk) {
         throw new MvxError('Refusing packed extension extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
       }
       const auditOptions = {
         rulePacks: options.rulePacks,
-        requireValidSignature: options.requireValidSignature
+        requireValidSignature: options.requireValidSignature || options.expectedExtensionId !== undefined,
+        expectedArchiveSha256: options.expectedArchiveSha256,
+        expectedExtensionId: options.expectedExtensionId
       };
       const result = packed ? await auditExtensionArchive(args[0], auditOptions) : await auditExtension(args[0], auditOptions);
       const content = format === 'text' ? auditToText(result) : format === 'sarif' ? json(auditToSarif(result)) : json(result);
@@ -204,6 +217,12 @@ export async function runCli(argv, streams = process) {
 
     if (command === 'sample') {
       const [action, target] = args;
+      if (archiveIdentityRequested && action !== 'unpack') {
+        throw new MvxError('Archive identity options apply only to sample unpack', { code: 'INVALID_ARGUMENT' });
+      }
+      if (signatureVerificationRequested && action !== 'unpack') {
+        throw new MvxError('Archive signature verification applies only to sample unpack', { code: 'INVALID_ARGUMENT' });
+      }
       if (['plan-many', 'fetch-many'].includes(action)) {
         if (args.length !== 1) throw new MvxError(`sample ${action} does not accept a target`, { code: 'INVALID_ARGUMENT' });
         const format = options.format ?? 'text';
@@ -253,7 +272,9 @@ export async function runCli(argv, streams = process) {
           ? path.resolve(options.destination)
           : path.join(path.dirname(input), 'unpacked', path.basename(input, path.extname(input)));
         const result = await unpackExtensionArchive(input, destination, {
-          requireValidSignature: options.requireValidSignature
+          requireValidSignature: options.requireValidSignature || options.expectedExtensionId !== undefined,
+          expectedArchiveSha256: options.expectedArchiveSha256,
+          expectedExtensionId: options.expectedExtensionId
         });
         await emit(format === 'json' ? json(result) : [
           `Unpacked quarantined ${result.archiveFormat.toUpperCase()}: ${result.destination}`,
@@ -264,6 +285,10 @@ export async function runCli(argv, streams = process) {
             : result.authenticity.status === 'invalid'
               ? [`Authenticity: INVALID (${result.authenticity.error})`]
               : ['Authenticity: not applicable']),
+          ...(result.identityPolicy.matched ? [`Identity policy: MATCHED (${[
+            ...(result.identityPolicy.archiveSha256Match ? ['archive SHA-256'] : []),
+            ...(result.identityPolicy.extensionIdMatch ? ['extension ID'] : [])
+          ].join(', ')})`] : []),
           `Archive bytes: ${result.archiveBytes}`,
           `Files: ${result.files}`,
           `Uncompressed bytes: ${result.uncompressedBytes}`,

@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { unpackCrx } from '../src/archive.js';
 import { runStaticBenchmark, staticBenchmarkToText } from '../src/benchmark.js';
 import { makeCrx, makeSignedCrx3 } from '../support/archive-fixture.js';
 
@@ -97,12 +98,14 @@ test('static benchmark ignores an untrusted existing extraction and audits fresh
 test('strict benchmark rejects an invalid CRX even when a persistent extraction exists', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-strict-cache-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const destination = path.join(root, ID, 'unpacked', HASH);
+  const bytes = makeCrx([{
+    name: 'manifest.json', content: '{"manifest_version":3}'
+  }]);
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  const destination = path.join(root, ID, 'unpacked', hash);
   await mkdir(destination, { recursive: true });
   await writeFile(path.join(destination, 'manifest.json'), '{"manifest_version":3}');
-  await writeFile(path.join(root, ID, `${HASH}.crx`), makeCrx([{
-    name: 'manifest.json', content: '{"manifest_version":3}'
-  }]));
+  await writeFile(path.join(root, ID, `${hash}.crx`), bytes);
   const report = await runStaticBenchmark({
     quarantineDir: root,
     acknowledgeRisk: true,
@@ -110,7 +113,7 @@ test('strict benchmark rejects an invalid CRX even when a persistent extraction 
   });
   assert.equal(report.summary.analyzed, 0);
   assert.equal(report.summary.failures, 1);
-  assert.equal(report.failures[0].code, 'CRX_SIGNATURE_REQUIRED');
+  assert.equal(report.failures[0].code, 'ARCHIVE_IDENTITY_UNVERIFIABLE');
 });
 
 test('benchmark counts invalid CRX authenticity as an MVX004 review trigger', async (t) => {
@@ -157,12 +160,24 @@ test('benchmark rejects archive hash and verified extension-ID mismatches before
   t.after(() => rm(wrongIdRoot, { recursive: true, force: true }));
   await mkdir(path.join(wrongIdRoot, ID));
   await writeFile(path.join(wrongIdRoot, ID, `${actualHash}.crx`), signed.bytes);
+  let unpackCompleted = false;
+  let auditCalled = false;
   const wrongId = await runStaticBenchmark({
     quarantineDir: wrongIdRoot,
     acknowledgeRisk: true,
-    requireValidSignature: true
+    unpacker: async (...args) => {
+      const archive = await unpackCrx(...args);
+      unpackCompleted = true;
+      return archive;
+    },
+    auditor: async () => {
+      auditCalled = true;
+      throw new Error('auditor must not run for a verified ID mismatch');
+    }
   });
   assert.equal(wrongId.failures[0].code, 'ARCHIVE_IDENTITY_MISMATCH');
+  assert.equal(unpackCompleted, false);
+  assert.equal(auditCalled, false);
   await assert.rejects(
     () => lstat(path.join(wrongIdRoot, ID, 'unpacked', actualHash)),
     (error) => error.code === 'ENOENT'

@@ -212,11 +212,20 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
   if (options.requireValidSignature !== undefined && typeof options.requireValidSignature !== 'boolean') {
     throw new MvxError('requireValidSignature must be boolean', { code: 'INVALID_ARGUMENT' });
   }
-  if (options.expectedArchiveSha256 !== undefined && !SHA256.test(options.expectedArchiveSha256)) {
+  if (options.expectedArchiveSha256 !== undefined
+    && (typeof options.expectedArchiveSha256 !== 'string' || !SHA256.test(options.expectedArchiveSha256))) {
     throw new MvxError('expectedArchiveSha256 must be a lowercase SHA-256 digest', { code: 'INVALID_ARGUMENT' });
   }
-  if (options.expectedExtensionId !== undefined && !EXTENSION_ID.test(options.expectedExtensionId)) {
+  if (options.expectedExtensionId !== undefined
+    && (typeof options.expectedExtensionId !== 'string' || !EXTENSION_ID.test(options.expectedExtensionId))) {
     throw new MvxError('expectedExtensionId must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
+  }
+  if (options._expectedExtensionIdIfVerified !== undefined
+    && (typeof options._expectedExtensionIdIfVerified !== 'string' || !EXTENSION_ID.test(options._expectedExtensionIdIfVerified))) {
+    throw new MvxError('_expectedExtensionIdIfVerified must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
+  }
+  if (options.expectedExtensionId !== undefined && options._expectedExtensionIdIfVerified !== undefined) {
+    throw new MvxError('Extension ID expectations cannot be combined', { code: 'INVALID_ARGUMENT' });
   }
   const limits = normalizeLimits(options.limits ?? {});
   const input = path.resolve(inputPath);
@@ -232,19 +241,33 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
     unsafeCode: 'UNSAFE_ARCHIVE'
   });
   const archiveSha256 = createHash('sha256').update(buffer).digest('hex');
+  if (options.expectedArchiveSha256 && archiveSha256 !== options.expectedArchiveSha256) {
+    throw new MvxError('Archive SHA-256 does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+  }
   const { format, version, offset: zipOffset } = archiveZipOffset(buffer, allowZip);
   const authenticity = verifyCrxAuthenticity(buffer, { format, version, zipOffset }, limits);
+  if (options.expectedExtensionId && authenticity.status !== 'verified') {
+    throw new MvxError('Expected extension ID cannot be verified without a valid CRX signature', {
+      code: 'ARCHIVE_IDENTITY_UNVERIFIABLE'
+    });
+  }
+  const verifiedExtensionIdExpectation = options.expectedExtensionId ?? options._expectedExtensionIdIfVerified;
+  if (verifiedExtensionIdExpectation && authenticity.status === 'verified'
+    && authenticity.extensionId !== verifiedExtensionIdExpectation) {
+    throw new MvxError('Verified CRX extension ID does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+  }
   if (options.requireValidSignature && authenticity.status !== 'verified') {
     const reason = authenticity.error ?? authenticity.status;
     throw new MvxError(`A valid CRX signature is required: ${reason}`, { code: 'CRX_SIGNATURE_REQUIRED' });
   }
-  if (options.expectedArchiveSha256 && archiveSha256 !== options.expectedArchiveSha256) {
-    throw new MvxError('Archive SHA-256 does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
-  }
-  if (options.expectedExtensionId && authenticity.status === 'verified'
-    && authenticity.extensionId !== options.expectedExtensionId) {
-    throw new MvxError('Verified CRX extension ID does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
-  }
+  const identityPolicy = {
+    profile: 'mvx-archive-identity-v1',
+    expectedArchiveSha256: options.expectedArchiveSha256 ?? null,
+    expectedExtensionId: options.expectedExtensionId ?? null,
+    archiveSha256Match: options.expectedArchiveSha256 ? true : null,
+    extensionIdMatch: options.expectedExtensionId ? true : null,
+    matched: options.expectedArchiveSha256 || options.expectedExtensionId ? true : null
+  };
   const entries = parseEntries(buffer, zipOffset, limits);
   const { absolute, parent } = await safeParent(destination);
   try {
@@ -288,6 +311,7 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
       archiveBytes: buffer.length,
       archiveSha256,
       authenticity,
+      identityPolicy,
       entries: entries.length,
       files,
       uncompressedBytes: totalBytes

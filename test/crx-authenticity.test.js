@@ -186,3 +186,101 @@ test('signature options and CRX3 header resources are bounded', async (t) => {
     (error) => error.code === 'CRX_SIGNATURE_LIMIT'
   );
 });
+
+test('archive identity policy binds external SHA-256 and verified extension ID before extraction', async (t) => {
+  const fixture = makeSignedCrx3(ENTRIES);
+  const expectedSha256 = createHash('sha256').update(fixture.bytes).digest('hex');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-identity-policy-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const input = path.join(root, 'signed.crx');
+  await writeFile(input, fixture.bytes);
+
+  const matched = await unpackCrx(input, path.join(root, 'matched'), {
+    expectedArchiveSha256: expectedSha256,
+    expectedExtensionId: fixture.extensionId
+  });
+  assert.deepEqual(matched.identityPolicy, {
+    profile: 'mvx-archive-identity-v1',
+    expectedArchiveSha256: expectedSha256,
+    expectedExtensionId: fixture.extensionId,
+    archiveSha256Match: true,
+    extensionIdMatch: true,
+    matched: true
+  });
+
+  const failures = [
+    {
+      destination: 'wrong-hash',
+      options: { expectedArchiveSha256: '0'.repeat(64) },
+      code: 'ARCHIVE_IDENTITY_MISMATCH'
+    },
+    {
+      destination: 'wrong-id',
+      options: {
+        expectedExtensionId: `${fixture.extensionId[0] === 'a' ? 'b' : 'a'}${fixture.extensionId.slice(1)}`
+      },
+      code: 'ARCHIVE_IDENTITY_MISMATCH'
+    }
+  ];
+  for (const failure of failures) {
+    const destination = path.join(root, failure.destination);
+    await assert.rejects(() => unpackCrx(input, destination, failure.options), (error) => {
+      return error.code === failure.code;
+    });
+    await assert.rejects(() => lstat(destination), (error) => error.code === 'ENOENT');
+  }
+});
+
+test('extension-ID policy fails closed for invalid CRX or unsigned ZIP identity', async (t) => {
+  const expectedExtensionId = 'a'.repeat(32);
+  const inputs = [
+    { bytes: makeCrx(ENTRIES), extension: 'crx' },
+    { bytes: makeZip(ENTRIES), extension: 'zip' }
+  ];
+  for (const [index, inputFixture] of inputs.entries()) {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-unverifiable-identity-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const input = path.join(root, `sample.${inputFixture.extension}`);
+    const destination = path.join(root, `output-${index}`);
+    await writeFile(input, inputFixture.bytes);
+    await assert.rejects(
+      () => unpackExtensionArchive(input, destination, { expectedExtensionId }),
+      (error) => error.code === 'ARCHIVE_IDENTITY_UNVERIFIABLE'
+    );
+    await assert.rejects(() => lstat(destination), (error) => error.code === 'ENOENT');
+  }
+});
+
+test('archive identity policy rejects non-canonical values and supports SHA-bound ZIP input', async (t) => {
+  const zip = makeZip(ENTRIES);
+  const expectedArchiveSha256 = createHash('sha256').update(zip).digest('hex');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-zip-identity-policy-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const input = path.join(root, 'sample.zip');
+  await writeFile(input, zip);
+  const result = await unpackExtensionArchive(input, path.join(root, 'matched'), {
+    expectedArchiveSha256
+  });
+  assert.equal(result.authenticity.status, 'not-applicable');
+  assert.deepEqual(result.identityPolicy, {
+    profile: 'mvx-archive-identity-v1',
+    expectedArchiveSha256,
+    expectedExtensionId: null,
+    archiveSha256Match: true,
+    extensionIdMatch: null,
+    matched: true
+  });
+
+  const invalidOptions = [
+    { expectedArchiveSha256: Buffer.from(expectedArchiveSha256) },
+    { expectedArchiveSha256: expectedArchiveSha256.toUpperCase() },
+    { expectedExtensionId: 123 },
+    { expectedExtensionId: 'A'.repeat(32) }
+  ];
+  for (const [index, options] of invalidOptions.entries()) {
+    await assert.rejects(
+      () => unpackExtensionArchive(input, path.join(root, `invalid-${index}`), options),
+      (error) => error.code === 'INVALID_ARGUMENT'
+    );
+  }
+});

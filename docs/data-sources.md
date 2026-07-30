@@ -108,6 +108,13 @@ and removes the workspace after a returned result or thrown error. Abrupt
 process termination can bypass language-level cleanup. It is the preferred
 triage path when researchers do not need to retain unpacked files.
 
+When an artifact index, incident record, or trusted acquisition channel supplies
+an expected digest or extension ID, pass it with
+`--expected-archive-sha256`/`--expected-extension-id`. The digest binds the
+exact container bytes. The extension ID is accepted only when a CRX signature
+verifies, so an unsigned ZIP or invalid CRX cannot satisfy it by declaration.
+The report preserves the expectations and match state for later reproduction.
+
 `mvx benchmark static quarantine --acknowledge-risk` performs bounded extraction
 and static audit across already downloaded samples. Its review-trigger rate is
 a triage metric, not classifier accuracy or proof that the scanner understood

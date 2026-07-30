@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { runCli } from '../src/cli.js';
-import { makeCrx } from '../support/archive-fixture.js';
+import { makeCrx, makeSignedCrx3 } from '../support/archive-fixture.js';
 import { captureStreams } from '../support/helpers.js';
 
 const ROOT = path.resolve('corpus/fixtures');
@@ -57,6 +58,41 @@ test('CLI packed audit requires acknowledgement and preserves fail-on semantics'
   ], strict.streams), 2);
   assert.match(strict.output().stderr, /CRX_SIGNATURE_REQUIRED.*invalid-signed-header/);
 
+  const signed = makeSignedCrx3([{
+    name: 'manifest.json',
+    content: '{"manifest_version":3,"name":"Identity CLI","version":"1.0.0"}'
+  }]);
+  const signedInput = path.join(temp, 'signed.crx');
+  const signedSha256 = createHash('sha256').update(signed.bytes).digest('hex');
+  await writeFile(signedInput, signed.bytes);
+  const identity = captureStreams();
+  assert.equal(await runCli([
+    'audit', signedInput, '--acknowledge-risk', '--format', 'json',
+    '--expected-archive-sha256', signedSha256,
+    '--expected-extension-id', signed.extensionId
+  ], identity.streams), 0);
+  assert.deepEqual(JSON.parse(identity.output().stdout).artifact.identityPolicy, {
+    profile: 'mvx-archive-identity-v1',
+    expectedArchiveSha256: signedSha256,
+    expectedExtensionId: signed.extensionId,
+    archiveSha256Match: true,
+    extensionIdMatch: true,
+    matched: true
+  });
+
+  const wrongIdentity = captureStreams();
+  assert.equal(await runCli([
+    'audit', signedInput, '--acknowledge-risk',
+    '--expected-archive-sha256', '0'.repeat(64)
+  ], wrongIdentity.streams), 2);
+  assert.match(wrongIdentity.output().stderr, /ARCHIVE_IDENTITY_MISMATCH/);
+
+  const unverifiableIdentity = captureStreams();
+  assert.equal(await runCli([
+    'audit', input, '--acknowledge-risk', '--expected-extension-id', signed.extensionId
+  ], unverifiableIdentity.streams), 2);
+  assert.match(unverifiableIdentity.output().stderr, /ARCHIVE_IDENTITY_UNVERIFIABLE/);
+
   const directoryNamedZip = path.join(temp, 'unpacked.zip');
   await mkdir(directoryNamedZip);
   await writeFile(path.join(directoryNamedZip, 'manifest.json'), '{"manifest_version":3,"name":"Directory","version":"1.0.0"}\n', 'utf8');
@@ -98,6 +134,8 @@ test('CLI help documents stable exit codes', async () => {
   assert.match(capture.output().stdout, /rules validate/);
   assert.match(capture.output().stdout, /--rule-pack/);
   assert.match(capture.output().stdout, /--require-valid-signature/);
+  assert.match(capture.output().stdout, /--expected-archive-sha256/);
+  assert.match(capture.output().stdout, /--expected-extension-id/);
 });
 
 test('CLI emits valid SARIF and version output', async () => {
@@ -166,6 +204,38 @@ test('CLI refuses CRX extraction without explicit risk acknowledgement', async (
   const capture = captureStreams();
   assert.equal(await runCli(['sample', 'unpack', 'missing.crx'], capture.streams), 2);
   assert.match(capture.output().stderr, /RISK_ACK_REQUIRED/);
+});
+
+test('CLI sample unpack enforces and reports archive identity policy', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-cli-identity-unpack-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const signed = makeSignedCrx3([{
+    name: 'manifest.json',
+    content: '{"manifest_version":3,"name":"Identity unpack","version":"1.0.0"}'
+  }]);
+  const input = path.join(root, 'signed.crx');
+  const destination = path.join(root, 'unpacked');
+  const sha256 = createHash('sha256').update(signed.bytes).digest('hex');
+  await writeFile(input, signed.bytes);
+  const capture = captureStreams();
+  assert.equal(await runCli([
+    'sample', 'unpack', input, '--acknowledge-risk', '--destination', destination,
+    '--expected-archive-sha256', sha256,
+    '--expected-extension-id', signed.extensionId
+  ], capture.streams), 0);
+  assert.match(capture.output().stdout, /Identity policy: MATCHED \(archive SHA-256, extension ID\)/);
+
+  const ignored = captureStreams();
+  assert.equal(await runCli([
+    'intel', 'stats', '--expected-archive-sha256', sha256
+  ], ignored.streams), 2);
+  assert.match(ignored.output().stderr, /INVALID_ARGUMENT.*Archive identity options/);
+
+  const ignoredSignature = captureStreams();
+  assert.equal(await runCli([
+    'sample', 'plan', signed.extensionId, '--require-valid-signature'
+  ], ignoredSignature.streams), 2);
+  assert.match(ignoredSignature.output().stderr, /INVALID_ARGUMENT.*signature verification.*sample unpack/i);
 });
 
 test('CLI evaluates recorded lab events without running extension code', async (t) => {

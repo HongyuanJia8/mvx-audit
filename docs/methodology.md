@@ -104,6 +104,23 @@ identity validation. A valid signature does not establish who controls the
 key, whether a store authorized the package, whether the expected key or ID was
 supplied out of band, or whether the signed code is safe.
 
+## External archive identity policy
+
+Packed audit and extraction accept `expectedArchiveSha256` and
+`expectedExtensionId`, exposed by the CLI as `--expected-archive-sha256` and
+`--expected-extension-id`. SHA-256 is computed over the exact bounded input
+buffer and compared before CRX/ZIP parsing. An expected extension ID requires a
+verified CRX developer-key proof; invalid CRX and ZIP input fail as
+`ARCHIVE_IDENTITY_UNVERIFIABLE`, while a verified mismatch fails as
+`ARCHIVE_IDENTITY_MISMATCH`. No requested extraction destination is created
+first.
+
+Successful results include the `mvx-archive-identity-v1` policy record with the
+exact expected values and match state. JSON retains it directly, text renders a
+matched summary, and SARIF carries it under the packed artifact properties.
+The policy makes an external assertion reproducible; it cannot make an
+untrusted, stale, or incorrectly attributed assertion trustworthy.
+
 Static benchmark discovery treats the quarantine directory ID and the CRX
 filename digest as expected identities, not trusted labels. Before extraction
 the actual archive SHA-256 must match its filename. A verified CRX extension ID
