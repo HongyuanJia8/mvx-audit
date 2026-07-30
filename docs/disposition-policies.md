@@ -79,10 +79,13 @@ policy ID/version, and exact policy SHA-256. Raw `summary` remains unchanged.
 `reviewSummary` covers findings without an active disposition, while
 `dispositionEvaluation` reports matched, active, expired, and unused counts.
 
-Text prints both summaries and matched dispositions. SARIF keeps every result
-and records disposition metadata in result properties; MVX deliberately does
-not emit SARIF `suppressions`, because downstream tools may hide them by
-default.
+Text prints both summaries, every loaded policy's raw-byte provenance, complete
+finding fingerprints, and matched dispositions. Compare Markdown records both
+sides' evaluation time, counts, and complete policy provenance before showing
+unreviewed metrics; changed findings retain their complete fingerprint and any
+disposition source. SARIF keeps every result and records disposition metadata
+in result properties; MVX deliberately does not emit SARIF `suppressions`,
+because downstream tools may hide them by default.
 
 The [checked-in example](../examples/disposition-policy.json) uses an
 intentionally non-matching zero package and analysis digests that must be

@@ -135,6 +135,27 @@ export function auditToSarif(result) {
   };
 }
 
+function comparisonFindingToMarkdown(finding) {
+  const disposition = finding.disposition;
+  return `- \`${escapeMarkdown(findingKey(finding))}\`: ${escapeMarkdown(finding.title)}${disposition
+    ? ` — disposition **${disposition.status.toUpperCase()} ${escapeMarkdown(disposition.disposition)}** via ${escapeMarkdown(disposition.policyId)}@${escapeMarkdown(disposition.policyVersion)} (SHA-256 \`${disposition.policySha256}\`)`
+    : ''}`;
+}
+
+function policyProvenanceToMarkdown(label, result) {
+  return [
+    `### ${label}`, '',
+    `- Evaluated at: \`${result.dispositionEvaluation.evaluatedAt}\``,
+    `- Matched entries: ${result.dispositionEvaluation.matchedEntries}/${result.dispositionEvaluation.identityEntries}`,
+    `- Active findings: ${result.dispositionEvaluation.activeFindings}`,
+    `- Expired findings: ${result.dispositionEvaluation.expiredFindings}`,
+    `- Unused identity entries: ${result.dispositionEvaluation.unusedIdentityEntries}`,
+    '- Policies:',
+    ...result.dispositionPolicies.map((policy) =>
+      `  - ${escapeMarkdown(policy.policyId)}@${escapeMarkdown(policy.version)}: ${policy.bytes} bytes, SHA-256 \`${policy.sha256}\`, ${policy.entries} entry/entries`)
+  ];
+}
+
 export function comparisonToMarkdown(comparison) {
   const { before, after, delta } = comparison;
   const lines = [
@@ -152,14 +173,19 @@ export function comparisonToMarkdown(comparison) {
     ...(before.rulePacks && after.rulePacks ? [`| Rule packs | ${before.rulePacks.length} | ${after.rulePacks.length} |`] : []),
     ...(before.package && after.package ? [`| Package SHA-256 | \`${before.package.sha256}\` | \`${after.package.sha256}\` |`] : []),
     ...(before.analysis && after.analysis ? [`| Analysis SHA-256 | \`${before.analysis.sha256}\` | \`${after.analysis.sha256}\` |`] : []), '',
+    ...(before.dispositionEvaluation && after.dispositionEvaluation ? [
+      '## Disposition policy provenance', '',
+      ...policyProvenanceToMarkdown('Before', before), '',
+      ...policyProvenanceToMarkdown('After', after), ''
+    ] : []),
     `Risk score delta: ${delta.riskScore >= 0 ? '+' : ''}${delta.riskScore}`, '',
     ...(delta.unreviewedRiskScore !== undefined ? [
       `Unreviewed risk score delta: ${delta.unreviewedRiskScore >= 0 ? '+' : ''}${delta.unreviewedRiskScore}`, ''
     ] : []),
     '## Resolved findings', '',
-    ...(delta.resolvedFindings.length ? delta.resolvedFindings.map((finding) => `- ${escapeMarkdown(finding.id)}: ${escapeMarkdown(finding.title)}`) : ['- None']), '',
+    ...(delta.resolvedFindings.length ? delta.resolvedFindings.map(comparisonFindingToMarkdown) : ['- None']), '',
     '## Introduced findings', '',
-    ...(delta.introducedFindings.length ? delta.introducedFindings.map((finding) => `- ${escapeMarkdown(finding.id)}: ${escapeMarkdown(finding.title)}`) : ['- None']), '',
+    ...(delta.introducedFindings.length ? delta.introducedFindings.map(comparisonFindingToMarkdown) : ['- None']), '',
     '## Evidence changes', '',
     `- Added locations: ${delta.evidenceAdded.length}`,
     `- Removed locations: ${delta.evidenceRemoved.length}`,

@@ -236,7 +236,24 @@ test('CLI validates policies and only explicit unreviewed thresholds honor activ
   assert.equal(comparison.before.dispositionEvaluation.evaluatedAt, AT);
   assert.equal(comparison.after.dispositionEvaluation.evaluatedAt, AT);
   assert.equal(comparison.delta.unreviewedRiskScore, 0);
-  assert.match(comparisonToMarkdown(comparison), /Unreviewed risk score/);
+  const comparisonMarkdown = comparisonToMarkdown(comparison);
+  assert.match(comparisonMarkdown, /Unreviewed risk score/);
+  assert.match(comparisonMarkdown, /## Disposition policy provenance/);
+  assert.ok(comparisonMarkdown.includes(`Evaluated at: \`${AT}\``));
+  const policyProvenance = (await loadDispositionPolicies([input], { evaluationTime: AT })).provenance[0];
+  assert.ok(comparisonMarkdown.includes(
+    `research.review@2026.07.30: ${policyProvenance.bytes} bytes, SHA-256 \`${policyProvenance.sha256}\``
+  ));
+  assert.match(comparisonMarkdown, /Matched entries: 1\/1/);
+  const changedComparison = structuredClone(comparison);
+  changedComparison.delta.resolvedFindings = [
+    changedComparison.before.findings.find((finding) => finding.fingerprint === 'MVX103')
+  ];
+  const changedMarkdown = comparisonToMarkdown(changedComparison);
+  assert.match(changedMarkdown, /`MVX103`: Broad cookie access/);
+  assert.ok(changedMarkdown.includes(
+    `disposition **ACTIVE accepted-risk** via research.review@2026.07.30 (SHA-256 \`${policyProvenance.sha256}\`)`
+  ));
 
   const compareCli = captureStreams();
   assert.equal(await runCli([
