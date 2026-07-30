@@ -60,6 +60,24 @@ different location preserves the combined digest. Source hashes are computed
 before UTF-8 decoding. The profile name versions the digest contract, and any
 future semantic change requires a new profile name.
 
+## Finding and evidence fingerprints
+
+Every finding carries a stable semantic fingerprint. SARIF stores digests under
+`mvxFinding/v1` and `mvxEvidence/v1`; the exported domain profiles are
+`mvx-finding-v1` and `mvx-evidence-v1`. Each digest is SHA-256 over the UTF-8
+profile name, one NUL byte, and canonical JSON. The finding object contains only
+the semantic fingerprint. The evidence object contains that fingerprint plus
+the complete evidence value. Canonical JSON sorts object keys recursively,
+preserves array order, omits undefined object members, and otherwise follows
+JSON primitive encoding.
+
+Relative evidence paths and canonical object-key ordering make the result
+independent of checkout root and JavaScript insertion order. Any evidence field
+change intentionally produces a different evidence fingerprint; comparison
+uses the same identity. These values support deduplication and reviewed
+baselines. They do not authenticate a package or justify suppressing a finding
+without binding it to the package digest.
+
 Files are captured sequentially, so this is not an atomic filesystem snapshot
 of a directory being modified concurrently. Use a fresh, immutable quarantine
 extraction when the input may be adversarial or changing during analysis.

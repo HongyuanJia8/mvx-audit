@@ -36,7 +36,8 @@ export function createFinding(rule, evidence, overrides = {}) {
     remediation: rule.remediation,
     references: rule.references ?? [],
     evidence: Array.isArray(evidence) ? evidence : [evidence],
-    ...overrides
+    ...overrides,
+    fingerprint: overrides.fingerprint ?? rule.id
   });
 }
 

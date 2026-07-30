@@ -1,14 +1,9 @@
 import { auditExtension } from './analyzer.js';
+import { evidenceFingerprint, findingKey } from './fingerprints.js';
 import { resolveRulePacks } from './rule-packs.js';
 
-function findingKey(finding) {
-  return finding.fingerprint ?? finding.id;
-}
-
 function evidenceKey(finding, evidence) {
-  return [
-    findingKey(finding), evidence.file ?? '', evidence.line ?? '', evidence.field ?? '', evidence.snippet ?? ''
-  ].join('\u0000');
+  return evidenceFingerprint(finding, evidence);
 }
 
 function flattenEvidence(findings) {

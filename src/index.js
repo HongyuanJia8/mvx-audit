@@ -6,6 +6,10 @@ export { compareExtensions } from './compare.js';
 export { loadCatalog, validateCatalog } from './catalog.js';
 export { loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
 export { evaluateLabFiles, evaluateLabRun, labReportToText, parseLabEvents, VERDICTS } from './lab.js';
+export {
+  EVIDENCE_FINGERPRINT_PROFILE, FINDING_FINGERPRINT_PROFILE,
+  evidenceFingerprint, findingFingerprint, findingKey
+} from './fingerprints.js';
 export { fetchSample, fetchSampleBatch, planSample, planSampleBatch } from './quarantine.js';
 export { loadRulePacks, rulePacksToText } from './rule-packs.js';
 export { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';

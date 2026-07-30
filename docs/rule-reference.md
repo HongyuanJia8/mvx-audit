@@ -56,9 +56,27 @@ These findings are local review indicators. MVX does not promote them to
 malware verdicts, authenticate their publisher, or imply that the matched
 package executed the represented behavior.
 
+## Stable fingerprints
+
+Every JSON finding includes a non-empty `fingerprint`. Rules with one semantic
+finding use their stable rule ID; rules that can produce independently reviewed
+variants add a deterministic scope, such as `MVX102:cookies`. SARIF results add
+domain-separated SHA-256 `partialFingerprints` under `mvxFinding/v1` and
+`mvxEvidence/v1`. The first hashes the finding fingerprint; the second hashes
+that fingerprint together with the complete canonical evidence object. Their
+exported domain profiles are `mvx-finding-v1` and `mvx-evidence-v1`. Object key
+order and checkout location do not affect either value, while an evidence field
+change does affect the evidence fingerprint.
+
+Finding fingerprints identify a review category, not package contents. Any
+future disposition policy must bind the fingerprint to the exact
+`mvx-package-v1` SHA-256 rather than treating the fingerprint as a global
+allowlist.
+
 ## Suppression policy
 
 Version 3.0 does not support inline suppression. Security findings should remain
 visible in machine output; projects can apply their own reviewed allowlist by
-rule fingerprint outside the scanned extension. A future suppression format
-must include justification, owner, and expiry rather than a bare ignore comment.
+finding fingerprint and exact package SHA-256 outside the scanned extension. A
+future suppression format must include justification, owner, and expiry rather
+than a bare ignore comment.

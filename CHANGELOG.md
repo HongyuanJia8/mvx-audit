@@ -7,6 +7,8 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Stable fingerprints on every finding plus canonical, domain-separated SARIF
+  finding and evidence partial fingerprints.
 - Fail-closed external archive identity policy for expected SHA-256 and verified
   extension ID, with CLI/API controls and JSON, text, and SARIF evidence.
 - Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 signature verification,
