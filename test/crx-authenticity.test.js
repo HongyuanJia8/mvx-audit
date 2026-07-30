@@ -14,6 +14,18 @@ const ENTRIES = [{
   content: '{"manifest_version":3,"name":"Signed fixture","version":"1.0.0"}'
 }];
 
+function varint(input) {
+  let value = BigInt(input);
+  const bytes = [];
+  do {
+    let byte = Number(value & 0x7fn);
+    value >>= 7n;
+    if (value !== 0n) byte |= 0x80;
+    bytes.push(byte);
+  } while (value !== 0n);
+  return Buffer.from(bytes);
+}
+
 async function unpackFixture(t, bytes, options = {}, extension = 'crx') {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-authenticity-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -93,6 +105,45 @@ test('CRX3 requires a verified proof matching its declared ID', async (t) => {
   assert.equal(result.authenticity.error, 'developer-key-proof-missing');
   assert.equal(result.authenticity.developerKeySha256, null);
   assert.ok(result.authenticity.proofs.every((proof) => proof.verified && !proof.developerKey));
+});
+
+test('CRX2 and CRX3 reject SPKI DER with trailing bytes that Node otherwise accepts', async (t) => {
+  const fixtures = [
+    makeSignedCrx2(ENTRIES, { trailingPublicKeyData: Buffer.from([0]) }),
+    makeSignedCrx3(ENTRIES, { trailingPublicKeyData: Buffer.from([0]) })
+  ];
+  for (const [index, fixture] of fixtures.entries()) {
+    const permissive = await unpackFixture(t, fixture.bytes);
+    assert.equal(permissive.result.authenticity.status, 'invalid');
+    assert.equal(permissive.result.authenticity.proofs[0].error, 'invalid-public-key-or-signature');
+    await assert.rejects(
+      () => unpackCrx(
+        permissive.input,
+        path.join(permissive.root, `strict-${index}`),
+        { requireValidSignature: true }
+      ),
+      (error) => error.code === 'CRX_SIGNATURE_REQUIRED'
+    );
+  }
+});
+
+test('CRX3 rejects oversized protobuf field numbers inside unknown groups', async (t) => {
+  const invalidNestedTag = (0x20000000n << 3n) | 0n;
+  const unknownGroup = Buffer.concat([
+    Buffer.from([(4 << 3) | 3]),
+    varint(invalidNestedTag),
+    Buffer.from([0, (4 << 3) | 4])
+  ]);
+  const fixture = makeSignedCrx3(ENTRIES, { extraHeaderData: unknownGroup });
+  const permissive = await unpackFixture(t, fixture.bytes);
+  assert.equal(permissive.result.authenticity.status, 'invalid');
+  assert.equal(permissive.result.authenticity.error, 'invalid-signed-header');
+  await assert.rejects(
+    () => unpackCrx(permissive.input, path.join(permissive.root, 'strict-group'), {
+      requireValidSignature: true
+    }),
+    (error) => error.code === 'CRX_SIGNATURE_REQUIRED'
+  );
 });
 
 test('unsigned CRX3 and ZIP authenticity statuses are explicit', async (t) => {

@@ -96,11 +96,19 @@ raw public key or signature. Invalid CRXs remain extractable by default for
 forensic inspection and produce `MVX004`; `requireValidSignature: true` or
 `--require-valid-signature` fails before ZIP parsing or filesystem extraction.
 ZIP input is `not-applicable` and therefore also rejected by strict mode.
+Public keys must be a single fully consumed DER SubjectPublicKeyInfo sequence;
+trailing bytes that Chromium rejects are not accepted as part of a key.
 
 This is archive self-consistency and integrity verification, not publisher
 identity validation. A valid signature does not establish who controls the
 key, whether a store authorized the package, whether the expected key or ID was
 supplied out of band, or whether the signed code is safe.
+
+Static benchmark discovery treats the quarantine directory ID and the CRX
+filename digest as expected identities, not trusted labels. Before extraction
+or cache reuse, the actual archive SHA-256 must match its filename. A verified
+CRX extension ID must also match its directory. Cache hits preserve the freshly
+computed authenticity result, so invalid packages still trigger `MVX004`.
 
 ## Severity and score
 

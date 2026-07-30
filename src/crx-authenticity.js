@@ -68,7 +68,9 @@ function skipField(buffer, state, field, wire, depth) {
       const tag = readVarint(buffer, state, 'protobuf group tag');
       const nestedField = Number(tag >> 3n);
       const nestedWire = Number(tag & 7n);
-      if (nestedField === 0) throw new MvxError('CRX3 protobuf field number is zero', { code: 'INVALID_CRX_HEADER' });
+      if (nestedField === 0 || nestedField > 0x1fffffff) {
+        throw new MvxError('CRX3 protobuf group field number is invalid', { code: 'INVALID_CRX_HEADER' });
+      }
       if (nestedWire === 4) {
         if (nestedField !== field) throw new MvxError('CRX3 protobuf group terminator differs', { code: 'INVALID_CRX_HEADER' });
         return;
@@ -160,6 +162,24 @@ function parseCrx3Header(buffer, limits) {
 }
 
 function publicKey(value, algorithm) {
+  if (value.length < 2 || value[0] !== 0x30) throw new Error('Public key is not a DER sequence');
+  let headerBytes = 2;
+  let contentBytes = value[1];
+  if ((contentBytes & 0x80) !== 0) {
+    const lengthBytes = contentBytes & 0x7f;
+    if (lengthBytes === 0 || lengthBytes > 4 || value.length < 2 + lengthBytes || value[2] === 0) {
+      throw new Error('Public key has an invalid DER length');
+    }
+    contentBytes = 0;
+    for (let index = 0; index < lengthBytes; index += 1) {
+      contentBytes = (contentBytes * 256) + value[2 + index];
+    }
+    if (contentBytes < 128) throw new Error('Public key has a non-minimal DER length');
+    headerBytes += lengthBytes;
+  }
+  if (headerBytes + contentBytes !== value.length) {
+    throw new Error('Public key DER sequence has trailing or truncated data');
+  }
   const key = createPublicKey({ key: value, format: 'der', type: 'spki' });
   if (algorithm.startsWith('rsa-') && key.asymmetricKeyType !== 'rsa') {
     throw new Error('RSA proof does not contain an RSA key');

@@ -69,12 +69,23 @@ export async function runStaticBenchmark({
     try {
       let archive;
       try {
-        archive = await unpacker(sample.crxPath, destination, { requireValidSignature });
+        archive = await unpacker(sample.crxPath, destination, {
+          requireValidSignature,
+          expectedArchiveSha256: sample.sha256,
+          expectedExtensionId: sample.extensionId
+        });
       } catch (error) {
         if (error.code !== 'OUTPUT_EXISTS') throw error;
         const existing = await lstat(destination);
         if (existing.isSymbolicLink() || !existing.isDirectory()) throw new MvxError('Cached extraction is unsafe', { code: 'UNSAFE_QUARANTINE' });
-        archive = { files: null, cached: true };
+        archive = { ...error.details, files: null, cached: true };
+      }
+      if (archive.archiveSha256 && archive.archiveSha256 !== sample.sha256) {
+        throw new MvxError('Archive SHA-256 does not match its quarantine filename', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+      }
+      if (archive.authenticity?.status === 'verified'
+        && archive.authenticity.extensionId !== sample.extensionId) {
+        throw new MvxError('Verified CRX extension ID does not match its quarantine directory', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
       }
       const audit = await auditor(destination, { _preparedRulePacks: preparedRulePacks });
       const findings = sortFindings([

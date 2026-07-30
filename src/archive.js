@@ -20,6 +20,8 @@ const DEFAULT_LIMITS = Object.freeze({
   maxPathDepth: 64
 });
 const CRC_TABLE = new Uint32Array(256);
+const SHA256 = /^[a-f0-9]{64}$/;
+const EXTENSION_ID = /^[a-p]{32}$/;
 for (let index = 0; index < CRC_TABLE.length; index += 1) {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = (value & 1) ? (0xEDB88320 ^ (value >>> 1)) : (value >>> 1);
@@ -210,6 +212,12 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
   if (options.requireValidSignature !== undefined && typeof options.requireValidSignature !== 'boolean') {
     throw new MvxError('requireValidSignature must be boolean', { code: 'INVALID_ARGUMENT' });
   }
+  if (options.expectedArchiveSha256 !== undefined && !SHA256.test(options.expectedArchiveSha256)) {
+    throw new MvxError('expectedArchiveSha256 must be a lowercase SHA-256 digest', { code: 'INVALID_ARGUMENT' });
+  }
+  if (options.expectedExtensionId !== undefined && !EXTENSION_ID.test(options.expectedExtensionId)) {
+    throw new MvxError('expectedExtensionId must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
+  }
   const limits = normalizeLimits(options.limits ?? {});
   const input = path.resolve(inputPath);
   const inputStat = await lstat(input).catch((error) => {
@@ -230,11 +238,27 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
     const reason = authenticity.error ?? authenticity.status;
     throw new MvxError(`A valid CRX signature is required: ${reason}`, { code: 'CRX_SIGNATURE_REQUIRED' });
   }
+  if (options.expectedArchiveSha256 && archiveSha256 !== options.expectedArchiveSha256) {
+    throw new MvxError('Archive SHA-256 does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+  }
+  if (options.expectedExtensionId && authenticity.status === 'verified'
+    && authenticity.extensionId !== options.expectedExtensionId) {
+    throw new MvxError('Verified CRX extension ID does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+  }
   const entries = parseEntries(buffer, zipOffset, limits);
   const { absolute, parent } = await safeParent(destination);
   try {
     await lstat(absolute);
-    throw new MvxError(`Archive destination already exists: ${absolute}`, { code: 'OUTPUT_EXISTS' });
+    throw new MvxError(`Archive destination already exists: ${absolute}`, {
+      code: 'OUTPUT_EXISTS',
+      details: {
+        archiveFormat: format,
+        crxVersion: version,
+        archiveBytes: buffer.length,
+        archiveSha256,
+        authenticity
+      }
+    });
   } catch (error) {
     if (error instanceof MvxError) throw error;
     if (error.code !== 'ENOENT') throw error;

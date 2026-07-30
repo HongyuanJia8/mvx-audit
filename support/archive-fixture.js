@@ -105,10 +105,13 @@ export function makeZip(entries) {
   return makeZipBytes(entries);
 }
 
-export function makeSignedCrx2(entries, { tamperSignature = false } = {}) {
+export function makeSignedCrx2(entries, {
+  tamperSignature = false,
+  trailingPublicKeyData = Buffer.alloc(0)
+} = {}) {
   const zip = makeZipBytes(entries);
   const keyPair = keys().rsa;
-  const key = publicDer(keyPair);
+  const key = Buffer.concat([publicDer(keyPair), Buffer.from(trailingPublicKeyData)]);
   const signature = sign('sha1', zip, {
     key: keyPair.privateKey,
     padding: constants.RSA_PKCS1_PADDING
@@ -130,24 +133,33 @@ export function makeSignedCrx2(entries, { tamperSignature = false } = {}) {
 export function makeSignedCrx3(entries, {
   algorithms = ['rsa'],
   declaredId,
-  tamperProofIndex = -1
+  tamperProofIndex = -1,
+  trailingPublicKeyData = Buffer.alloc(0),
+  extraHeaderData = Buffer.alloc(0)
 } = {}) {
   const zip = makeZipBytes(entries);
   const available = keys();
-  const proofInputs = algorithms.map((algorithm) => {
-    if (algorithm === 'rsa') return { algorithm, keyPair: available.rsa };
-    if (algorithm === 'publisher-rsa') return { algorithm: 'rsa', keyPair: available.publisherRsa };
-    if (algorithm === 'ecdsa') return { algorithm, keyPair: available.ecdsa };
-    throw new Error(`Unknown fixture proof algorithm: ${algorithm}`);
+  const proofInputs = algorithms.map((algorithm, index) => {
+    let input;
+    if (algorithm === 'rsa') input = { algorithm, keyPair: available.rsa };
+    else if (algorithm === 'publisher-rsa') input = { algorithm: 'rsa', keyPair: available.publisherRsa };
+    else if (algorithm === 'ecdsa') input = { algorithm, keyPair: available.ecdsa };
+    else throw new Error(`Unknown fixture proof algorithm: ${algorithm}`);
+    return {
+      ...input,
+      key: Buffer.concat([
+        publicDer(input.keyPair),
+        ...(index === 0 ? [Buffer.from(trailingPublicKeyData)] : [])
+      ])
+    };
   });
-  const developerKey = publicDer(available.rsa);
+  const developerKey = proofInputs[0].key;
   const crxId = declaredId === undefined ? idBytes(developerKey) : Buffer.from(declaredId);
   const signedHeader = bytesField(1, crxId);
   const signedHeaderLength = Buffer.alloc(4);
   signedHeaderLength.writeUInt32LE(signedHeader.length);
   const signedBytes = Buffer.concat([CRX3_CONTEXT, signedHeaderLength, signedHeader, zip]);
-  const proofs = proofInputs.map(({ algorithm, keyPair }, index) => {
-    const key = publicDer(keyPair);
+  const proofs = proofInputs.map(({ algorithm, keyPair, key }, index) => {
     const signature = sign('sha256', signedBytes, algorithm === 'rsa'
       ? { key: keyPair.privateKey, padding: constants.RSA_PKCS1_PADDING }
       : keyPair.privateKey);
@@ -155,6 +167,7 @@ export function makeSignedCrx3(entries, {
     return { algorithm, key, message: Buffer.concat([bytesField(1, key), bytesField(2, signature)]) };
   });
   const headerBody = Buffer.concat([
+    Buffer.from(extraHeaderData),
     ...proofs.map((proof) => bytesField(proof.algorithm === 'rsa' ? 2 : 3, proof.message)),
     bytesField(10000, signedHeader)
   ]);

@@ -111,7 +111,9 @@ triage path when researchers do not need to retain unpacked files.
 `mvx benchmark static quarantine --acknowledge-risk` performs bounded extraction
 and static audit across already downloaded samples. Its review-trigger rate is
 a triage metric, not classifier accuracy or proof that the scanner understood
-the reported malicious behavior.
+the reported malicious behavior. It recomputes and checks the filename
+SHA-256, checks a verified CRX ID against the quarantine directory, and repeats
+those checks before accepting an existing extraction cache.
 
 ## Additional research sources
 
