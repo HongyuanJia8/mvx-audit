@@ -54,7 +54,8 @@ function updateCanonical(hash, context, value, depth = 0) {
       if (Object.getOwnPropertySymbols(value).length > 0) fail('contains a symbol-keyed array property');
       const descriptors = Object.getOwnPropertyDescriptors(value);
       if (Object.values(descriptors).some((descriptor) => descriptor.get || descriptor.set)) fail('contains an array accessor');
-      const extra = Object.keys(value).find((key) => !isArrayIndex(key, value.length));
+      const extra = Object.getOwnPropertyNames(value)
+        .find((key) => key !== 'length' && !isArrayIndex(key, value.length));
       if (extra !== undefined) fail('contains an extra array property');
       write(hash, context, '[');
       for (let index = 0; index < value.length; index += 1) {

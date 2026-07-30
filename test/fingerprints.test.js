@@ -70,6 +70,9 @@ test('canonical fingerprints reject ambiguous objects and bound recursion', () =
   const decorated = [];
   decorated.extra = true;
   assert.throws(() => evidenceFingerprint(finding, decorated), /extra array property/);
+  const hiddenDecoration = [];
+  Object.defineProperty(hiddenDecoration, 'extra', { value: true });
+  assert.throws(() => evidenceFingerprint(finding, hiddenDecoration), /extra array property/);
   const symbolKeyed = { [Symbol('key')]: true };
   assert.throws(() => evidenceFingerprint(finding, symbolKeyed), /symbol-keyed object property/);
   const proxied = new Proxy({}, { getPrototypeOf() { throw new Error('must not inspect proxy'); } });
