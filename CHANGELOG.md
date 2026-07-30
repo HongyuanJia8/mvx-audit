@@ -7,6 +7,10 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Path-independent static-analysis provenance: raw manifest and per-source
+  SHA-256 values, package-layout identity, effective limits, and a combined
+  digest. JSON and SARIF retain the full record; text and comparison reports
+  expose its combined identity.
 - Reproducible OrbStack/Docker smoke fixtures for benign behavior and synthetic
   credential exfiltration.
 - A vendored Moby-default seccomp profile tailored to Chromium's unprivileged

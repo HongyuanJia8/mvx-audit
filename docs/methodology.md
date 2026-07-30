@@ -25,6 +25,28 @@ Findings are sorted by severity, rule ID, file, and line. Corpus traversal is
 also sorted, making JSON, text, SARIF, and generated documentation reproducible
 for identical inputs.
 
+## Analysis provenance
+
+Every successful static audit records a path-independent `analysis` object.
+The `mvx-static-v1` profile includes:
+
+- the byte length and SHA-256 of the raw `manifest.json` bytes;
+- the relative path, byte length, and raw-byte SHA-256 of every scanned source;
+- a SHA-256 over the sorted relative package layout and entry types;
+- the effective file, entry, depth, and byte limits; and
+- a combined SHA-256 over that canonical identity record.
+
+The root directory is deliberately excluded, so copying identical input to a
+different location preserves the combined digest. Source hashes are computed
+before UTF-8 decoding. The profile name versions the digest contract, and any
+future semantic change requires a new profile name.
+
+`analysis.sha256` identifies the inputs that can affect this static analysis;
+it is not an archive signature or a byte-for-byte digest of unparsed binary
+assets. For an acquired CRX, retain the hash-verified quarantine metadata as
+the authoritative packed-artifact identity. Matching analysis hashes also do
+not imply that two extensions are benign or equivalent at runtime.
+
 ## Severity and score
 
 | Severity | Weight | Intended response |
@@ -77,7 +99,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - `.git` metadata is not traversed. Packaged dependency, vendor, and `dist`
   directories are scanned because Chrome can execute code from them.
 - Defaults: 5,000 visited files, 10,000 filesystem entries, 64 directory
-  levels, 2 MB per text file, and 50 MB total scanned source. Exceeding a hard
+  levels, 10 MB per text file, and 50 MB total scanned source. Exceeding a hard
   limit fails the audit instead of silently truncating the extension.
 - Binary files are not parsed. Supported text extensions are JS-family files,
   HTML, and JSON.

@@ -70,6 +70,7 @@ export async function auditExtension(inputPath, options = {}) {
       permissions: [...new Set(declaredPermissions)].sort(),
       hostPermissions: hostPermissions(snapshot.manifest)
     },
+    analysis: snapshot.provenance,
     findings,
     scan: snapshot.metadata,
     assumptions: [

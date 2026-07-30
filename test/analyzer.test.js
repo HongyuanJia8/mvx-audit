@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,6 +17,54 @@ test('a minimal MV3 manifest produces no supported findings', async (t) => {
   assert.equal(result.summary.total, 0);
   assert.equal(result.summary.riskScore, 0);
   assert.equal(result.summary.rating, 'clean');
+  assert.match(result.analysis.sha256, /^[a-f0-9]{64}$/);
+  assert.match(result.analysis.manifest.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(result.analysis.profile, 'mvx-static-v1');
+  assert.deepEqual(result.analysis.sources, []);
+  assert.equal(result.scan.limits.maxFiles, 5_000);
+});
+
+test('analysis provenance is path-independent and changes with analyzed bytes or package layout', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-provenance-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const first = await writeExtension(path.join(temp, 'first'), {
+    manifest_version: 3, name: 'Provenance fixture', version: '1.0.0'
+  }, { 'worker.js': 'eval(payload);\n', 'a.js': '', 'a/nested.js': '', 'asset.bin': 'first' });
+  const second = path.join(temp, 'second');
+  await cp(first, second, { recursive: true });
+
+  const firstAudit = await auditExtension(first);
+  const copiedAudit = await auditExtension(second);
+  assert.equal(firstAudit.analysis.sha256, copiedAudit.analysis.sha256);
+  assert.deepEqual(firstAudit.analysis.sources.map((source) => source.path), ['a.js', 'a/nested.js', 'worker.js']);
+  const worker = firstAudit.analysis.sources.find((source) => source.path === 'worker.js');
+  assert.equal(worker.bytes, 15);
+  assert.equal(worker.sha256, 'f00a3e7d1e2d4a745f37410abd100285afa2dca484d071f080745274b7a8aeab');
+
+  await writeFile(path.join(second, 'asset.bin'), 'different unparsed bytes', 'utf8');
+  const changedBinary = await auditExtension(second);
+  assert.equal(changedBinary.analysis.sha256, firstAudit.analysis.sha256);
+
+  const differentLimits = await auditExtension(second, { limits: { maxFiles: 4_999 } });
+  assert.notEqual(differentLimits.analysis.sha256, firstAudit.analysis.sha256);
+
+  await writeFile(path.join(second, 'worker.js'), 'eval(changedPayload);\n', 'utf8');
+  const changedSource = await auditExtension(second);
+  assert.notEqual(changedSource.analysis.sha256, firstAudit.analysis.sha256);
+  assert.notEqual(changedSource.analysis.sources.find((source) => source.path === 'worker.js').sha256, worker.sha256);
+
+  await writeFile(path.join(second, 'worker.js'), 'eval(payload);\n', 'utf8');
+  await mkdir(path.join(second, 'empty-directory'));
+  const changedLayout = await auditExtension(second);
+  assert.notEqual(changedLayout.analysis.packageLayoutSha256, firstAudit.analysis.packageLayoutSha256);
+  assert.notEqual(changedLayout.analysis.sha256, firstAudit.analysis.sha256);
+
+  await writeFile(path.join(second, 'manifest.json'), JSON.stringify({
+    manifest_version: 3, name: 'Changed manifest', version: '1.0.0'
+  }), 'utf8');
+  const changedManifest = await auditExtension(second);
+  assert.notEqual(changedManifest.analysis.manifest.sha256, firstAudit.analysis.manifest.sha256);
+  assert.notEqual(changedManifest.analysis.sha256, changedLayout.analysis.sha256);
 });
 
 test('cookie capability chain is detected in both manifest and source', async () => {

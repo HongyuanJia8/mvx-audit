@@ -40,4 +40,5 @@ test('comparison reports evidence movement even when the rule persists', async (
   assert.equal(result.delta.evidenceAdded[0].evidence.file, 'different.js');
   assert.equal(result.delta.evidenceRemoved[0].evidence.file, 'a.js');
   assert.equal(result.delta.evidenceCount.delta, 1);
+  assert.notEqual(result.before.analysis.sha256, result.after.analysis.sha256);
 });
