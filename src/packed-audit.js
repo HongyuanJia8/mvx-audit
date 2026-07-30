@@ -4,7 +4,9 @@ import path from 'node:path';
 import { auditExtension } from './analyzer.js';
 import { unpackExtensionArchive } from './archive.js';
 import { MvxError } from './errors.js';
+import { sortFindings, summarizeFindings } from './model.js';
 import { resolveRulePacks } from './rule-packs.js';
+import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
 
 async function resolveTemporaryParent(input) {
   const absolute = path.resolve(input ?? os.tmpdir());
@@ -45,10 +47,19 @@ export async function auditExtensionArchive(inputPath, options = {}) {
   try {
     await chmod(workspace, 0o700);
     const extracted = path.join(workspace, 'extension');
-    const archive = await unpackExtensionArchive(inputPath, extracted, { limits: options.archiveLimits });
+    const archive = await unpackExtensionArchive(inputPath, extracted, {
+      limits: options.archiveLimits,
+      requireValidSignature: options.requireValidSignature
+    });
     const audit = await auditExtension(extracted, { limits: options.limits, _preparedRulePacks: preparedRulePacks });
+    const findings = sortFindings([
+      ...audit.findings,
+      ...analyzeArchiveAuthenticity(archive.authenticity, archive.archiveFormat)
+    ]);
     return {
       ...audit,
+      summary: summarizeFindings(findings),
+      findings,
       target: { ...audit.target, root: archive.input, inputType: 'archive' },
       artifact: {
         kind: 'extension-archive',
@@ -57,6 +68,7 @@ export async function auditExtensionArchive(inputPath, options = {}) {
         crxVersion: archive.crxVersion,
         bytes: archive.archiveBytes,
         sha256: archive.archiveSha256,
+        authenticity: archive.authenticity,
         extraction: {
           entries: archive.entries,
           files: archive.files,
@@ -65,6 +77,13 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       },
       assumptions: [
         ...audit.assumptions,
+        ...(archive.authenticity.status === 'verified' ? [
+          'CRX signature verification proves archive integrity under the embedded developer key and extension ID; it does not prove publisher identity, Web Store authorization, or benign behavior.'
+        ] : archive.archiveFormat === 'crx' ? [
+          'CRX authenticity was not established; analysis continued only for forensic inspection of the contained files.'
+        ] : [
+          'ZIP packages do not carry a CRX developer signature, so CRX authenticity verification is not applicable.'
+        ]),
         'The archive was defensively extracted into a private temporary directory, statically audited, and removed without executing extension code.'
       ]
     };

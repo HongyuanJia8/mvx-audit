@@ -18,6 +18,12 @@ test('CLI audit emits JSON and honors severity threshold', async () => {
   assert.equal(result.package.profile, 'mvx-package-v1');
   assert.equal(result.analysis.packageSha256, result.package.sha256);
   assert.equal(capture.output().stderr, '');
+
+  const strict = captureStreams();
+  assert.equal(await runCli([
+    'audit', path.join(ROOT, 'cookie-access/mv3'), '--require-valid-signature'
+  ], strict.streams), 2);
+  assert.match(strict.output().stderr, /INVALID_ARGUMENT.*packed CRX\/ZIP/);
 });
 
 test('CLI packed audit requires acknowledgement and preserves fail-on semantics', async (t) => {
@@ -43,6 +49,13 @@ test('CLI packed audit requires acknowledgement and preserves fail-on semantics'
   assert.match(result.artifact.sha256, /^[a-f0-9]{64}$/);
   assert.equal(result.analysis.packageSha256, result.package.sha256);
   assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
+  assert.ok(result.findings.some((finding) => finding.id === 'MVX004'));
+
+  const strict = captureStreams();
+  assert.equal(await runCli([
+    'audit', input, '--acknowledge-risk', '--require-valid-signature'
+  ], strict.streams), 2);
+  assert.match(strict.output().stderr, /CRX_SIGNATURE_REQUIRED.*invalid-signed-header/);
 
   const directoryNamedZip = path.join(temp, 'unpacked.zip');
   await mkdir(directoryNamedZip);
@@ -84,6 +97,7 @@ test('CLI help documents stable exit codes', async () => {
   assert.match(capture.output().stdout, /--acknowledge-risk/);
   assert.match(capture.output().stdout, /rules validate/);
   assert.match(capture.output().stdout, /--rule-pack/);
+  assert.match(capture.output().stdout, /--require-valid-signature/);
 });
 
 test('CLI emits valid SARIF and version output', async () => {

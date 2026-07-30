@@ -11,6 +11,7 @@ within the 3.x release line.
 | MVX001 | Critical | Missing or unsupported `manifest_version`. |
 | MVX002 | High | Manifest references an absent file or unsafe parent path. |
 | MVX003 | Medium | Packaged WebAssembly, PE/DOS, ELF, or Mach-O executable-format bytes not parsed by MVX. |
+| MVX004 | High | A packed CRX has no valid developer-key signature proof for its declared extension ID. |
 | MVX101 | High | Global host patterns such as `<all_urls>`. |
 | MVX102 | Varies | Sensitive API permissions; one fingerprint per permission. |
 | MVX103 | Critical | `cookies` combined with global host access. |

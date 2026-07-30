@@ -2,11 +2,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
+import { verifyCrxAuthenticity } from './crx-authenticity.js';
 import { MvxError } from './errors.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
 const DEFAULT_LIMITS = Object.freeze({
   maxArchiveBytes: 100_000_000,
+  maxCrxHeaderBytes: 262_144,
+  maxCrxProofs: 32,
+  maxCrxKeyBytes: 65_536,
+  maxCrxSignatureBytes: 65_536,
   maxEntries: 10_000,
   maxEntryBytes: 50_000_000,
   maxTotalBytes: 250_000_000,
@@ -15,6 +20,8 @@ const DEFAULT_LIMITS = Object.freeze({
   maxPathDepth: 64
 });
 const CRC_TABLE = new Uint32Array(256);
+const SHA256 = /^[a-f0-9]{64}$/;
+const EXTENSION_ID = /^[a-p]{32}$/;
 for (let index = 0; index < CRC_TABLE.length; index += 1) {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = (value & 1) ? (0xEDB88320 ^ (value >>> 1)) : (value >>> 1);
@@ -202,6 +209,15 @@ async function safeParent(destination) {
 
 async function unpackArchive(inputPath, destination, options, allowZip) {
   if (!destination) throw new MvxError('Archive extraction requires a destination directory', { code: 'INVALID_ARGUMENT' });
+  if (options.requireValidSignature !== undefined && typeof options.requireValidSignature !== 'boolean') {
+    throw new MvxError('requireValidSignature must be boolean', { code: 'INVALID_ARGUMENT' });
+  }
+  if (options.expectedArchiveSha256 !== undefined && !SHA256.test(options.expectedArchiveSha256)) {
+    throw new MvxError('expectedArchiveSha256 must be a lowercase SHA-256 digest', { code: 'INVALID_ARGUMENT' });
+  }
+  if (options.expectedExtensionId !== undefined && !EXTENSION_ID.test(options.expectedExtensionId)) {
+    throw new MvxError('expectedExtensionId must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
+  }
   const limits = normalizeLimits(options.limits ?? {});
   const input = path.resolve(inputPath);
   const inputStat = await lstat(input).catch((error) => {
@@ -217,6 +233,18 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
   });
   const archiveSha256 = createHash('sha256').update(buffer).digest('hex');
   const { format, version, offset: zipOffset } = archiveZipOffset(buffer, allowZip);
+  const authenticity = verifyCrxAuthenticity(buffer, { format, version, zipOffset }, limits);
+  if (options.requireValidSignature && authenticity.status !== 'verified') {
+    const reason = authenticity.error ?? authenticity.status;
+    throw new MvxError(`A valid CRX signature is required: ${reason}`, { code: 'CRX_SIGNATURE_REQUIRED' });
+  }
+  if (options.expectedArchiveSha256 && archiveSha256 !== options.expectedArchiveSha256) {
+    throw new MvxError('Archive SHA-256 does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+  }
+  if (options.expectedExtensionId && authenticity.status === 'verified'
+    && authenticity.extensionId !== options.expectedExtensionId) {
+    throw new MvxError('Verified CRX extension ID does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+  }
   const entries = parseEntries(buffer, zipOffset, limits);
   const { absolute, parent } = await safeParent(destination);
   try {
@@ -259,6 +287,7 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
       crxVersion: version,
       archiveBytes: buffer.length,
       archiveSha256,
+      authenticity,
       entries: entries.length,
       files,
       uncompressedBytes: totalBytes

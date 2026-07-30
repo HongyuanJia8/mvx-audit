@@ -5,4 +5,3 @@ export class MvxError extends Error {
     this.code = code;
   }
 }
-

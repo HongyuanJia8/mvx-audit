@@ -7,6 +7,9 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 signature verification,
+  Chromium extension-ID derivation, integrity metadata in reports, `MVX004`
+  failure findings, and `--require-valid-signature` fail-closed extraction.
 - Strict local declarative JSON rule packs for literal text, path, file digest,
   and complete-package digest indicators, with `any`/`all` composition,
   bounded deterministic matching, CLI validation, report integration, and
@@ -35,6 +38,12 @@ versioning from the 2.0 reset onward.
 
 ### Fixed
 
+- Strict CRX verification now rejects trailing bytes after the DER public-key
+  sequence and malformed oversized protobuf fields inside unknown groups.
+- Static benchmark binds actual archive SHA-256/verified extension ID to
+  quarantine path identities and always audits a fresh private extraction
+  instead of trusting persistent cached contents. Cleanup failures remain
+  visible even when analysis also fails.
 - Archive input now uses a bounded, no-follow file handle; custom extraction
   limits reject unknown or non-integer values instead of silently changing the
   parser contract.

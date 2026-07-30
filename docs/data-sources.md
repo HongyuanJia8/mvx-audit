@@ -86,15 +86,19 @@ malware and should be handled inside a disposable analysis VM. A successful
 download only proves artifact integrity, not malicious behavior.
 
 `mvx sample unpack` supports CRX2, CRX3, and ordinary ZIP extension packages
-with stored or deflated entries. It validates central/local header consistency, CRC-32, output size,
-compression ratio, entry count, path depth, and destination safety. Individual
+with stored or deflated entries. It verifies bounded CRX2/CRX3 signature
+proofs, derives the embedded developer extension ID, and validates central/local
+header consistency, CRC-32, output size, compression ratio, entry count, path
+depth, and destination safety. Individual
 high-ratio assets up to 5 MB remain bounded by the per-entry and 250 MB total
 expansion limits, avoiding false rejection of sparse images and source maps.
 Zip64,
 multi-disk, encrypted, linked, duplicate, absolute, parent-traversing, and
 unknown-method entries are rejected. Extraction is written to a temporary
 directory and renamed only after every entry passes. No extracted file is
-loaded as code.
+loaded as code. Invalid signatures are reported for forensic workflows; use
+`--require-valid-signature` to reject them before extraction. This verifies
+integrity under the embedded key, not publisher identity or Web Store status.
 
 `mvx audit <file.crx-or-zip> --acknowledge-risk` uses that extractor in a
 private temporary workspace (mode 0700 on POSIX), runs only the static
@@ -107,7 +111,9 @@ triage path when researchers do not need to retain unpacked files.
 `mvx benchmark static quarantine --acknowledge-risk` performs bounded extraction
 and static audit across already downloaded samples. Its review-trigger rate is
 a triage metric, not classifier accuracy or proof that the scanner understood
-the reported malicious behavior.
+the reported malicious behavior. It recomputes and checks the filename
+SHA-256, checks a verified CRX ID against the quarantine directory, and audits
+a fresh temporary extraction instead of trusting an existing extraction cache.
 
 ## Additional research sources
 

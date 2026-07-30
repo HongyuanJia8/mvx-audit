@@ -65,8 +65,8 @@ of a directory being modified concurrently. Use a fresh, immutable quarantine
 extraction when the input may be adversarial or changing during analysis.
 
 Packed audit hashes the exact bounded archive buffer used by the extractor and
-records its byte length, format, CRX version, and extraction statistics. The
-unpacked tree is created under a private temporary workspace (mode 0700 on
+records its byte length, format, CRX version, signature status, and extraction
+statistics. The unpacked tree is created under a private temporary workspace (mode 0700 on
 POSIX) and removed in a `finally` path after successful analysis or any error.
 The CLI requires `--acknowledge-risk`; the library API remains non-interactive. No extension
 code is imported or executed. Abrupt process or machine termination can bypass
@@ -78,6 +78,41 @@ static analysis. It is not an archive or publisher signature. For an acquired
 CRX, retain the hash-verified quarantine metadata as the authoritative packed-
 artifact identity. Matching package or analysis hashes also do not imply that
 two extensions are benign or equivalent at runtime.
+
+## CRX authenticity semantics
+
+For CRX2, MVX verifies the legacy RSA PKCS#1 v1.5 SHA-1 signature over the ZIP
+payload and derives the extension ID from the first 128 bits of SHA-256 over
+the DER public key. For CRX3, it parses the bounded protobuf header, verifies
+every declared RSA PKCS#1 v1.5 SHA-256 and ECDSA SHA-256 proof over Chromium's
+domain-separated signed bytes, and requires at least one verified key to derive
+the declared 16-byte CRX ID. The implementation follows Chromium's
+[CRX3 schema](https://chromium.googlesource.com/chromium/src/+/HEAD/components/crx_file/crx3.proto)
+and [verifier](https://chromium.googlesource.com/chromium/src/+/HEAD/components/crx_file/crx_verifier.cc).
+
+The result records the scheme, extension ID, SHA-256 of each public key, which
+proof is the developer-key proof, and verification status. It never emits the
+raw public key or signature. Invalid CRXs remain extractable by default for
+forensic inspection and produce `MVX004`; `requireValidSignature: true` or
+`--require-valid-signature` fails before ZIP parsing or filesystem extraction.
+ZIP input is `not-applicable` and therefore also rejected by strict mode.
+Public keys must be a single fully consumed DER SubjectPublicKeyInfo sequence;
+trailing bytes that Chromium rejects are not accepted as part of a key.
+
+This is archive self-consistency and integrity verification, not publisher
+identity validation. A valid signature does not establish who controls the
+key, whether a store authorized the package, whether the expected key or ID was
+supplied out of band, or whether the signed code is safe.
+
+Static benchmark discovery treats the quarantine directory ID and the CRX
+filename digest as expected identities, not trusted labels. Before extraction
+the actual archive SHA-256 must match its filename. A verified CRX extension ID
+must also match its directory. Every sample is re-extracted into a new private
+temporary workspace and removed after analysis; an existing persistent
+`unpacked/` directory is never trusted as the source of benchmark findings.
+Cleanup failure is reported as `TEMP_CLEANUP_FAILED`, including the original
+analysis failure code when both operations fail, without exposing the random
+temporary path.
 
 ## Severity and score
 
@@ -145,7 +180,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   HTML, and JSON.
 - CRX/ZIP input defaults to a 100 MB archive, 10,000 entries, 50 MB per entry,
   250 MB total expansion, ratio 200 after 5 MB, and 64 path segments. Archive
-  limits accept only the documented positive safe-integer fields.
+  limits also bound CRX3 headers to 256 KiB, signature proofs to 32, and each
+  public key or signature to 64 KiB. Limits accept only the documented positive
+  safe-integer fields.
 - Rule packs are bounded, no-follow UTF-8 JSON reads. Unknown or duplicate
   fields, executable matchers, invalid paths or hashes, and unsafe display
   controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
@@ -158,7 +195,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   or miss obfuscated, bundled, aliased, or dynamically constructed behavior.
 - Permissions may be justified by product requirements that static input does
   not contain.
-- Data-flow, control-flow, publisher signature verification, and
+- Data-flow, control-flow, publisher identity/authorization validation, and
   Chrome Web Store policy checks are outside the current scope.
 - Declarative rules are recognized by selected structural strings, not a full
   Chrome ruleset schema implementation.
