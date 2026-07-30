@@ -5,7 +5,7 @@ export function auditToText(result) {
     `${result.target.name ?? path.basename(result.target.root)} (Manifest V${result.target.manifestVersion ?? '?'})`,
     `Risk: ${result.summary.rating} (${result.summary.riskScore}/100), ${result.summary.total} finding(s)`,
     `Scanned: ${result.scan.sourceFilesScanned} source file(s), ${result.scan.sourceBytesScanned} bytes`,
-    `Analysis (${result.analysis.profile}) SHA-256: ${result.analysis.sha256}`,
+    ...(result.analysis ? [`Analysis (${result.analysis.profile}) SHA-256: ${result.analysis.sha256}`] : []),
     ''
   ];
   if (result.findings.length === 0) lines.push('No supported risk patterns were detected. This is not a guarantee of safety.');
@@ -50,9 +50,7 @@ export function auditToSarif(result) {
         } }],
         properties: { severity: finding.severity, confidence: finding.confidence, category: finding.category }
       }))),
-      properties: {
-        analysis: result.analysis
-      }
+      ...(result.analysis ? { properties: { analysis: result.analysis } } : {})
     }]
   };
 }
@@ -67,7 +65,7 @@ export function comparisonToMarkdown(comparison) {
     `| Critical | ${before.summary.counts.critical} | ${after.summary.counts.critical} |`,
     `| High | ${before.summary.counts.high} | ${after.summary.counts.high} |`,
     `| Total findings | ${before.summary.total} | ${after.summary.total} |`,
-    `| Analysis SHA-256 | \`${before.analysis.sha256}\` | \`${after.analysis.sha256}\` |`, '',
+    ...(before.analysis && after.analysis ? [`| Analysis SHA-256 | \`${before.analysis.sha256}\` | \`${after.analysis.sha256}\` |`] : []), '',
     `Risk score delta: ${delta.riskScore >= 0 ? '+' : ''}${delta.riskScore}`, '',
     '## Resolved findings', '',
     ...(delta.resolvedFindings.length ? delta.resolvedFindings.map((finding) => `- ${finding.id}: ${finding.title}`) : ['- None']), '',

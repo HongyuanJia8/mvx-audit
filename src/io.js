@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { MvxError } from './errors.js';
 
@@ -20,6 +21,56 @@ function sha256(value) {
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function normalizeLimits(options) {
+  if (!options || Array.isArray(options) || typeof options !== 'object') {
+    throw new MvxError('Scan limits must be an object', { code: 'INVALID_ARGUMENT' });
+  }
+  const supported = new Set(Object.keys(DEFAULT_LIMITS));
+  const unknown = Object.keys(options).filter((key) => !supported.has(key)).sort(compareText);
+  if (unknown.length > 0) {
+    throw new MvxError(`Unknown scan limit: ${unknown.join(', ')}`, { code: 'INVALID_ARGUMENT' });
+  }
+  const limits = {};
+  for (const [key, fallback] of Object.entries(DEFAULT_LIMITS)) {
+    const value = Object.hasOwn(options, key) ? options[key] : fallback;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new MvxError(`${key} must be a positive safe integer`, { code: 'INVALID_ARGUMENT' });
+    }
+    limits[key] = value;
+  }
+  return limits;
+}
+
+async function readBoundedRegularFile(filePath, maxBytes, label, missingCode) {
+  let handle;
+  try {
+    handle = await open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    if (error.code === 'ELOOP') {
+      throw new MvxError(`${label} may not be a symbolic link`, { code: 'UNSAFE_INPUT', cause: error });
+    }
+    throw new MvxError(`Cannot read ${label}: ${filePath}`, { code: missingCode, cause: error });
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new MvxError(`${label} must be a regular file`, { code: 'UNSAFE_INPUT' });
+    if (stat.size > maxBytes) throw new MvxError(`${label} exceeds ${maxBytes} bytes`, { code: 'SCAN_LIMIT' });
+    const chunks = [];
+    let total = 0;
+    while (total <= maxBytes) {
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1 - total));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      chunks.push(buffer.subarray(0, bytesRead));
+      total += bytesRead;
+    }
+    if (total > maxBytes) throw new MvxError(`${label} exceeds ${maxBytes} bytes`, { code: 'SCAN_LIMIT' });
+    return Buffer.concat(chunks, total);
+  } finally {
+    await handle.close();
+  }
 }
 
 function analysisProvenance(manifestBytes, state, limits) {
@@ -101,14 +152,7 @@ async function walk(root, current, state, limits, depth = 0) {
     state.fileCount += 1;
     state.files.push(relative);
     if (relative === 'manifest.json' || !SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
-    const stat = await lstat(absolute);
-    if (stat.size > limits.maxFileBytes) {
-      throw new MvxError(`Source file exceeds ${limits.maxFileBytes} bytes: ${relative}`, { code: 'SCAN_LIMIT' });
-    }
-    const bytes = await readFile(absolute);
-    if (bytes.length > limits.maxFileBytes) {
-      throw new MvxError(`Source file exceeds ${limits.maxFileBytes} bytes: ${relative}`, { code: 'SCAN_LIMIT' });
-    }
+    const bytes = await readBoundedRegularFile(absolute, limits.maxFileBytes, `Source file ${relative}`, 'INVALID_INPUT');
     if (state.totalBytes + bytes.length > limits.maxTotalBytes) {
       throw new MvxError(`Scannable source exceeds ${limits.maxTotalBytes} bytes`, { code: 'SCAN_LIMIT' });
     }
@@ -118,17 +162,17 @@ async function walk(root, current, state, limits, depth = 0) {
 }
 
 export async function loadExtension(inputPath, options = {}) {
-  const limits = { ...DEFAULT_LIMITS, ...options };
+  const limits = normalizeLimits(options);
   const { root, manifestPath } = await resolveRoot(inputPath);
-  let manifestBytes;
+  let manifestStat;
   try {
-    manifestBytes = await readFile(manifestPath);
+    manifestStat = await lstat(manifestPath);
   } catch (error) {
     throw new MvxError(`Cannot read manifest: ${manifestPath}`, { code: 'MANIFEST_NOT_FOUND', cause: error });
   }
-  if (manifestBytes.length > limits.maxFileBytes) {
-    throw new MvxError('manifest.json exceeds the per-file scan limit', { code: 'SCAN_LIMIT' });
-  }
+  if (manifestStat.isSymbolicLink()) throw new MvxError('manifest.json may not be a symbolic link', { code: 'UNSAFE_INPUT' });
+  if (!manifestStat.isFile()) throw new MvxError('manifest.json must be a regular file', { code: 'UNSAFE_INPUT' });
+  const manifestBytes = await readBoundedRegularFile(manifestPath, limits.maxFileBytes, 'manifest.json', 'MANIFEST_NOT_FOUND');
   const manifestSource = manifestBytes.toString('utf8');
   let manifest;
   try {

@@ -33,3 +33,17 @@ test('text output includes score, evidence, and remediation', async () => {
   assert.match(text, /at fixture\.js:2/);
   assert.match(text, /Fix: Avoid reading cookie values/);
 });
+
+test('reporters remain compatible with schema-v1 results that predate analysis provenance', async () => {
+  const audit = await auditExtension(path.join(ROOT, 'cookie-access/mv3'));
+  const legacyAudit = structuredClone(audit);
+  delete legacyAudit.analysis;
+  assert.doesNotMatch(auditToText(legacyAudit), /Analysis .* SHA-256/);
+  assert.equal(auditToSarif(legacyAudit).runs[0].properties, undefined);
+
+  const comparison = await compareExtensions(path.join(ROOT, 'request-tampering/mv2'), path.join(ROOT, 'request-tampering/mv3'));
+  const legacyComparison = structuredClone(comparison);
+  delete legacyComparison.before.analysis;
+  delete legacyComparison.after.analysis;
+  assert.doesNotMatch(comparisonToMarkdown(legacyComparison), /Analysis SHA-256/);
+});

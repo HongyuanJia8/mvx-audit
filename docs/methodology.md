@@ -41,6 +41,10 @@ different location preserves the combined digest. Source hashes are computed
 before UTF-8 decoding. The profile name versions the digest contract, and any
 future semantic change requires a new profile name.
 
+Files are captured sequentially, so this is not an atomic filesystem snapshot
+of a directory being modified concurrently. Use a fresh, immutable quarantine
+extraction when the input may be adversarial or changing during analysis.
+
 `analysis.sha256` identifies the inputs that can affect this static analysis;
 it is not an archive signature or a byte-for-byte digest of unparsed binary
 assets. For an acquired CRX, retain the hash-verified quarantine metadata as
@@ -94,13 +98,17 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 
 ## Input safety and limits
 
-- The root must be a real directory or a real `manifest.json`, not a symlink.
-- Nested symlinks are skipped and reported.
+- The root and `manifest.json` must be real directory/file entries, not
+  symlinks. Nested symlinks are skipped and reported.
+- Manifest and source reads use bounded chunks through a regular-file handle;
+  supported platforms also request no-follow opens to close file-symlink races.
 - `.git` metadata is not traversed. Packaged dependency, vendor, and `dist`
   directories are scanned because Chrome can execute code from them.
 - Defaults: 5,000 visited files, 10,000 filesystem entries, 64 directory
   levels, 10 MB per text file, and 50 MB total scanned source. Exceeding a hard
   limit fails the audit instead of silently truncating the extension.
+- Custom limits accept only those five names with positive safe-integer values.
+  They are normalized into a fixed order before provenance hashing.
 - Binary files are not parsed. Supported text extensions are JS-family files,
   HTML, and JSON.
 
