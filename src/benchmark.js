@@ -77,7 +77,7 @@ export async function runStaticBenchmark({
       const archive = await unpacker(sample.crxPath, destination, {
         requireValidSignature,
         expectedArchiveSha256: sample.sha256,
-        expectedExtensionId: sample.extensionId
+        ...(requireValidSignature ? { expectedExtensionId: sample.extensionId } : {})
       });
       if (archive.archiveSha256 && archive.archiveSha256 !== sample.sha256) {
         throw new MvxError('Archive SHA-256 does not match its quarantine filename', { code: 'ARCHIVE_IDENTITY_MISMATCH' });

@@ -49,7 +49,9 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     const extracted = path.join(workspace, 'extension');
     const archive = await unpackExtensionArchive(inputPath, extracted, {
       limits: options.archiveLimits,
-      requireValidSignature: options.requireValidSignature
+      requireValidSignature: options.requireValidSignature,
+      expectedArchiveSha256: options.expectedArchiveSha256,
+      expectedExtensionId: options.expectedExtensionId
     });
     const audit = await auditExtension(extracted, { limits: options.limits, _preparedRulePacks: preparedRulePacks });
     const findings = sortFindings([
@@ -69,6 +71,7 @@ export async function auditExtensionArchive(inputPath, options = {}) {
         bytes: archive.archiveBytes,
         sha256: archive.archiveSha256,
         authenticity: archive.authenticity,
+        identityPolicy: archive.identityPolicy,
         extraction: {
           entries: archive.entries,
           files: archive.files,
@@ -77,6 +80,9 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       },
       assumptions: [
         ...audit.assumptions,
+        ...(archive.identityPolicy.matched ? [
+          'All analyst-supplied archive identity expectations matched before extraction; their trust still depends on the external source that supplied them.'
+        ] : []),
         ...(archive.authenticity.status === 'verified' ? [
           'CRX signature verification proves archive integrity under the embedded developer key and extension ID; it does not prove publisher identity, Web Store authorization, or benign behavior.'
         ] : archive.archiveFormat === 'crx' ? [

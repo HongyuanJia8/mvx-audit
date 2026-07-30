@@ -7,6 +7,8 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Fail-closed external archive identity policy for expected SHA-256 and verified
+  extension ID, with CLI/API controls and JSON, text, and SARIF evidence.
 - Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 signature verification,
   Chromium extension-ID derivation, integrity metadata in reports, `MVX004`
   failure findings, and `--require-valid-signature` fail-closed extraction.

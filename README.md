@@ -49,6 +49,10 @@ node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk
 node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
   --require-valid-signature
 
+# Bind the audit to identity values obtained from an independent trusted source
+node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
+  --expected-archive-sha256 <sha256> --expected-extension-id <extension-id>
+
 # Fail CI when a high- or critical-severity finding exists
 node bin/mvx.js audit /path/to/extension --format sarif \
   --output results.sarif --fail-on high
@@ -119,6 +123,8 @@ development.
 - Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 verification, including
   Chromium extension-ID derivation, per-proof digest metadata, an `MVX004`
   integrity finding on failure, and an optional fail-closed mode.
+- Fail-closed external archive identity policy for expected SHA-256 and verified
+  extension ID, recorded in JSON, text, and SARIF as reproducible evidence.
 - Strict, bounded declarative JSON rule packs for literal text, package path,
   regular-file SHA-256, and complete-package SHA-256 indicators. Packs are
   treated as untrusted data and their exact raw-byte provenance is included in
@@ -225,7 +231,8 @@ await loadRulePacks(rulePacks); // standalone validation and provenance
 const audit = await auditExtension('/path/to/unpacked-extension', { rulePacks });
 const packedAudit = await auditExtensionArchive('/path/to/extension.crx', {
   rulePacks,
-  requireValidSignature: true
+  expectedArchiveSha256: '<lowercase-sha256>',
+  expectedExtensionId: '<32-character-a-p-extension-id>'
 });
 const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3', { rulePacks });
 ```
@@ -238,7 +245,9 @@ effective limits, and exact declarative rule-pack provenance. Neither value is
 a signature or a digest of the original CRX/ZIP container; retain
 `artifact.sha256` or the quarantine SHA-256 for exact packed-artifact identity.
 Packed results also include `artifact.authenticity`; this cryptographic status
-has the narrower trust meaning described above.
+has the narrower trust meaning described above. When supplied,
+`artifact.identityPolicy` records the external expectations and confirms that
+they matched before extraction.
 
 ## Security and responsible use
 

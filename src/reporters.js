@@ -37,6 +37,12 @@ export function auditToText(result) {
         `Authenticity: INVALID (${escapeText(result.artifact.authenticity.error)})`
       ] : result.artifact.authenticity?.status === 'not-applicable' ? [
         'Authenticity: not applicable (ZIP has no CRX signature)'
+      ] : []),
+      ...(result.artifact.identityPolicy?.matched ? [
+        `Identity policy: MATCHED (${[
+          ...(result.artifact.identityPolicy.archiveSha256Match ? ['archive SHA-256'] : []),
+          ...(result.artifact.identityPolicy.extensionIdMatch ? ['extension ID'] : [])
+        ].join(', ')})`
       ] : [])
     ] : []),
     ...(result.analysis ? [`Analysis (${result.analysis.profile}) SHA-256: ${result.analysis.sha256}`] : []),

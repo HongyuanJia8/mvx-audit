@@ -46,6 +46,14 @@ test('packed CRX audit binds exact archive provenance and removes its extraction
       proofs: [],
       error: 'invalid-signed-header'
     },
+    identityPolicy: {
+      profile: 'mvx-archive-identity-v1',
+      expectedArchiveSha256: null,
+      expectedExtensionId: null,
+      archiveSha256Match: null,
+      extensionIdMatch: null,
+      matched: null
+    },
     extraction: { entries: 2, files: 2, uncompressedBytes: Buffer.byteLength(manifest) + Buffer.byteLength(worker) }
   });
   assert.ok(result.findings.some((finding) => finding.id === 'MVX004'));
@@ -77,16 +85,29 @@ test('packed CRX audit reports verified developer-key integrity without claiming
   }];
   const signed = makeSignedCrx3(entries, { algorithms: ['rsa', 'ecdsa'] });
   const sample = await fixture(t, 'crx', entries, signed.bytes);
+  const expectedSha256 = createHash('sha256').update(signed.bytes).digest('hex');
   const result = await auditExtensionArchive(sample.input, {
     temporaryDirectory: sample.temporaryDirectory,
-    requireValidSignature: true
+    requireValidSignature: true,
+    expectedArchiveSha256: expectedSha256,
+    expectedExtensionId: signed.extensionId
   });
   assert.equal(result.artifact.authenticity.status, 'verified');
   assert.equal(result.artifact.authenticity.extensionId, signed.extensionId);
   assert.equal(result.artifact.authenticity.proofs.length, 2);
+  assert.deepEqual(result.artifact.identityPolicy, {
+    profile: 'mvx-archive-identity-v1',
+    expectedArchiveSha256: expectedSha256,
+    expectedExtensionId: signed.extensionId,
+    archiveSha256Match: true,
+    extensionIdMatch: true,
+    matched: true
+  });
   assert.equal(result.findings.some((finding) => finding.id === 'MVX004'), false);
   assert.match(result.assumptions.join(' '), /does not prove publisher identity/);
   assert.match(auditToText(result), new RegExp(`Authenticity: VERIFIED \\(${signed.extensionId}, 2 proof\\(s\\)\\)`));
+  assert.match(auditToText(result), /Identity policy: MATCHED \(archive SHA-256, extension ID\)/);
+  assert.deepEqual(auditToSarif(result).runs[0].properties.artifact.identityPolicy, result.artifact.identityPolicy);
   assert.deepEqual(await readdir(sample.temporaryDirectory), []);
 });
 
