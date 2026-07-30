@@ -6,7 +6,6 @@ import { executableFormat, packageInventory } from './package.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.html', '.htm', '.json']);
-const IGNORED_DIRECTORIES = new Set(['.git']);
 const DEFAULT_LIMITS = Object.freeze({
   maxFiles: 5_000,
   maxEntries: 10_000,
@@ -128,11 +127,10 @@ async function walk(root, current, state, limits, manifestBytes, depth = 0) {
       continue;
     }
     if (entry.isDirectory()) {
-      const type = IGNORED_DIRECTORIES.has(entry.name) ? 'excluded-directory' : 'directory';
-      const inventoryEntry = { path: relative, type };
+      const inventoryEntry = { path: relative, type: 'directory' };
       state.layout.push(inventoryEntry);
       state.inventory.push(inventoryEntry);
-      if (!IGNORED_DIRECTORIES.has(entry.name)) await walk(root, absolute, state, limits, manifestBytes, depth + 1);
+      await walk(root, absolute, state, limits, manifestBytes, depth + 1);
       continue;
     }
     if (!entry.isFile()) {

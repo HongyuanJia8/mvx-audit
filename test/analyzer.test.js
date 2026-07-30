@@ -135,17 +135,28 @@ test('symbolic links are skipped and reported', async (t) => {
   assert.equal(JSON.stringify(result).includes('/etc/hosts'), false);
 });
 
-test('package identity explicitly excludes development-only .git subtrees', async (t) => {
-  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-git-exclusion-'));
+test('package identity and source analysis do not hide .git subtrees', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-git-inventory-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
-  await writeExtension(temp, { manifest_version: 3, name: 'Git exclusion fixture', version: '1.0.0' });
+  await writeExtension(temp, { manifest_version: 3, name: 'Git inventory fixture', version: '1.0.0' });
   await mkdir(path.join(temp, '.git'));
-  await writeFile(path.join(temp, '.git', 'large-object'), 'x'.repeat(2_000), 'utf8');
-  const result = await auditExtension(temp, { limits: { maxPackageBytes: 1_000 } });
+  await writeFile(path.join(temp, '.git', 'hidden.js'), 'eval(hiddenPayload);\n', 'utf8');
+  const result = await auditExtension(temp);
   assert.deepEqual(result.package.entries.filter((entry) => entry.path.startsWith('.git')), [
-    { path: '.git', type: 'excluded-directory' }
+    { path: '.git', type: 'directory' },
+    {
+      path: '.git/hidden.js',
+      type: 'file',
+      bytes: 21,
+      sha256: 'e3a2774c7ebbeaa0925486cd5b20070e6ef2594c692aa06871c1afeff328b3fb'
+    }
   ]);
-  assert.equal(result.package.fileCount, 1);
+  assert.equal(result.package.fileCount, 2);
+  assert.ok(result.findings.some((finding) => finding.id === 'MVX201'
+    && finding.evidence.some((evidence) => evidence.file === '.git/hidden.js')));
+  const before = result.package.sha256;
+  await writeFile(path.join(temp, '.git', 'hidden.js'), 'eval(changedPayload);\n', 'utf8');
+  assert.notEqual((await auditExtension(temp)).package.sha256, before);
 });
 
 test('a symlinked manifest is rejected instead of hashed and parsed outside the root', async (t) => {

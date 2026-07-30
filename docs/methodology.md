@@ -34,7 +34,7 @@ objects. The `mvx-package-v1` inventory includes:
 - every traversed directory and every in-scope regular file;
 - the relative path, byte length, and raw-byte SHA-256 of each regular file;
 - a hash of the exact symlink target bytes without disclosing the target string;
-- an explicit marker for skipped special entries and excluded `.git` subtrees;
+- an explicit marker for skipped special filesystem entries;
 - file and byte totals; and
 - a combined SHA-256 over the canonical, sorted entry list.
 
@@ -127,8 +127,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   symlinks. Nested symlinks are skipped and reported.
 - Manifest, source, and package inventory reads use bounded chunks through a regular-file handle;
   supported platforms also request no-follow opens to close file-symlink races.
-- `.git` metadata is not traversed. Packaged dependency, vendor, and `dist`
-  directories are scanned because Chrome can execute code from them.
+- No directory name is globally ignored: `.git`, dependency, vendor, and
+  `dist` subtrees are inventoried and their supported source files are scanned.
+  Audit a built package when development metadata would exceed the hard limits.
 - Defaults: 5,000 visited files, 10,000 filesystem entries, 64 directory
   levels, 10 MB per text file, 50 MB total scanned source, 100 MB per inventoried
   regular file, and 250 MB total inventoried regular-file content. Exceeding a
