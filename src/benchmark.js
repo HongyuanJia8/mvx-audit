@@ -52,7 +52,8 @@ export async function runStaticBenchmark({
   rulePackLimits,
   _preparedRulePacks,
   unpacker = unpackCrx,
-  auditor = auditExtension
+  auditor = auditExtension,
+  remover = rm
 } = {}) {
   if (!acknowledgeRisk) throw new MvxError('Refusing malware extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
   if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 1000) throw new MvxError('Benchmark limit must be between 1 and 1000', { code: 'INVALID_ARGUMENT' });
@@ -69,6 +70,7 @@ export async function runStaticBenchmark({
     let workspace;
     let result;
     let failure;
+    let cleanupFailure;
     try {
       workspace = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-'));
       const destination = path.join(workspace, 'extension');
@@ -110,22 +112,27 @@ export async function runStaticBenchmark({
     } finally {
       if (workspace) {
         try {
-          await rm(workspace, { recursive: true, force: true });
+          await remover(workspace, { recursive: true, force: true });
         } catch (error) {
-          failure ??= error;
+          cleanupFailure = error;
         }
       }
     }
-    if (failure) {
-      const rawMessage = String(failure.message ?? failure);
+    if (failure || cleanupFailure) {
+      const originalCode = failure?.code ?? null;
+      const reported = cleanupFailure ?? failure;
+      const rawMessage = cleanupFailure
+        ? `Temporary extraction cleanup failed${originalCode ? ` after ${originalCode}` : ''}: ${cleanupFailure.message}`
+        : String(failure.message ?? failure);
       const message = workspace
         ? rawMessage.split(workspace).join('<temporary extraction>')
         : rawMessage;
       failures.push({
         extensionId: sample.extensionId,
         sha256: sample.sha256,
-        code: failure.code ?? 'UNEXPECTED_ERROR',
-        message
+        code: cleanupFailure ? 'TEMP_CLEANUP_FAILED' : reported.code ?? 'UNEXPECTED_ERROR',
+        message,
+        ...(cleanupFailure ? { originalCode } : {})
       });
     } else results.push(result);
   }

@@ -110,6 +110,9 @@ the actual archive SHA-256 must match its filename. A verified CRX extension ID
 must also match its directory. Every sample is re-extracted into a new private
 temporary workspace and removed after analysis; an existing persistent
 `unpacked/` directory is never trusted as the source of benchmark findings.
+Cleanup failure is reported as `TEMP_CLEANUP_FAILED`, including the original
+analysis failure code when both operations fail, without exposing the random
+temporary path.
 
 ## Severity and score
 

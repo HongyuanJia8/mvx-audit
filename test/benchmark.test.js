@@ -189,6 +189,35 @@ test('static benchmark isolates individual analyzer failures', async (t) => {
   assert.equal(report.summary.reviewTriggerRate, null);
 });
 
+test('benchmark reports cleanup failure without hiding the original failure or temporary path', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-cleanup-failure-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ID));
+  await writeFile(path.join(root, ID, `${HASH}.crx`), 'fixture');
+  let workspace;
+  const report = await runStaticBenchmark({
+    quarantineDir: root,
+    acknowledgeRisk: true,
+    unpacker: async (_input, destination) => {
+      workspace = path.dirname(destination);
+      return { files: 1 };
+    },
+    auditor: async (destination) => {
+      throw Object.assign(new Error(`${destination} original failure`), { code: 'AUDIT_FAILED' });
+    },
+    remover: async (target) => {
+      throw Object.assign(new Error(`${target} cleanup failure`), { code: 'EACCES' });
+    }
+  });
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  assert.equal(report.summary.failures, 1);
+  assert.equal(report.failures[0].code, 'TEMP_CLEANUP_FAILED');
+  assert.equal(report.failures[0].originalCode, 'AUDIT_FAILED');
+  assert.match(report.failures[0].message, /cleanup failed after AUDIT_FAILED/);
+  assert.match(report.failures[0].message, /<temporary extraction> cleanup failure/);
+  assert.doesNotMatch(report.failures[0].message, /mvx-benchmark-/);
+});
+
 test('static benchmark rejects missing and symlink quarantine roots', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-link-'));
   t.after(() => rm(root, { recursive: true, force: true }));

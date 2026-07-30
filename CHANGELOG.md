@@ -42,7 +42,8 @@ versioning from the 2.0 reset onward.
   sequence and malformed oversized protobuf fields inside unknown groups.
 - Static benchmark binds actual archive SHA-256/verified extension ID to
   quarantine path identities and always audits a fresh private extraction
-  instead of trusting persistent cached contents.
+  instead of trusting persistent cached contents. Cleanup failures remain
+  visible even when analysis also fails.
 - Archive input now uses a bounded, no-follow file handle; custom extraction
   limits reject unknown or non-integer values instead of silently changing the
   parser contract.
