@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { MvxError } from './errors.js';
+import { readBoundedRegularFile } from './safe-file.js';
 
 const DEFAULT_LIMITS = Object.freeze({
   maxArchiveBytes: 100_000_000,
@@ -18,6 +19,24 @@ for (let index = 0; index < CRC_TABLE.length; index += 1) {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = (value & 1) ? (0xEDB88320 ^ (value >>> 1)) : (value >>> 1);
   CRC_TABLE[index] = value >>> 0;
+}
+
+function normalizeLimits(options) {
+  if (!options || Array.isArray(options) || typeof options !== 'object') {
+    throw new MvxError('Archive limits must be an object', { code: 'INVALID_ARGUMENT' });
+  }
+  const supported = new Set(Object.keys(DEFAULT_LIMITS));
+  const unknown = Object.keys(options).filter((key) => !supported.has(key)).sort();
+  if (unknown.length > 0) throw new MvxError(`Unknown archive limit: ${unknown.join(', ')}`, { code: 'INVALID_ARGUMENT' });
+  const limits = {};
+  for (const [key, fallback] of Object.entries(DEFAULT_LIMITS)) {
+    const value = Object.hasOwn(options, key) ? options[key] : fallback;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new MvxError(`${key} must be a positive safe integer`, { code: 'INVALID_ARGUMENT' });
+    }
+    limits[key] = value;
+  }
+  return limits;
 }
 
 function crc32(bytes) {
@@ -180,14 +199,20 @@ async function safeParent(destination) {
 
 async function unpackArchive(inputPath, destination, options, allowZip) {
   if (!destination) throw new MvxError('Archive extraction requires a destination directory', { code: 'INVALID_ARGUMENT' });
-  const limits = { ...DEFAULT_LIMITS, ...(options.limits ?? {}) };
+  const limits = normalizeLimits(options.limits ?? {});
   const input = path.resolve(inputPath);
   const inputStat = await lstat(input).catch((error) => {
     throw new MvxError(`Cannot read archive: ${input}`, { code: 'INPUT_NOT_FOUND', cause: error });
   });
   if (inputStat.isSymbolicLink() || !inputStat.isFile()) throw new MvxError('Archive input must be a regular non-symlink file', { code: 'UNSAFE_ARCHIVE' });
-  if (inputStat.size > limits.maxArchiveBytes) throw new MvxError(`Archive exceeds ${limits.maxArchiveBytes} bytes`, { code: 'ARCHIVE_LIMIT' });
-  const buffer = await readFile(input);
+  const buffer = await readBoundedRegularFile(input, {
+    maxBytes: limits.maxArchiveBytes,
+    label: 'Archive',
+    limitCode: 'ARCHIVE_LIMIT',
+    missingCode: 'INPUT_NOT_FOUND',
+    unsafeCode: 'UNSAFE_ARCHIVE'
+  });
+  const archiveSha256 = createHash('sha256').update(buffer).digest('hex');
   const { format, version, offset: zipOffset } = archiveZipOffset(buffer, allowZip);
   const entries = parseEntries(buffer, zipOffset, limits);
   const { absolute, parent } = await safeParent(destination);
@@ -224,7 +249,17 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
     await rename(temporary, absolute);
     const destinationStat = await stat(absolute);
     if (!destinationStat.isDirectory()) throw new MvxError('Archive destination verification failed', { code: 'UNSAFE_ARCHIVE' });
-    return { input, destination: absolute, archiveFormat: format, crxVersion: version, entries: entries.length, files, uncompressedBytes: totalBytes };
+    return {
+      input,
+      destination: absolute,
+      archiveFormat: format,
+      crxVersion: version,
+      archiveBytes: buffer.length,
+      archiveSha256,
+      entries: entries.length,
+      files,
+      uncompressedBytes: totalBytes
+    };
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;

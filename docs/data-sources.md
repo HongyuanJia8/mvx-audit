@@ -91,6 +91,12 @@ unknown-method entries are rejected. Extraction is written to a temporary
 directory and renamed only after every entry passes. No extracted file is
 loaded as code.
 
+`mvx audit <file.crx-or-zip> --acknowledge-risk` uses that extractor in a
+private, mode-0700 temporary workspace, runs only the static analyzer, binds
+the exact parsed archive SHA-256 and extraction statistics into the report,
+and removes the workspace on success or failure. It is the preferred triage
+path when researchers do not need to retain unpacked files.
+
 `mvx benchmark static quarantine --acknowledge-risk` performs bounded extraction
 and static audit across already downloaded samples. Its review-trigger rate is
 a triage metric, not classifier accuracy or proof that the scanner understood

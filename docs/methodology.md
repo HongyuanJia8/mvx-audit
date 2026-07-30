@@ -2,8 +2,9 @@
 
 ## Scope
 
-MVX Audit primarily performs deterministic static review of an unpacked Chrome extension.
-It reads `manifest.json`, supported text source files, and declarative rule JSON.
+MVX Audit primarily performs deterministic static review of Chrome extensions.
+It reads `manifest.json`, supported text source files, and declarative rule JSON
+from an unpacked directory or a defensively extracted CRX/ZIP package.
 Normal audit, corpus, intelligence, acquisition, extraction, and static
 benchmark commands do not execute extension code, launch a browser, resolve
 sample-discovered resources, or infer author intent. The separately gated
@@ -44,6 +45,13 @@ future semantic change requires a new profile name.
 Files are captured sequentially, so this is not an atomic filesystem snapshot
 of a directory being modified concurrently. Use a fresh, immutable quarantine
 extraction when the input may be adversarial or changing during analysis.
+
+Packed audit hashes the exact bounded archive buffer used by the extractor and
+records its byte length, format, CRX version, and extraction statistics. The
+unpacked tree is created under a mode-0700 temporary workspace and removed in a
+`finally` path after successful analysis or any error. The CLI requires
+`--acknowledge-risk`; the library API remains non-interactive. No extension
+code is imported or executed.
 
 `analysis.sha256` identifies the inputs that can affect this static analysis;
 it is not an archive signature or a byte-for-byte digest of unparsed binary
@@ -111,6 +119,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   They are normalized into a fixed order before provenance hashing.
 - Binary files are not parsed. Supported text extensions are JS-family files,
   HTML, and JSON.
+- CRX/ZIP input defaults to a 100 MB archive, 10,000 entries, 50 MB per entry,
+  250 MB total expansion, ratio 200 after 5 MB, and 64 path segments. Archive
+  limits accept only the documented positive safe-integer fields.
 
 ## Known limitations
 

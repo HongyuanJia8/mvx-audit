@@ -7,6 +7,9 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- One-command CRX/ZIP static audit with explicit CLI risk acknowledgement,
+  private temporary extraction and unconditional cleanup, plus exact archive
+  SHA-256/size/format/version provenance in JSON, text, and SARIF reports.
 - Path-independent static-analysis provenance: raw manifest and per-source
   SHA-256 values, package-layout identity, effective limits, and a combined
   digest. JSON and SARIF retain the full record; text and comparison reports
@@ -24,6 +27,9 @@ versioning from the 2.0 reset onward.
 
 ### Fixed
 
+- Archive input now uses a bounded, no-follow file handle; custom extraction
+  limits reject unknown or non-integer values instead of silently changing the
+  parser contract.
 - Canonical validation of provenance scan limits, compatibility of exported
   reporters with earlier schema-v1 results, symlinked-manifest rejection, and
   bounded file-handle reads for manifest and source bytes.

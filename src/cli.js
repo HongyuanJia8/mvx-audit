@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { auditExtension } from './analyzer.js';
@@ -7,6 +7,7 @@ import { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
 import { compareExtensions } from './compare.js';
 import { MvxError } from './errors.js';
+import { auditExtensionArchive } from './packed-audit.js';
 import { intelRecordToText, intelStatsToText, loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
 import { evaluateLabFiles, labReportToText } from './lab.js';
 import { SEVERITIES } from './model.js';
@@ -17,7 +18,8 @@ const VERSION = '3.0.0';
 const HELP = `mvx-audit ${VERSION}
 
 Usage:
-  mvx audit <extension> [--format text|json|sarif] [--output file] [--fail-on severity]
+  mvx audit <extension|file.crx|file.zip> [--format text|json|sarif]
+            [--output file] [--fail-on severity] [--acknowledge-risk]
   mvx compare <before> <after> [--format markdown|json] [--output file]
   mvx corpus [list|validate] [--format text|json] [--catalog file]
   mvx intel stats|validate [--format text|json]
@@ -82,6 +84,15 @@ function thresholdMet(result, threshold) {
   return result.findings.some((finding) => SEVERITIES.indexOf(finding.severity) <= thresholdIndex);
 }
 
+async function isPackedAuditInput(inputPath) {
+  if (!['.crx', '.zip'].includes(path.extname(inputPath).toLowerCase())) return false;
+  try {
+    return (await lstat(path.resolve(inputPath))).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export async function runCli(argv, streams = process) {
   try {
     const { positionals, options } = parseArgs(argv);
@@ -96,10 +107,14 @@ export async function runCli(argv, streams = process) {
     const [command, ...args] = positionals;
 
     if (command === 'audit') {
-      if (args.length !== 1) throw new MvxError('audit requires exactly one extension path', { code: 'INVALID_ARGUMENT' });
+      if (args.length !== 1) throw new MvxError('audit requires exactly one extension or archive path', { code: 'INVALID_ARGUMENT' });
       const format = options.format ?? 'text';
       if (!['text', 'json', 'sarif'].includes(format)) throw new MvxError(`Unsupported audit format: ${format}`, { code: 'INVALID_ARGUMENT' });
-      const result = await auditExtension(args[0]);
+      const packed = await isPackedAuditInput(args[0]);
+      if (packed && !options.acknowledgeRisk) {
+        throw new MvxError('Refusing packed extension extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
+      }
+      const result = packed ? await auditExtensionArchive(args[0]) : await auditExtension(args[0]);
       const content = format === 'text' ? auditToText(result) : format === 'sarif' ? json(auditToSarif(result)) : json(result);
       await emit(content, options.output, streams.stdout);
       return thresholdMet(result, options.failOn) ? 1 : 0;
@@ -208,6 +223,8 @@ export async function runCli(argv, streams = process) {
         await emit(format === 'json' ? json(result) : [
           `Unpacked quarantined ${result.archiveFormat.toUpperCase()}: ${result.destination}`,
           ...(result.crxVersion === null ? [] : [`CRX version: ${result.crxVersion}`]),
+          `Archive SHA-256: ${result.archiveSha256}`,
+          `Archive bytes: ${result.archiveBytes}`,
           `Files: ${result.files}`,
           `Uncompressed bytes: ${result.uncompressedBytes}`,
           'No extension code was executed.'

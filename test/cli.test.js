@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { runCli } from '../src/cli.js';
+import { makeCrx } from '../support/archive-fixture.js';
 import { captureStreams } from '../support/helpers.js';
 
 const ROOT = path.resolve('corpus/fixtures');
@@ -15,6 +16,37 @@ test('CLI audit emits JSON and honors severity threshold', async () => {
   assert.equal(code, 1);
   assert.equal(result.target.manifestVersion, 3);
   assert.equal(capture.output().stderr, '');
+});
+
+test('CLI packed audit requires acknowledgement and preserves fail-on semantics', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-cli-packed-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const input = path.join(temp, 'sample.crx');
+  await writeFile(input, makeCrx([
+    { name: 'manifest.json', content: '{"manifest_version":3,"name":"Packed CLI","version":"1.0.0"}' },
+    { name: 'worker.js', content: 'eval(payload);\n' }
+  ]));
+
+  const refused = captureStreams();
+  assert.equal(await runCli(['audit', input, '--format', 'json'], refused.streams), 2);
+  assert.match(refused.output().stderr, /RISK_ACK_REQUIRED/);
+
+  const accepted = captureStreams();
+  assert.equal(await runCli([
+    'audit', input, '--acknowledge-risk', '--format', 'json', '--fail-on', 'critical'
+  ], accepted.streams), 1);
+  const result = JSON.parse(accepted.output().stdout);
+  assert.equal(result.target.root, input);
+  assert.equal(result.artifact.format, 'crx');
+  assert.match(result.artifact.sha256, /^[a-f0-9]{64}$/);
+  assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
+
+  const directoryNamedZip = path.join(temp, 'unpacked.zip');
+  await mkdir(directoryNamedZip);
+  await writeFile(path.join(directoryNamedZip, 'manifest.json'), '{"manifest_version":3,"name":"Directory","version":"1.0.0"}\n', 'utf8');
+  const directoryAudit = captureStreams();
+  assert.equal(await runCli(['audit', directoryNamedZip, '--format', 'json'], directoryAudit.streams), 0);
+  assert.equal(JSON.parse(directoryAudit.output().stdout).target.inputType, undefined);
 });
 
 test('CLI returns usage error for an unknown command', async () => {
@@ -36,6 +68,8 @@ test('CLI help documents stable exit codes', async () => {
   const code = await runCli(['--help'], capture.streams);
   assert.equal(code, 0);
   assert.match(capture.output().stdout, /Exit codes:/);
+  assert.match(capture.output().stdout, /file\.crx\|file\.zip/);
+  assert.match(capture.output().stdout, /--acknowledge-risk/);
 });
 
 test('CLI emits valid SARIF and version output', async () => {
