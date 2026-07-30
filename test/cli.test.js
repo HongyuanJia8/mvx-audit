@@ -15,6 +15,8 @@ test('CLI audit emits JSON and honors severity threshold', async () => {
   const result = JSON.parse(capture.output().stdout);
   assert.equal(code, 1);
   assert.equal(result.target.manifestVersion, 3);
+  assert.equal(result.package.profile, 'mvx-package-v1');
+  assert.equal(result.analysis.packageSha256, result.package.sha256);
   assert.equal(capture.output().stderr, '');
 });
 
@@ -39,6 +41,7 @@ test('CLI packed audit requires acknowledgement and preserves fail-on semantics'
   assert.equal(result.target.root, input);
   assert.equal(result.artifact.format, 'crx');
   assert.match(result.artifact.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(result.analysis.packageSha256, result.package.sha256);
   assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
 
   const directoryNamedZip = path.join(temp, 'unpacked.zip');

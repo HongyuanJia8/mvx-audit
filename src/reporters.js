@@ -5,6 +5,9 @@ export function auditToText(result) {
     `${result.target.name ?? path.basename(result.target.root)} (Manifest V${result.target.manifestVersion ?? '?'})`,
     `Risk: ${result.summary.rating} (${result.summary.riskScore}/100), ${result.summary.total} finding(s)`,
     `Scanned: ${result.scan.sourceFilesScanned} source file(s), ${result.scan.sourceBytesScanned} bytes`,
+    ...(result.package ? [
+      `Package (${result.package.profile}): ${result.package.fileCount} file(s), ${result.package.totalBytes} bytes, SHA-256: ${result.package.sha256}`
+    ] : []),
     ...(result.artifact ? [
       `Archive (${result.artifact.format === 'crx' ? `CRX${result.artifact.crxVersion}` : result.artifact.format.toUpperCase()}) SHA-256: ${result.artifact.sha256}`
     ] : []),
@@ -28,6 +31,7 @@ export function auditToSarif(result) {
   const uniqueRules = [...new Map(result.findings.map((finding) => [finding.id, finding])).values()];
   const runProperties = {
     ...(result.analysis ? { analysis: result.analysis } : {}),
+    ...(result.package ? { package: result.package } : {}),
     ...(result.artifact ? { artifact: result.artifact } : {})
   };
   return {
@@ -72,6 +76,7 @@ export function comparisonToMarkdown(comparison) {
     `| Critical | ${before.summary.counts.critical} | ${after.summary.counts.critical} |`,
     `| High | ${before.summary.counts.high} | ${after.summary.counts.high} |`,
     `| Total findings | ${before.summary.total} | ${after.summary.total} |`,
+    ...(before.package && after.package ? [`| Package SHA-256 | \`${before.package.sha256}\` | \`${after.package.sha256}\` |`] : []),
     ...(before.analysis && after.analysis ? [`| Analysis SHA-256 | \`${before.analysis.sha256}\` | \`${after.analysis.sha256}\` |`] : []), '',
     `Risk score delta: ${delta.riskScore >= 0 ? '+' : ''}${delta.riskScore}`, '',
     '## Resolved findings', '',

@@ -99,8 +99,11 @@ development.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
   2.1.0 suitable for GitHub code scanning.
 - Path-independent analysis provenance in JSON and SARIF, with raw manifest and
-  per-source SHA-256 values, a package-layout digest, the effective scan limits,
+  per-source SHA-256 values, a full-package digest, the effective scan limits,
   and one combined identity also shown in text and comparison output.
+- A deterministic inventory of every in-scope regular file, including byte
+  length and SHA-256, plus explicit review findings for packaged WebAssembly,
+  PE/DOS, ELF, and Mach-O payloads that the text rules do not parse.
 - Direct CRX/ZIP audit through a private, automatically removed extraction,
   binding the exact archive SHA-256, byte length, format, version, and
   extraction statistics to the static report.
@@ -196,12 +199,13 @@ const packedAudit = await auditExtensionArchive('/path/to/extension.crx');
 const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3');
 ```
 
-Every successful audit includes `analysis.sha256`. Matching values mean the
-same static-analysis profile saw the same manifest bytes, scanned source bytes,
-package layout, and limits, even when the extension directories differ. This
-is an analysis identity, not a hash of every binary asset or of the original
-CRX/ZIP container; retain the quarantine SHA-256 when exact artifact identity
-is required.
+Every successful audit includes `package.sha256` and `analysis.sha256`.
+Matching package values mean the same `mvx-package-v1` profile inventoried the
+same extension-relative entries and regular-file bytes, even when directories
+differ. The analysis identity additionally binds the text-analysis profile and
+effective limits. Neither value is a signature or a digest of the original
+CRX/ZIP container; retain `artifact.sha256` or the quarantine SHA-256 for exact
+packed-artifact identity.
 
 ## Security and responsible use
 

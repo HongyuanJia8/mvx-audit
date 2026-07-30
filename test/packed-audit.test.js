@@ -41,6 +41,8 @@ test('packed CRX audit binds exact archive provenance and removes its extraction
     extraction: { entries: 2, files: 2, uncompressedBytes: Buffer.byteLength(manifest) + Buffer.byteLength(worker) }
   });
   assert.ok(result.findings.some((finding) => finding.id === 'MVX201'));
+  assert.equal(result.analysis.packageSha256, result.package.sha256);
+  assert.equal(result.package.fileCount, 2);
   assert.match(result.assumptions.at(-1), /removed without executing extension code/);
   assert.deepEqual(await readdir(sample.temporaryDirectory), []);
   assert.doesNotMatch(JSON.stringify(result), /mvx-packed-audit-/);

@@ -2,6 +2,7 @@ import { loadExtension } from './io.js';
 import { sortFindings, summarizeFindings } from './model.js';
 import { analyzeManifest, hostPermissions } from './rules/manifest-rules.js';
 import { analyzeSources } from './rules/source-rules.js';
+import { analyzePackage } from './rules/package-rules.js';
 import { createFinding } from './model.js';
 
 function manifestReferences(manifest) {
@@ -53,6 +54,7 @@ export async function auditExtension(inputPath, options = {}) {
   ].filter((permission) => typeof permission === 'string' && permission !== '<all_urls>' && !permission.includes('://'));
   const findings = sortFindings([
     ...analyzeIntegrity(snapshot.manifest, snapshot.files),
+    ...analyzePackage(snapshot.executableFiles),
     ...analyzeManifest(snapshot.manifest, snapshot.sources),
     ...analyzeSources(snapshot.sources)
   ]);
@@ -71,6 +73,7 @@ export async function auditExtension(inputPath, options = {}) {
       hostPermissions: hostPermissions(snapshot.manifest)
     },
     analysis: snapshot.provenance,
+    package: snapshot.inventory,
     findings,
     scan: snapshot.metadata,
     assumptions: [
