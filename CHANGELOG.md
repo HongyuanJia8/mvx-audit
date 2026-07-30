@@ -40,9 +40,9 @@ versioning from the 2.0 reset onward.
 
 - Strict CRX verification now rejects trailing bytes after the DER public-key
   sequence and malformed oversized protobuf fields inside unknown groups.
-- Static benchmark cache hits retain authenticity findings and bind actual
-  archive SHA-256/verified extension ID to quarantine path identities before
-  extraction or cache reuse.
+- Static benchmark binds actual archive SHA-256/verified extension ID to
+  quarantine path identities and always audits a fresh private extraction
+  instead of trusting persistent cached contents.
 - Archive input now uses a bounded, no-follow file handle; custom extraction
   limits reject unknown or non-integer values instead of silently changing the
   parser contract.

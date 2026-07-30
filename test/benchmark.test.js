@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -30,6 +30,7 @@ test('static benchmark measures review triggers without claiming malware accurac
   })}\n`, 'utf8');
   let observedRulePacks;
   let observedUnpackOptions;
+  let observedDestination;
   const report = await runStaticBenchmark({
     quarantineDir: root,
     records: [{ extensionId: ID, labels: ['behavior-confirmed-malicious'] }],
@@ -38,6 +39,7 @@ test('static benchmark measures review triggers without claiming malware accurac
     rulePacks: [rulePack],
     requireValidSignature: true,
     unpacker: async (_input, destination, options) => {
+      observedDestination = destination;
       observedUnpackOptions = options;
       return { destination, files: 2 };
     },
@@ -60,30 +62,39 @@ test('static benchmark measures review triggers without claiming malware accurac
     expectedArchiveSha256: HASH,
     expectedExtensionId: ID
   });
+  await assert.rejects(() => lstat(path.dirname(observedDestination)), (error) => error.code === 'ENOENT');
   assert.match(report.caveats[0], /not malware-classification accuracy/);
   assert.match(staticBenchmarkToText({ ...report, rulePacks: undefined }), /Rule packs: 0/);
 });
 
-test('static benchmark safely reuses an existing extraction', async (t) => {
+test('static benchmark ignores an untrusted existing extraction and audits fresh signed bytes', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-cache-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const bytes = makeCrx([{
-    name: 'manifest.json',
-    content: '{"manifest_version":3,"name":"Cached authenticity","version":"1.0.0"}'
-  }]);
-  const hash = createHash('sha256').update(bytes).digest('hex');
-  const destination = path.join(root, ID, 'unpacked', hash);
+  const signed = makeSignedCrx3([
+    {
+      name: 'manifest.json',
+      content: '{"manifest_version":3,"name":"Fresh archive","version":"1.0.0"}'
+    },
+    { name: 'worker.js', content: 'eval(payload);\n' }
+  ]);
+  const hash = createHash('sha256').update(signed.bytes).digest('hex');
+  const destination = path.join(root, signed.extensionId, 'unpacked', hash);
   await mkdir(destination, { recursive: true });
-  await writeFile(path.join(destination, 'manifest.json'), '{"manifest_version":3,"name":"Cached authenticity","version":"1.0.0"}');
-  await writeFile(path.join(root, ID, `${hash}.crx`), bytes);
-  const report = await runStaticBenchmark({ quarantineDir: root, acknowledgeRisk: true });
+  await writeFile(path.join(destination, 'manifest.json'), '{"manifest_version":3,"name":"Untrusted benign cache","version":"1.0.0"}');
+  await writeFile(path.join(root, signed.extensionId, `${hash}.crx`), signed.bytes);
+  const report = await runStaticBenchmark({
+    quarantineDir: root,
+    acknowledgeRisk: true,
+    requireValidSignature: true
+  });
   assert.equal(report.summary.failures, 0);
-  assert.equal(report.results[0].cachedExtraction, true);
-  assert.equal(report.results[0].authenticity.status, 'invalid');
-  assert.deepEqual(report.results[0].triggeringRules, ['MVX004']);
+  assert.equal(report.results[0].cachedExtraction, false);
+  assert.equal(report.results[0].authenticity.status, 'verified');
+  assert.deepEqual(report.results[0].triggeringRules, ['MVX201']);
+  assert.match(await readFile(path.join(destination, 'manifest.json'), 'utf8'), /Untrusted benign cache/);
 });
 
-test('strict benchmark verifies the CRX before accepting a cached extraction', async (t) => {
+test('strict benchmark rejects an invalid CRX even when a persistent extraction exists', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-strict-cache-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const destination = path.join(root, ID, 'unpacked', HASH);
@@ -120,7 +131,7 @@ test('benchmark counts invalid CRX authenticity as an MVX004 review trigger', as
   assert.equal(report.results[0].severityCounts.high, 1);
 });
 
-test('benchmark rejects archive hash and verified extension-ID identity mismatches before caching', async (t) => {
+test('benchmark rejects archive hash and verified extension-ID mismatches before audit', async (t) => {
   const signed = makeSignedCrx3([{
     name: 'manifest.json',
     content: '{"manifest_version":3,"name":"Identity mismatch","version":"1.0.0"}'

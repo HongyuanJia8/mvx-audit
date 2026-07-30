@@ -1,4 +1,5 @@
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, rm } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { auditExtension } from './analyzer.js';
 import { unpackCrx } from './archive.js';
@@ -65,21 +66,17 @@ export async function runStaticBenchmark({
   const results = [];
   const failures = [];
   for (const sample of selected) {
-    const destination = path.join(discovered.root, sample.extensionId, 'unpacked', sample.sha256);
+    let workspace;
+    let result;
+    let failure;
     try {
-      let archive;
-      try {
-        archive = await unpacker(sample.crxPath, destination, {
-          requireValidSignature,
-          expectedArchiveSha256: sample.sha256,
-          expectedExtensionId: sample.extensionId
-        });
-      } catch (error) {
-        if (error.code !== 'OUTPUT_EXISTS') throw error;
-        const existing = await lstat(destination);
-        if (existing.isSymbolicLink() || !existing.isDirectory()) throw new MvxError('Cached extraction is unsafe', { code: 'UNSAFE_QUARANTINE' });
-        archive = { ...error.details, files: null, cached: true };
-      }
+      workspace = await mkdtemp(path.join(os.tmpdir(), 'mvx-benchmark-'));
+      const destination = path.join(workspace, 'extension');
+      const archive = await unpacker(sample.crxPath, destination, {
+        requireValidSignature,
+        expectedArchiveSha256: sample.sha256,
+        expectedExtensionId: sample.extensionId
+      });
       if (archive.archiveSha256 && archive.archiveSha256 !== sample.sha256) {
         throw new MvxError('Archive SHA-256 does not match its quarantine filename', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
       }
@@ -94,23 +91,43 @@ export async function runStaticBenchmark({
       ]);
       const summary = summarizeFindings(findings);
       const triggering = findings.filter((finding) => SEVERITIES.indexOf(finding.severity) <= severityLimit);
-      results.push({
+      result = {
         extensionId: sample.extensionId,
         sha256: sample.sha256,
         labels: catalog.get(sample.extensionId)?.labels ?? [],
         manifestVersion: audit.target.manifestVersion,
         version: audit.target.version,
         files: archive.files ?? audit.scan?.filesVisited ?? null,
-        cachedExtraction: archive.cached === true,
+        cachedExtraction: false,
         authenticity: archive.authenticity ?? null,
         findingCount: findings.length,
         reviewTriggered: triggering.length > 0,
         triggeringRules: [...new Set(triggering.map((finding) => finding.id))].sort(),
         severityCounts: summary.counts
-      });
+      };
     } catch (error) {
-      failures.push({ extensionId: sample.extensionId, sha256: sample.sha256, code: error.code ?? 'UNEXPECTED_ERROR', message: error.message });
+      failure = error;
+    } finally {
+      if (workspace) {
+        try {
+          await rm(workspace, { recursive: true, force: true });
+        } catch (error) {
+          failure ??= error;
+        }
+      }
     }
+    if (failure) {
+      const rawMessage = String(failure.message ?? failure);
+      const message = workspace
+        ? rawMessage.split(workspace).join('<temporary extraction>')
+        : rawMessage;
+      failures.push({
+        extensionId: sample.extensionId,
+        sha256: sample.sha256,
+        code: failure.code ?? 'UNEXPECTED_ERROR',
+        message
+      });
+    } else results.push(result);
   }
   const triggered = results.filter((result) => result.reviewTriggered).length;
   const ruleCounts = {};

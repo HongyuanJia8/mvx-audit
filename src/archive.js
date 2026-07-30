@@ -249,16 +249,7 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
   const { absolute, parent } = await safeParent(destination);
   try {
     await lstat(absolute);
-    throw new MvxError(`Archive destination already exists: ${absolute}`, {
-      code: 'OUTPUT_EXISTS',
-      details: {
-        archiveFormat: format,
-        crxVersion: version,
-        archiveBytes: buffer.length,
-        archiveSha256,
-        authenticity
-      }
-    });
+    throw new MvxError(`Archive destination already exists: ${absolute}`, { code: 'OUTPUT_EXISTS' });
   } catch (error) {
     if (error instanceof MvxError) throw error;
     if (error.code !== 'ENOENT') throw error;

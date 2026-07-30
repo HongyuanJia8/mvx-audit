@@ -106,9 +106,10 @@ supplied out of band, or whether the signed code is safe.
 
 Static benchmark discovery treats the quarantine directory ID and the CRX
 filename digest as expected identities, not trusted labels. Before extraction
-or cache reuse, the actual archive SHA-256 must match its filename. A verified
-CRX extension ID must also match its directory. Cache hits preserve the freshly
-computed authenticity result, so invalid packages still trigger `MVX004`.
+the actual archive SHA-256 must match its filename. A verified CRX extension ID
+must also match its directory. Every sample is re-extracted into a new private
+temporary workspace and removed after analysis; an existing persistent
+`unpacked/` directory is never trusted as the source of benchmark findings.
 
 ## Severity and score
 

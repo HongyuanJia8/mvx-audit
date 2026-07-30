@@ -74,8 +74,8 @@ test('CRX3 verifies every RSA/ECDSA proof and identifies only the declared devel
 
   const serialized = JSON.stringify(authenticity);
   for (const key of fixture.publicKeys) {
-    assert.doesNotMatch(serialized, new RegExp(key.toString('base64')));
-    assert.doesNotMatch(serialized, new RegExp(key.toString('hex')));
+    assert.equal(serialized.includes(key.toString('base64')), false);
+    assert.equal(serialized.includes(key.toString('hex')), false);
   }
 });
 
