@@ -19,6 +19,24 @@ async function resolveTemporaryParent(input) {
   return realpath(absolute);
 }
 
+function sanitizeTemporaryError(error, workspace) {
+  let current = error;
+  const seen = new Set();
+  let containsWorkspace = false;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    if (typeof current.message === 'string' && current.message.includes(workspace)) containsWorkspace = true;
+    current = current.cause;
+  }
+  if (!containsWorkspace) return error;
+  const message = String(error?.message ?? error).split(workspace).join('<temporary extraction>');
+  if (error instanceof MvxError) return new MvxError(message, { code: error.code });
+  const sanitized = new Error(message);
+  sanitized.name = error?.name ?? 'Error';
+  if (error?.code !== undefined) sanitized.code = error.code;
+  return sanitized;
+}
+
 export async function auditExtensionArchive(inputPath, options = {}) {
   const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
@@ -48,7 +66,13 @@ export async function auditExtensionArchive(inputPath, options = {}) {
         'The archive was defensively extracted into a private temporary directory, statically audited, and removed without executing extension code.'
       ]
     };
+  } catch (error) {
+    throw sanitizeTemporaryError(error, workspace);
   } finally {
-    await rm(workspace, { recursive: true, force: true });
+    try {
+      await rm(workspace, { recursive: true, force: true });
+    } catch (error) {
+      throw sanitizeTemporaryError(error, workspace);
+    }
   }
 }

@@ -47,13 +47,15 @@ test('CRX3 unpacker extracts stored and deflated files for static audit', async 
 test('bounded extension archive unpacker supports ZIP without weakening CRX-only API', async (t) => {
   const fixture = await withZip(t, [
     { name: 'manifest.json', content: '{"manifest_version":3,"name":"ZIP","version":"1.0.0"}' },
-    { name: 'worker.js', content: 'console.log("loaded");', method: 8 }
+    { name: 'worker.js', content: 'console.log("loaded");', method: 8 },
+    { name: 'assets/', content: '', method: 8 }
   ]);
   await assert.rejects(() => unpackCrx(fixture.input, fixture.destination), (error) => error.code === 'INVALID_ARCHIVE');
   const result = await unpackExtensionArchive(fixture.input, fixture.destination);
   assert.equal(result.archiveFormat, 'zip');
   assert.equal(result.crxVersion, null);
   assert.equal(result.files, 2);
+  assert.equal(result.entries, 3);
   assert.match(await readFile(path.join(fixture.destination, 'manifest.json'), 'utf8'), /manifest_version/);
 });
 
@@ -62,6 +64,34 @@ test('ZIP extension packages retain traversal and link protections', async (t) =
   await assert.rejects(() => unpackExtensionArchive(traversal.input, traversal.destination), (error) => error.code === 'UNSAFE_ARCHIVE');
   const symlink = await withZip(t, [{ name: 'manifest.json', content: '{}', externalAttributes: 0o120777 << 16 }]);
   await assert.rejects(() => unpackExtensionArchive(symlink.input, symlink.destination), (error) => error.code === 'UNSAFE_ARCHIVE');
+});
+
+test('ZIP directory entries require empty data and a valid local header', async (t) => {
+  const manifest = '{}';
+  const corrupt = await withZip(t, [
+    { name: 'manifest.json', content: manifest },
+    { name: 'assets/', content: '' }
+  ]);
+  const corruptBytes = makeZip([
+    { name: 'manifest.json', content: manifest },
+    { name: 'assets/', content: '' }
+  ]);
+  const directoryLocalOffset = 30 + Buffer.byteLength('manifest.json') + Buffer.byteLength(manifest);
+  corruptBytes.writeUInt32LE(0, directoryLocalOffset);
+  await writeFile(corrupt.input, corruptBytes);
+  await assert.rejects(
+    () => unpackExtensionArchive(corrupt.input, corrupt.destination),
+    (error) => error.code === 'INVALID_ARCHIVE' && /local header/.test(error.message)
+  );
+
+  const payload = await withZip(t, [
+    { name: 'manifest.json', content: manifest },
+    { name: 'assets/', content: 'hidden data' }
+  ]);
+  await assert.rejects(
+    () => unpackExtensionArchive(payload.input, payload.destination),
+    (error) => error.code === 'INVALID_ARCHIVE' && /Directory entry carries data/.test(error.message)
+  );
 });
 
 test('CRX unpacker rejects traversal and symbolic-link entries', async (t) => {

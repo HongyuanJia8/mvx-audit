@@ -147,8 +147,9 @@ For static triage without retaining an unpacked copy, use
 `audit <file.crx-or-zip> --acknowledge-risk`. It uses the same bounded
 extractor inside a private temporary directory, records the SHA-256 of the
 exact bytes parsed, runs the ordinary static analyzer, and removes the
-extraction on both success and failure. Use the persistent `sample unpack`
-workflow when a later lab run needs the files.
+extraction after a returned result or thrown error. Abrupt process termination
+can bypass that cleanup. Use the persistent `sample unpack` workflow when a
+later lab run needs the files.
 
 `sample plan-many` and `sample fetch-many` add deterministic prioritization,
 count limits, per-artifact limits, a total byte budget, and isolated failure

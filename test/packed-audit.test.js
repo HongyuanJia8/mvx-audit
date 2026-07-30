@@ -90,6 +90,9 @@ test('packed ZIP audit and archive failures always clean private temporary state
   await assert.rejects(
     () => auditExtensionArchive(sample.input, { temporaryDirectory: sample.temporaryDirectory }),
     (error) => error.code === 'INVALID_MANIFEST'
+      && !error.message.includes('mvx-packed-audit-')
+      && error.message.includes('<temporary extraction>/extension/manifest.json')
+      && error.cause === undefined
   );
   assert.deepEqual(await readdir(sample.temporaryDirectory), []);
 });

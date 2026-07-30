@@ -47,6 +47,15 @@ test('CLI packed audit requires acknowledgement and preserves fail-on semantics'
   const directoryAudit = captureStreams();
   assert.equal(await runCli(['audit', directoryNamedZip, '--format', 'json'], directoryAudit.streams), 0);
   assert.equal(JSON.parse(directoryAudit.output().stdout).target.inputType, undefined);
+
+  const broken = path.join(temp, 'broken.crx');
+  await writeFile(broken, makeCrx([
+    { name: 'manifest.json', content: '{broken' }
+  ]));
+  const failed = captureStreams();
+  assert.equal(await runCli(['audit', broken, '--acknowledge-risk'], failed.streams), 2);
+  assert.match(failed.output().stderr, /INVALID_MANIFEST.*<temporary extraction>\/extension\/manifest\.json/);
+  assert.doesNotMatch(failed.output().stderr, /mvx-packed-audit-/);
 });
 
 test('CLI returns usage error for an unknown command', async () => {

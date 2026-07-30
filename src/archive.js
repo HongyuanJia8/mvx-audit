@@ -147,6 +147,9 @@ function parseEntries(buffer, zipOffset, limits) {
     if (unixType === 0o120000) throw new MvxError(`Symbolic link entry is forbidden: ${safe.path}`, { code: 'UNSAFE_ARCHIVE' });
     if (flags & 1) throw new MvxError(`Encrypted entry is forbidden: ${safe.path}`, { code: 'UNSAFE_ARCHIVE' });
     if (![0, 8].includes(method)) throw new MvxError(`Unsupported compression method ${method}: ${safe.path}`, { code: 'UNSAFE_ARCHIVE' });
+    if (safe.directory && (uncompressedSize !== 0 || expectedCrc !== 0)) {
+      throw new MvxError(`Directory entry carries data or a nonzero CRC: ${safe.path}`, { code: 'INVALID_ARCHIVE' });
+    }
     if (uncompressedSize > limits.maxEntryBytes) throw new MvxError(`Archive entry exceeds ${limits.maxEntryBytes} bytes: ${safe.path}`, { code: 'ARCHIVE_LIMIT' });
     if (uncompressedSize > limits.maxHighlyCompressedEntryBytes
       && uncompressedSize / Math.max(1, compressedSize) > limits.maxCompressionRatio) {
@@ -230,12 +233,12 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
     let totalBytes = 0;
     for (const entry of entries) {
       const target = path.join(temporary, ...entry.path.split('/'));
+      const output = entryData(buffer, zipOffset, entry);
       if (entry.directory) {
         await mkdir(target, { recursive: true, mode: 0o700 });
         continue;
       }
       await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-      const output = entryData(buffer, zipOffset, entry);
       const handle = await open(target, 'wx', 0o600);
       try {
         await handle.writeFile(output);

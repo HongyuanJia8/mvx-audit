@@ -48,10 +48,12 @@ extraction when the input may be adversarial or changing during analysis.
 
 Packed audit hashes the exact bounded archive buffer used by the extractor and
 records its byte length, format, CRX version, and extraction statistics. The
-unpacked tree is created under a mode-0700 temporary workspace and removed in a
-`finally` path after successful analysis or any error. The CLI requires
-`--acknowledge-risk`; the library API remains non-interactive. No extension
-code is imported or executed.
+unpacked tree is created under a private temporary workspace (mode 0700 on
+POSIX) and removed in a `finally` path after successful analysis or any error.
+The CLI requires `--acknowledge-risk`; the library API remains non-interactive. No extension
+code is imported or executed. Abrupt process or machine termination can bypass
+language-level cleanup and leave a workspace under the operating system's
+temporary directory; handle that directory according to quarantine policy.
 
 `analysis.sha256` identifies the inputs that can affect this static analysis;
 it is not an archive signature or a byte-for-byte digest of unparsed binary
