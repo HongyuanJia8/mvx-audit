@@ -4,11 +4,12 @@ import { MvxError } from './errors.js';
 import { CONFIDENCE, SEVERITIES } from './model.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
-const PREPARED = Symbol('mvx-prepared-rule-packs');
+const PREPARED = new WeakSet();
 const NAMESPACE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const RULE_ID = /^[A-Z][A-Z0-9_-]*$/;
 const CATEGORY = /^[a-z][a-z0-9-]*$/;
 const SHA256 = /^[a-f0-9]{64}$/;
+const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
 const TEXT_SCOPES = new Set(['source', 'manifest', 'all-text']);
 const PATH_MATCHES = new Set(['exact', 'basename']);
 
@@ -114,7 +115,7 @@ function string(value, label, maxLength, pattern) {
 
 function displayString(value, label, maxLength) {
   const result = string(value, label, maxLength);
-  if (result.trim() !== result || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/i.test(result)) {
+  if (result.trim() !== result || UNSAFE_DISPLAY.test(result)) {
     throw new MvxError(`${label} may not contain surrounding whitespace or control characters`, { code: 'INVALID_RULE_PACK' });
   }
   return result;
@@ -149,7 +150,7 @@ function normalizeLimits(options) {
 
 function normalizePath(value, match, label) {
   string(value, label, 1_024);
-  if (value.includes('\0') || value.includes('\\') || value.startsWith('/') || /^[a-z]:/i.test(value)) {
+  if (UNSAFE_DISPLAY.test(value) || value.includes('\\') || value.startsWith('/') || /^[a-z]:/i.test(value)) {
     throw new MvxError(`${label} must be an extension-relative POSIX path`, { code: 'INVALID_RULE_PACK' });
   }
   if (match === 'basename') {
@@ -163,6 +164,13 @@ function normalizePath(value, match, label) {
     throw new MvxError(`${label} must be a normalized extension-relative path`, { code: 'INVALID_RULE_PACK' });
   }
   return segments.join('/');
+}
+
+function deepFreeze(value, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) deepFreeze(value[key], seen);
+  return Object.freeze(value);
 }
 
 function normalizeIndicator(input, label, limits) {
@@ -336,13 +344,14 @@ export async function loadRulePacks(inputs = [], options = {}) {
     limits,
     summary: { packs: packs.length, bytes: totalBytes, rules: totalRules, indicators: totalIndicators, literalBytes: totalLiteralBytes }
   };
-  Object.defineProperty(prepared, PREPARED, { value: true });
-  return prepared;
+  const frozen = deepFreeze(prepared);
+  PREPARED.add(frozen);
+  return frozen;
 }
 
 export async function resolveRulePacks(options = {}) {
   if (options._preparedRulePacks !== undefined) {
-    if (!options._preparedRulePacks?.[PREPARED]) {
+    if (!PREPARED.has(options._preparedRulePacks)) {
       throw new MvxError('Prepared rule packs are invalid', { code: 'INVALID_ARGUMENT' });
     }
     return options._preparedRulePacks;

@@ -7,7 +7,7 @@ import test from 'node:test';
 import { auditExtension } from '../src/analyzer.js';
 import { compareExtensions } from '../src/compare.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from '../src/reporters.js';
-import { loadRulePacks } from '../src/rule-packs.js';
+import { loadRulePacks, resolveRulePacks } from '../src/rule-packs.js';
 import { runCli } from '../src/cli.js';
 import { captureStreams, writeExtension } from '../support/helpers.js';
 
@@ -65,6 +65,16 @@ test('rule-pack loader is path-independent, ordered, bounded, and rejects symlin
   assert.deepEqual(loadedFirst.provenance, loadedCopy.provenance);
   assert.equal(loadedFirst.provenance[0].sha256, createHash('sha256').update(bytes).digest('hex'));
   assert.equal(JSON.stringify(loadedFirst.provenance).includes(temp), false);
+  assert.equal(Object.isFrozen(loadedFirst), true);
+  assert.equal(Object.isFrozen(loadedFirst.packs[0].rules[0].indicators[0]), true);
+  assert.throws(() => {
+    loadedFirst.packs[0].rules[0].title = 'mutated\nheading';
+  }, TypeError);
+  assert.equal(loadedFirst.packs[0].rules[0].title, 'Campaign indicator');
+  await assert.rejects(
+    () => resolveRulePacks({ _preparedRulePacks: structuredClone(loadedFirst) }),
+    (error) => error.code === 'INVALID_ARGUMENT'
+  );
   assert.deepEqual((await loadRulePacks([first, second])).provenance.map((item) => item.namespace), [
     'alpha.indicators', 'research.demo'
   ]);
@@ -89,6 +99,7 @@ test('strict rule-pack schema rejects executable matchers, unsafe metadata, and 
     ['unsupported regex', pack({ rules: [rule({ indicators: [{ type: 'regex', value: '.*' }] })] }), 'INVALID_RULE_PACK'],
     ['path traversal', pack({ rules: [rule({ indicators: [{ type: 'path', value: '../escape.js' }] })] }), 'INVALID_RULE_PACK'],
     ['path NUL', pack({ rules: [rule({ indicators: [{ type: 'path', value: 'payload\0.js' }] })] }), 'INVALID_RULE_PACK'],
+    ['path display control', pack({ rules: [rule({ indicators: [{ type: 'path', value: 'x\n# injected.md' }] })] }), 'INVALID_RULE_PACK'],
     ['literal NUL', pack({ rules: [rule({ indicators: [{ type: 'text', value: 'ioc\0marker' }] })] }), 'RULE_PACK_LIMIT'],
     ['non-ASCII folding', pack({ rules: [rule({ indicators: [{ type: 'text', value: 'İOC', caseSensitive: false }] })] }), 'INVALID_RULE_PACK'],
     ['terminal control', pack({ rules: [rule({ title: 'unsafe\nheading' })] }), 'INVALID_RULE_PACK'],
@@ -282,12 +293,19 @@ test('custom display text is escaped in Markdown and SARIF markdown fields', asy
     manifest_version: 3, name: 'After', version: '1.0.0'
   }, { 'worker.js': 'const marker = "render-ioc";\n' });
   const input = path.join(temp, 'render.json');
-  await writePack(input, pack({ rules: [rule({
-    id: 'RENDER_IOC',
-    title: '<img src=x> *campaign*',
-    remediation: 'Use *manual* [review] for this indicator.',
-    indicators: [{ type: 'text', value: 'render-ioc', scope: 'source' }]
-  })] }));
+  await writePack(input, pack({ rules: [
+    rule({
+      id: 'RENDER_IOC',
+      title: '<img src=x> *campaign*',
+      remediation: 'Use *manual* [review] for this indicator.',
+      indicators: [{ type: 'text', value: 'render-ioc', scope: 'source' }]
+    }),
+    rule({
+      id: 'SARIF_NAME',
+      title: '***',
+      indicators: [{ type: 'text', value: 'render-ioc', scope: 'source' }]
+    })
+  ] }));
   const comparison = await compareExtensions(before, after, { rulePacks: [input] });
   const markdown = comparisonToMarkdown(comparison);
   assert.doesNotMatch(markdown, /<img src=x>/);
@@ -295,4 +313,39 @@ test('custom display text is escaped in Markdown and SARIF markdown fields', asy
   const sarif = auditToSarif(comparison.after);
   const customRule = sarif.runs[0].tool.driver.rules.find((item) => item.id.endsWith(':RENDER_IOC'));
   assert.match(customRule.help.markdown, /Use \\\*manual\\\* \\\[review\\\]/);
+  const fallbackName = sarif.runs[0].tool.driver.rules.find((item) => item.id.endsWith(':SARIF_NAME'));
+  assert.match(fallbackName.name, /^RP/);
+});
+
+test('control characters in package filenames cannot inject text, Markdown, or SARIF locations', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-rule-path-render-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const unsafePath = 'x\n# injected.md';
+  const before = await writeExtension(path.join(temp, 'before'), {
+    manifest_version: 3, name: 'Before', version: '1.0.0'
+  });
+  const after = await writeExtension(path.join(temp, 'after'), {
+    manifest_version: 3, name: 'After', version: '1.0.0'
+  }, { [unsafePath]: 'marker bytes' });
+  const input = path.join(temp, 'file-hash.json');
+  await writePack(input, pack({ rules: [rule({
+    id: 'FILE_HASH',
+    indicators: [{
+      type: 'file-sha256',
+      value: createHash('sha256').update('marker bytes').digest('hex')
+    }]
+  })] }));
+
+  const comparison = await compareExtensions(before, after, { rulePacks: [input] });
+  const text = auditToText(comparison.after);
+  assert.doesNotMatch(text, /at x\n# injected\.md/);
+  assert.ok(text.includes('at x\\u000A# injected.md'));
+
+  const markdown = comparisonToMarkdown(comparison);
+  assert.doesNotMatch(markdown, /\n# injected\.md/);
+  assert.ok(markdown.includes('x\\\\u000A# injected.md'));
+
+  const sarif = auditToSarif(comparison.after);
+  const result = sarif.runs[0].results.find((item) => item.ruleId.endsWith(':FILE_HASH'));
+  assert.equal(result.locations[0].physicalLocation.artifactLocation.uri, 'x%0A%23%20injected.md');
 });
