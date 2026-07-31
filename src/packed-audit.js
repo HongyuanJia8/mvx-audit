@@ -1,4 +1,3 @@
-import { chmod, lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { auditExtension } from './analyzer.js';
@@ -9,20 +8,10 @@ import { resolveRulePacks } from './rule-packs.js';
 import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
 import { applyDispositionPolicies, loadDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
 import { assertOptionsObject } from './options.js';
-
-async function resolveTemporaryParent(input) {
-  const absolute = path.resolve(input ?? os.tmpdir());
-  let stat;
-  try {
-    stat = await lstat(absolute);
-  } catch (error) {
-    throw new MvxError(`Temporary directory does not exist: ${absolute}`, { code: 'TEMP_NOT_FOUND', cause: error });
-  }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new MvxError('Temporary directory must be a real directory', { code: 'UNSAFE_TEMP' });
-  }
-  return realpath(absolute);
-}
+import {
+  assertPrivateWorkspace, createPrivateWorkspace, removePrivateWorkspace,
+  resolvePrivateWorkspaceParent
+} from './private-workspace.js';
 
 function ownDataProperty(value, key) {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
@@ -78,14 +67,35 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     Object.getOwnPropertyDescriptor(options, '_expectedExtensionIdIfVerified')?.value;
   const expectedDeveloperKeySha256IfVerified =
     Object.getOwnPropertyDescriptor(options, '_expectedDeveloperKeySha256IfVerified')?.value;
+  const verificationExpectedArchiveSha256 =
+    Object.getOwnPropertyDescriptor(options, '_verificationExpectedArchiveSha256')?.value;
+  const verificationExpectedExtensionId =
+    Object.getOwnPropertyDescriptor(options, '_verificationExpectedExtensionId')?.value;
+  const verificationRequireValidSignature =
+    Object.getOwnPropertyDescriptor(options, '_verificationRequireValidSignature')?.value;
   const preparedRulePacks = await resolveRulePacks(options);
   const preparedDispositionPolicies = await resolveDispositionPolicies(options);
   const emptyDispositionPolicies = await loadDispositionPolicies([], {
     evaluationTime: preparedDispositionPolicies.evaluationTime
   });
   const requestedTemporaryParent = path.resolve(options.temporaryDirectory ?? os.tmpdir());
-  const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
-  const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
+  const temporaryParent = await resolvePrivateWorkspaceParent(
+    options.temporaryDirectory ?? os.tmpdir(),
+    {
+      missingMessage: `Temporary directory does not exist: ${requestedTemporaryParent}`,
+      unsafeMessage: 'Temporary directory must be a real directory',
+      changedMessage: 'Temporary directory changed during resolution'
+    }
+  );
+  const workspaceRecord = await createPrivateWorkspace(
+    temporaryParent,
+    'mvx-packed-audit-',
+    {
+      changedMessage: 'Temporary directory changed during workspace creation',
+      cleanupMessage: 'Temporary workspace cleanup failed during creation'
+    }
+  );
+  const workspace = workspaceRecord.path;
   const workspaceAliases = [
     workspace,
     path.join(requestedTemporaryParent, path.basename(workspace))
@@ -94,7 +104,9 @@ export async function auditExtensionArchive(inputPath, options = {}) {
   let failure;
   let failed = false;
   try {
-    await chmod(workspace, 0o700);
+    await assertPrivateWorkspace(workspaceRecord, {
+      changedMessage: 'Temporary workspace changed before packed audit'
+    });
     const extracted = path.join(workspace, 'extension');
     const archive = await unpackExtensionArchive(inputPath, extracted, {
       limits: options.archiveLimits,
@@ -102,7 +114,13 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       expectedArchiveSha256: options.expectedArchiveSha256,
       expectedExtensionId: options.expectedExtensionId,
       _expectedExtensionIdIfVerified: expectedExtensionIdIfVerified,
-      _expectedDeveloperKeySha256IfVerified: expectedDeveloperKeySha256IfVerified
+      _expectedDeveloperKeySha256IfVerified: expectedDeveloperKeySha256IfVerified,
+      _verificationExpectedArchiveSha256: verificationExpectedArchiveSha256,
+      _verificationExpectedExtensionId: verificationExpectedExtensionId,
+      _verificationRequireValidSignature: verificationRequireValidSignature
+    });
+    await assertPrivateWorkspace(workspaceRecord, {
+      changedMessage: 'Temporary workspace changed after archive extraction'
     });
     const audit = await auditExtension(extracted, {
       limits: options.limits,
@@ -173,7 +191,10 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     failure = error;
   }
   try {
-    await rm(workspace, { recursive: true, force: true });
+    await removePrivateWorkspace(workspaceRecord, {
+      changedMessage: 'Temporary workspace changed before cleanup',
+      cleanupMessage: 'Temporary workspace cleanup failed'
+    });
   } catch (error) {
     const cleanupFailure = sanitizeTemporaryError(error, workspaceAliases);
     const sanitizedFailure = failed

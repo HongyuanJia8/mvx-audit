@@ -2,7 +2,8 @@ import { types as utilTypes } from 'node:util';
 import { MvxError } from './errors.js';
 
 export function assertOptionsObject(value, label) {
-  if (!value || Array.isArray(value) || typeof value !== 'object' || utilTypes.isProxy(value)) {
+  if (!value || typeof value !== 'object'
+    || utilTypes.isProxy(value) || Array.isArray(value)) {
     throw new MvxError(`${label} options must be a plain non-proxy object`, { code: 'INVALID_ARGUMENT' });
   }
   const prototype = Object.getPrototypeOf(value);

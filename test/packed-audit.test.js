@@ -49,6 +49,7 @@ test('packed CRX audit binds exact archive provenance and removes its extraction
     },
     identityPolicy: {
       profile: 'mvx-archive-identity-v1',
+      requireValidSignature: false,
       expectedArchiveSha256: null,
       expectedExtensionId: null,
       archiveSha256Match: null,
@@ -98,6 +99,7 @@ test('packed CRX audit reports verified developer-key integrity without claiming
   assert.equal(result.artifact.authenticity.proofs.length, 2);
   assert.deepEqual(result.artifact.identityPolicy, {
     profile: 'mvx-archive-identity-v1',
+    requireValidSignature: true,
     expectedArchiveSha256: expectedSha256,
     expectedExtensionId: signed.extensionId,
     archiveSha256Match: true,

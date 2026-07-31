@@ -6,7 +6,7 @@ import { executableFormat, packageInventory } from './package.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.html', '.htm', '.json']);
-const DEFAULT_LIMITS = Object.freeze({
+export const SCAN_LIMITS = Object.freeze({
   maxFiles: 5_000,
   maxEntries: 10_000,
   maxDepth: 64,
@@ -25,17 +25,17 @@ function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function normalizeLimits(options) {
+export function normalizeScanLimits(options) {
   if (!options || Array.isArray(options) || typeof options !== 'object') {
     throw new MvxError('Scan limits must be an object', { code: 'INVALID_ARGUMENT' });
   }
-  const supported = new Set(Object.keys(DEFAULT_LIMITS));
+  const supported = new Set(Object.keys(SCAN_LIMITS));
   const unknown = Object.keys(options).filter((key) => !supported.has(key)).sort(compareText);
   if (unknown.length > 0) {
     throw new MvxError(`Unknown scan limit: ${unknown.join(', ')}`, { code: 'INVALID_ARGUMENT' });
   }
   const limits = {};
-  for (const [key, fallback] of Object.entries(DEFAULT_LIMITS)) {
+  for (const [key, fallback] of Object.entries(SCAN_LIMITS)) {
     const value = Object.hasOwn(options, key) ? options[key] : fallback;
     if (!Number.isSafeInteger(value) || value <= 0) {
       throw new MvxError(`${key} must be a positive safe integer`, { code: 'INVALID_ARGUMENT' });
@@ -171,7 +171,7 @@ async function walk(root, current, state, limits, manifestBytes, depth = 0) {
 }
 
 export async function loadExtension(inputPath, options = {}, context = { rulePacks: [], rulePackLimits: {} }) {
-  const limits = normalizeLimits(options);
+  const limits = normalizeScanLimits(options);
   const { root, manifestPath } = await resolveRoot(inputPath);
   let manifestStat;
   try {

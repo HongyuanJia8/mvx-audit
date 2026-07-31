@@ -126,6 +126,36 @@ CRX, retain the hash-verified quarantine metadata as the authoritative packed-
 artifact identity. Matching package or analysis hashes also do not imply that
 two extensions are benign or equivalent at runtime.
 
+## Static report verification
+
+The `mvx-audit-verification-v1` profile re-runs a schema-v1 directory or packed
+audit and performs deep deterministic equality. It covers the exact tool
+version, findings, summaries, package and analysis identities, rule-pack byte
+provenance and limits, disposition-policy byte provenance and recorded
+evaluation time, and packed authenticity and extraction metadata.
+
+Only the local `target.root` and packed `artifact.path` fields are normalized
+during comparison. Their equality with the current input is reported
+separately. Every other field must match. The raw report reader is bounded,
+no-follow, strict UTF-8 and JSON, duplicate-key rejecting, and depth limited.
+An optional expected report SHA-256 binds exact JSON bytes and therefore also
+binds the excluded paths and formatting.
+
+Caller-supplied package, analysis, archive, extension-ID, and valid-signature
+requirements are independent assertions. Once the fresh audit exists, they are
+checked before report equality so a trusted input mismatch remains explicit.
+Reproducibility alone authenticates neither the report author nor the input
+source. See [offline static-audit verification](audit-verification.md).
+
+Directory verification first copies regular files through the normalized scan
+limits into a private workspace, retains symlinks without following them,
+rejects special filesystem entries, audits only the captured bytes, and
+cleanup-enforces the workspace. This prevents later source changes from
+altering the in-progress analysis. Packed archive SHA-256, verified extension
+ID, and valid-signature requirements are internal preconditions on the same
+bounded archive buffer used for extraction, but do not alter the report policy
+being reproduced. They fail before ZIP entry parsing or extraction.
+
 ## CRX authenticity semantics
 
 For CRX2, MVX verifies the legacy RSA PKCS#1 v1.5 SHA-1 signature over the ZIP
@@ -163,8 +193,12 @@ verified CRX developer-key proof; invalid CRX and ZIP input fail as
 first.
 
 Successful results include the `mvx-archive-identity-v1` policy record with the
-exact expected values and match state. JSON retains it directly, text renders a
-matched summary, and SARIF carries it under the packed artifact properties.
+effective `requireValidSignature` setting, exact expected values, and match
+state. JSON retains it directly, text renders a matched summary, and SARIF
+carries it under the packed artifact properties.
+Offline verification accepts older schema-v1 packed reports that lack the
+newer `requireValidSignature` record by replaying the historical `false`
+default, but marks the recorded-signature check unknown and emits a caveat.
 The policy makes an external assertion reproducible; it cannot make an
 untrusted, stale, or incorrectly attributed assertion trustworthy.
 
