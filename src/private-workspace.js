@@ -14,6 +14,10 @@ function isWithin(parent, candidate) {
       && !path.isAbsolute(relative));
 }
 
+function sharedWritableWithoutSticky(stat) {
+  return (stat.mode & 0o022n) !== 0n && (stat.mode & 0o1000n) === 0n;
+}
+
 export async function resolvePrivateWorkspaceParent(input, {
   missingMessage,
   unsafeMessage,
@@ -39,7 +43,9 @@ export async function resolvePrivateWorkspaceParent(input, {
   } catch (error) {
     throw new MvxError(changedMessage, { code: unsafeCode, cause: error });
   }
-  if (!resolved.isDirectory() || !sameIdentity(initial, resolved)) {
+  if (!resolved.isDirectory()
+    || !sameIdentity(initial, resolved)
+    || sharedWritableWithoutSticky(resolved)) {
     throw new MvxError(changedMessage, { code: unsafeCode });
   }
   return Object.freeze({ path: canonical, stat: resolved });
@@ -72,7 +78,11 @@ export async function createPrivateWorkspace(parent, prefix, {
       throw new MvxError(changedMessage, { code: unsafeCode });
     }
     await chmod(canonical, 0o700);
-    return canonical;
+    return Object.freeze({
+      path: canonical,
+      stat: workspaceStat,
+      parent
+    });
   } catch (error) {
     const failure = error instanceof MvxError
       ? error
@@ -87,5 +97,42 @@ export async function createPrivateWorkspace(parent, prefix, {
       });
     }
     throw failure;
+  }
+}
+
+export async function assertPrivateWorkspace(workspace, {
+  changedMessage,
+  unsafeCode = 'UNSAFE_TEMP'
+}) {
+  let current;
+  let currentParent;
+  try {
+    [current, currentParent] = await Promise.all([
+      lstat(workspace.path, { bigint: true }),
+      lstat(path.dirname(workspace.path), { bigint: true })
+    ]);
+  } catch (error) {
+    throw new MvxError(changedMessage, { code: unsafeCode, cause: error });
+  }
+  if (!current.isDirectory()
+    || !currentParent.isDirectory()
+    || !sameIdentity(current, workspace.stat)
+    || !sameIdentity(currentParent, workspace.parent.stat)) {
+    throw new MvxError(changedMessage, { code: unsafeCode });
+  }
+  return workspace.path;
+}
+
+export async function removePrivateWorkspace(workspace, {
+  changedMessage,
+  cleanupMessage,
+  unsafeCode = 'UNSAFE_TEMP',
+  cleanupCode = 'TEMP_CLEANUP_FAILED'
+}) {
+  await assertPrivateWorkspace(workspace, { changedMessage, unsafeCode });
+  try {
+    await rm(workspace.path, { recursive: true, force: true });
+  } catch (error) {
+    throw new MvxError(cleanupMessage, { code: cleanupCode, cause: error });
   }
 }

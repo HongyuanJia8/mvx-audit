@@ -83,8 +83,22 @@ async function snapshot(destinationRoot, expectedRoot, limits) {
   await visit(destinationRoot, expectedRoot, 0);
 }
 
-const [destinationRoot, expectedDev, expectedIno, serializedLimits] = process.argv.slice(2);
+const [
+  destinationRoot,
+  expectedDev,
+  expectedIno,
+  serializedLimits,
+  destinationDev,
+  destinationIno
+] = process.argv.slice(2);
 try {
+  const destinationParent = await stat(path.dirname(destinationRoot), { bigint: true });
+  if (!sameIdentity(destinationParent, {
+    dev: BigInt(destinationDev),
+    ino: BigInt(destinationIno)
+  })) {
+    fail('Private audit snapshot workspace changed before copy', 'UNSAFE_TEMP');
+  }
   await snapshot(
     destinationRoot,
     { dev: BigInt(expectedDev), ino: BigInt(expectedIno) },

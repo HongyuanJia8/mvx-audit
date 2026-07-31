@@ -1,4 +1,3 @@
-import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { auditExtension } from './analyzer.js';
@@ -10,7 +9,8 @@ import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
 import { applyDispositionPolicies, loadDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
 import { assertOptionsObject } from './options.js';
 import {
-  createPrivateWorkspace, resolvePrivateWorkspaceParent
+  assertPrivateWorkspace, createPrivateWorkspace, removePrivateWorkspace,
+  resolvePrivateWorkspaceParent
 } from './private-workspace.js';
 
 function ownDataProperty(value, key) {
@@ -87,7 +87,7 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       changedMessage: 'Temporary directory changed during resolution'
     }
   );
-  const workspace = await createPrivateWorkspace(
+  const workspaceRecord = await createPrivateWorkspace(
     temporaryParent,
     'mvx-packed-audit-',
     {
@@ -95,6 +95,7 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       cleanupMessage: 'Temporary workspace cleanup failed during creation'
     }
   );
+  const workspace = workspaceRecord.path;
   const workspaceAliases = [
     workspace,
     path.join(requestedTemporaryParent, path.basename(workspace))
@@ -103,6 +104,9 @@ export async function auditExtensionArchive(inputPath, options = {}) {
   let failure;
   let failed = false;
   try {
+    await assertPrivateWorkspace(workspaceRecord, {
+      changedMessage: 'Temporary workspace changed before packed audit'
+    });
     const extracted = path.join(workspace, 'extension');
     const archive = await unpackExtensionArchive(inputPath, extracted, {
       limits: options.archiveLimits,
@@ -114,6 +118,9 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       _verificationExpectedArchiveSha256: verificationExpectedArchiveSha256,
       _verificationExpectedExtensionId: verificationExpectedExtensionId,
       _verificationRequireValidSignature: verificationRequireValidSignature
+    });
+    await assertPrivateWorkspace(workspaceRecord, {
+      changedMessage: 'Temporary workspace changed after archive extraction'
     });
     const audit = await auditExtension(extracted, {
       limits: options.limits,
@@ -184,7 +191,10 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     failure = error;
   }
   try {
-    await rm(workspace, { recursive: true, force: true });
+    await removePrivateWorkspace(workspaceRecord, {
+      changedMessage: 'Temporary workspace changed before cleanup',
+      cleanupMessage: 'Temporary workspace cleanup failed'
+    });
   } catch (error) {
     const cleanupFailure = sanitizeTemporaryError(error, workspaceAliases);
     const sanitizedFailure = failed

@@ -17,7 +17,8 @@ import {
 import { runCli } from '../src/cli.js';
 import { auditExtensionArchive } from '../src/packed-audit.js';
 import {
-  createPrivateWorkspace, resolvePrivateWorkspaceParent
+  assertPrivateWorkspace, createPrivateWorkspace, removePrivateWorkspace,
+  resolvePrivateWorkspaceParent
 } from '../src/private-workspace.js';
 import { makeSignedCrx3, makeZip } from '../support/archive-fixture.js';
 import { captureStreams, writeExtension } from '../support/helpers.js';
@@ -705,6 +706,35 @@ test('private workspace creation rejects a redirected validated parent', async (
     (error) => error.code === 'UNSAFE_TEMP'
   );
   assert.deepEqual(await readdir(redirected), []);
+});
+
+test('private workspace handoffs reject a replaced workspace path', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-workspace-handoff-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const validated = await resolvePrivateWorkspaceParent(root, {
+    missingMessage: 'missing',
+    unsafeMessage: 'unsafe',
+    changedMessage: 'changed'
+  });
+  const workspace = await createPrivateWorkspace(validated, 'workspace-', {
+    changedMessage: 'changed',
+    cleanupMessage: 'cleanup failed'
+  });
+  const parked = `${workspace.path}.parked`;
+  await rename(workspace.path, parked);
+  await mkdir(workspace.path);
+  await assert.rejects(
+    () => assertPrivateWorkspace(workspace, { changedMessage: 'changed' }),
+    (error) => error.code === 'UNSAFE_TEMP'
+  );
+  await assert.rejects(
+    () => removePrivateWorkspace(workspace, {
+      changedMessage: 'changed',
+      cleanupMessage: 'cleanup failed'
+    }),
+    (error) => error.code === 'UNSAFE_TEMP'
+  );
+  assert.deepEqual(await readdir(workspace.path), []);
 });
 
 test('audit verification replays exact rule-pack and disposition-policy provenance', async (t) => {

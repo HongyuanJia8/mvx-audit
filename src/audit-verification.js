@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { fork } from 'node:child_process';
 import {
-  lstat, realpath, rm
+  lstat, realpath
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +13,8 @@ import { normalizeScanLimits } from './io.js';
 import { assertOptionsObject } from './options.js';
 import { auditExtensionArchive } from './packed-audit.js';
 import {
-  createPrivateWorkspace, resolvePrivateWorkspaceParent
+  assertPrivateWorkspace, createPrivateWorkspace, removePrivateWorkspace,
+  resolvePrivateWorkspaceParent
 } from './private-workspace.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
@@ -481,14 +482,22 @@ const SNAPSHOT_WORKER = fileURLToPath(
   new URL('./directory-snapshot-worker.js', import.meta.url)
 );
 
-async function copyAuditTree(sourceRoot, destinationRoot, requestedLimits, rootStat) {
+async function copyAuditTree(
+  sourceRoot,
+  destinationRoot,
+  requestedLimits,
+  rootStat,
+  workspace
+) {
   const limits = normalizeScanLimits(requestedLimits ?? {});
   await new Promise((resolve, reject) => {
     const child = fork(SNAPSHOT_WORKER, [
       destinationRoot,
       rootStat.dev.toString(),
       rootStat.ino.toString(),
-      JSON.stringify(limits)
+      JSON.stringify(limits),
+      workspace.stat.dev.toString(),
+      workspace.stat.ino.toString()
     ], {
       cwd: sourceRoot,
       execArgv: [],
@@ -615,16 +624,24 @@ async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
       forbiddenRoot: sourceRoot
     }
   );
+  const workspacePath = workspace.path;
   try {
-    const snapshot = path.join(workspace, 'extension');
-    await copyAuditTree(sourceRoot, snapshot, limits, rootStat);
+    const snapshot = path.join(workspacePath, 'extension');
+    await copyAuditTree(sourceRoot, snapshot, limits, rootStat, workspace);
+    await assertPrivateWorkspace(workspace, {
+      changedMessage: 'Private audit snapshot workspace changed before analysis'
+    });
     return { input: snapshot, location: sourceRoot, workspace };
   } catch (error) {
-    const failure = sanitizeSnapshotError(error, workspace);
+    const failure = sanitizeSnapshotError(error, workspacePath);
     try {
-      await rm(workspace, { recursive: true, force: true });
+      await removePrivateWorkspace(workspace, {
+        changedMessage: 'Private audit snapshot workspace changed before cleanup',
+        cleanupMessage: 'Private audit snapshot workspace cleanup failed',
+        cleanupCode: 'AUDIT_SNAPSHOT_CLEANUP_FAILED'
+      });
     } catch (cleanupError) {
-      const cleanup = sanitizeSnapshotError(cleanupError, workspace);
+      const cleanup = sanitizeSnapshotError(cleanupError, workspacePath);
       throw new MvxError(
         `Private audit snapshot cleanup failed after ${failure.code ?? 'copy failure'}: ${cleanup.message}`,
         { code: 'AUDIT_SNAPSHOT_CLEANUP_FAILED' }
@@ -643,14 +660,21 @@ async function auditDirectorySnapshot(inputPath, auditOptions, temporaryDirector
   let actual;
   let failure;
   try {
+    await assertPrivateWorkspace(snapshot.workspace, {
+      changedMessage: 'Private audit snapshot workspace changed before analysis'
+    });
     actual = await auditExtension(snapshot.input, auditOptions);
   } catch (error) {
-    failure = sanitizeSnapshotError(error, snapshot.workspace);
+    failure = sanitizeSnapshotError(error, snapshot.workspace.path);
   }
   try {
-    await rm(snapshot.workspace, { recursive: true, force: true });
+    await removePrivateWorkspace(snapshot.workspace, {
+      changedMessage: 'Private audit snapshot workspace changed before cleanup',
+      cleanupMessage: 'Private audit snapshot workspace cleanup failed',
+      cleanupCode: 'AUDIT_SNAPSHOT_CLEANUP_FAILED'
+    });
   } catch (error) {
-    const cleanup = sanitizeSnapshotError(error, snapshot.workspace);
+    const cleanup = sanitizeSnapshotError(error, snapshot.workspace.path);
     throw new MvxError(
       `Private audit snapshot cleanup failed${failure ? ` after ${failure.code ?? 'analysis failure'}` : ''}: ${cleanup.message}`,
       { code: 'AUDIT_SNAPSHOT_CLEANUP_FAILED' }
