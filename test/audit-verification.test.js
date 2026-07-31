@@ -58,6 +58,7 @@ test('audit verification reproduces a path-independent directory report and exte
   assert.equal(verification.inputType, 'directory');
   assert.equal(verification.checks.independent.reportSha256, true);
   assert.equal(verification.checks.independent.packageSha256, true);
+  assert.equal(verification.checks.recordedSignatureRequirement, null);
   assert.equal(verification.checks.locationMetadataMatchesInput, false);
   assert.equal(verification.caveats.length, 1);
   assert.deepEqual(await readdir(temporaryDirectory), []);
@@ -131,6 +132,7 @@ test('audit verification binds packed bytes, signature identity, and CLI acknowl
   assert.equal(verification.identities.artifactSha256, archiveSha256);
   assert.equal(verification.identities.extensionId, signed.extensionId);
   assert.equal(verification.checks.independent.validSignature, true);
+  assert.equal(verification.checks.recordedSignatureRequirement, true);
   assert.deepEqual(await readdir(temporaryDirectory), []);
 
   const defaultAudit = await auditExtensionArchive(first, { temporaryDirectory });
@@ -143,6 +145,15 @@ test('audit verification binds packed bytes, signature identity, and CLI acknowl
     expectedArchiveSha256: archiveSha256,
     expectedExtensionId: signed.extensionId
   })).valid, true);
+  const legacyAudit = structuredClone(defaultAudit);
+  delete legacyAudit.artifact.identityPolicy.requireValidSignature;
+  const legacyReport = path.join(root, 'legacy-packed-report.json');
+  await writeFile(legacyReport, `${JSON.stringify(legacyAudit)}\n`);
+  const legacyVerification = await verifyAuditReport(legacyReport, relocated, {
+    temporaryDirectory
+  });
+  assert.equal(legacyVerification.checks.recordedSignatureRequirement, null);
+  assert.match(legacyVerification.caveats.at(-1), /legacy packed report/);
   const strictOnlyAudit = await auditExtensionArchive(first, {
     temporaryDirectory,
     requireValidSignature: true
@@ -182,6 +193,25 @@ test('audit verification binds packed bytes, signature identity, and CLI acknowl
       expectedArchiveSha256: zipAudit.artifact.sha256
     }),
     (error) => error.code === 'AUDIT_IDENTITY_MISMATCH'
+  );
+  const otherZip = path.join(root, 'other.zip');
+  await writeFile(otherZip, makeZip([{
+    name: 'manifest.json',
+    content: '{"manifest_version":3,"name":"Other archive","version":"1.0.0"}'
+  }]));
+  const otherZipSha256 = sha256(await readFile(otherZip));
+  const pinnedZipAudit = await auditExtensionArchive(zipPath, {
+    temporaryDirectory,
+    expectedArchiveSha256: zipAudit.artifact.sha256
+  });
+  const pinnedZipReport = path.join(root, 'pinned-zip-report.json');
+  await writeFile(pinnedZipReport, `${JSON.stringify(pinnedZipAudit)}\n`);
+  await assert.rejects(
+    () => verifyAuditReport(pinnedZipReport, otherZip, {
+      temporaryDirectory,
+      expectedArchiveSha256: otherZipSha256
+    }),
+    (error) => error.code === 'ARCHIVE_IDENTITY_MISMATCH'
   );
   const invalidSigned = makeSignedCrx3([
     { name: 'manifest.json', content: '{' }
@@ -256,6 +286,23 @@ test('audit verification binds packed bytes, signature identity, and CLI acknowl
     assert.equal(await runCli(argv, rejected.streams), 2);
     assert.match(rejected.output().stderr, /INVALID_ARGUMENT/);
   }
+  for (const unrelated of [
+    ['--catalog', 'catalog.json'],
+    ['--artifact', '0'],
+    ['--quarantine', 'samples'],
+    ['--destination', 'output'],
+    ['--limit', '1'],
+    ['--max-bytes', '1'],
+    ['--max-total-bytes', '1'],
+    ['--label', 'fixture'],
+    ['--threshold', 'high']
+  ]) {
+    const rejected = captureStreams();
+    assert.equal(await runCli([
+      'audit', 'verify', reportPath, relocated, '--acknowledge-risk', ...unrelated
+    ], rejected.streams), 2);
+    assert.match(rejected.output().stderr, /INVALID_ARGUMENT/);
+  }
 });
 
 test('audit verification rejects ambiguous reports and hostile options before analysis', async (t) => {
@@ -293,6 +340,35 @@ test('audit verification rejects ambiguous reports and hostile options before an
   ], injectionCli.streams), 2);
   assert.doesNotMatch(injectionCli.output().stderr, /\u001b/);
   assert.ok(injectionCli.output().stderr.length < 200);
+  const malformedEscape = path.join(root, 'malformed-escape.json');
+  await writeFile(malformedEscape, Buffer.from('{"field":"\u001b"}'));
+  const malformedEscapeCli = captureStreams();
+  assert.equal(await runCli([
+    'audit', 'verify', malformedEscape, extension, '--acknowledge-risk'
+  ], malformedEscapeCli.streams), 2);
+  assert.doesNotMatch(malformedEscapeCli.output().stderr, /\u001b/);
+  assert.match(malformedEscapeCli.output().stderr, /Audit report is not valid JSON/);
+
+  const arrayReport = path.join(root, 'array-report.json');
+  await writeFile(arrayReport, '[]');
+  const originalArrayMap = Object.getOwnPropertyDescriptor(Array.prototype, 'map');
+  let arrayPrototypeTrapExecuted = false;
+  Object.defineProperty(Array.prototype, 'map', {
+    configurable: true,
+    get() {
+      arrayPrototypeTrapExecuted = true;
+      throw new Error('must not execute');
+    }
+  });
+  try {
+    await assert.rejects(
+      () => verifyAuditReport(arrayReport, extension),
+      (error) => error.code === 'INVALID_AUDIT_REPORT'
+    );
+  } finally {
+    Object.defineProperty(Array.prototype, 'map', originalArrayMap);
+  }
+  assert.equal(arrayPrototypeTrapExecuted, false);
 
   const realReport = path.join(root, 'real-report.json');
   await writeFile(realReport, `${JSON.stringify(report)}\n`);
@@ -350,6 +426,7 @@ test('audit verification rejects ambiguous reports and hostile options before an
     { temporaryDirectory: '' },
     { reportLimits: { unknown: 1 } },
     { reportLimits: { maxReportBytes: 0 } },
+    { reportLimits: { maxReportValues: 0 } },
     { rulePacks: null },
     { rulePacks: new Proxy([], {}) },
     { rulePacks: accessorPaths },
@@ -456,6 +533,29 @@ test('audit verification rejects ambiguous reports and hostile options before an
     childScript
   ], { timeout: 10_000, maxBuffer: 1_024 });
   assert.equal(child.stdout, 'AUDIT_REPORT_LIMIT');
+
+  const shallow = path.join(root, 'shallow-wide.json');
+  const shallowMembers = Array.from(
+    { length: 260_000 },
+    (_, index) => `"key${index}":0`
+  ).join(',');
+  await writeFile(shallow, `{${shallowMembers}}`);
+  const shallowChildScript = `
+    import { verifyAuditReport } from ${JSON.stringify(moduleUrl)};
+    try {
+      await verifyAuditReport(${JSON.stringify(shallow)}, ${JSON.stringify(extension)});
+      process.stdout.write('unexpected-success');
+    } catch (error) {
+      process.stdout.write(String(error.code));
+    }
+  `;
+  const shallowChild = await execFileAsync(process.execPath, [
+    '--max-old-space-size=32',
+    '--input-type=module',
+    '--eval',
+    shallowChildScript
+  ], { timeout: 10_000, maxBuffer: 1_024 });
+  assert.equal(shallowChild.stdout, 'AUDIT_REPORT_LIMIT');
 });
 
 test('audit verification replays exact rule-pack and disposition-policy provenance', async (t) => {

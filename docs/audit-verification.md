@@ -29,8 +29,12 @@ review data makes verification fail.
 The CLI requires `--acknowledge-risk` for every verification. An untrusted
 report selects the directory or packed verification path. Directory input is
 copied through the analyzer's file, entry, depth, per-file, and total-byte
-limits into a private snapshot before analysis. Links are copied as links and
-never followed; special filesystem entries fail closed. Packed verification
+limits into a private snapshot before analysis. A dedicated snapshot process
+anchors traversal to its current directory, validates device/inode identity
+whenever it enters or returns from a directory, and opens regular files with
+`O_NOFOLLOW`. Concurrent path replacement therefore cannot redirect traversal:
+links are copied as links, directory races fail closed, and special filesystem
+entries are rejected. Packed verification
 may defensively extract live extension content into a separate private
 temporary workspace. Both workspaces are cleanup-enforced. Library callers
 make the same acknowledgement operationally.
@@ -52,13 +56,14 @@ matches the retained report:
   required; and
 - all caller-supplied independent identities.
 
-The report file is read as a bounded, non-symlinked regular file. The default
-limit is 25,000,000 bytes. A string-level nesting scan runs before
-`JSON.parse`, so excessive depth cannot first consume an unbounded parser
-stack or heap. Invalid UTF-8, invalid JSON, duplicate object keys, more than
-128 JSON nesting levels, missing schema-v1 fields, and unsafe control or
-bidirectional characters in location fields are rejected. Parsed records are
-converted to own-data, null-prototype objects before any schema or dispatch
+The report file is read as a bounded, non-symlinked regular file. Defaults are
+25,000,000 bytes and 500,000 JSON value tokens (including object keys and
+containers). A string-level token/depth scan runs before `JSON.parse`, so a
+deep or very wide report cannot first consume an unbounded parser stack or
+heap. Invalid UTF-8, invalid JSON, duplicate object keys, more than 128 JSON
+nesting levels, missing schema-v1 fields, and unsafe control or bidirectional
+characters in location fields are rejected. Parsed records and arrays are
+converted to own-data, null-prototype containers before any schema or dispatch
 read, preventing ambient prototype pollution from selecting a verification
 path or executing an inherited getter.
 
@@ -69,6 +74,12 @@ metadata, so a byte-identical package copied elsewhere remains verifiable.
 match. No other report field is excluded. Supply `expectedReportSha256` when
 the exact original JSON bytes, including these paths and JSON formatting, must
 also be pinned.
+
+Packed schema-v1 reports produced before `requireValidSignature` was added to
+the identity-policy record remain verifiable. The missing field is normalized
+to its historical default (`false`), while
+`checks.recordedSignatureRequirement` is `null` and the result carries an
+explicit caveat. A present field is always compared exactly.
 
 ## Independent trust
 
@@ -121,6 +132,7 @@ const verification = await verifyAuditReport(
 
 Optional resource controls are `reportLimits`, `limits`, `rulePackLimits`,
 `dispositionPolicyLimits`, `archiveLimits`, and `temporaryDirectory`.
-`reportLimits.maxReportBytes` is the only report-reader limit. Options are
-strict plain data: unknown fields, proxies, accessors, symbols, malformed
-digests, and malformed nested limit records are rejected.
+Report-reader controls are `reportLimits.maxReportBytes` and
+`reportLimits.maxReportValues`. Options are strict plain data: unknown fields,
+proxies, accessors, symbols, malformed digests, and malformed nested limit
+records are rejected.

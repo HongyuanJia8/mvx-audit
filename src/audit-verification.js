@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
+import { fork } from 'node:child_process';
 import {
-  chmod, lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, symlink, writeFile
+  chmod, lstat, mkdtemp, realpath, rm
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual, types as utilTypes } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { auditExtension } from './analyzer.js';
 import { MvxError } from './errors.js';
 import { normalizeScanLimits } from './io.js';
@@ -14,7 +16,8 @@ import { readBoundedRegularFile } from './safe-file.js';
 
 export const AUDIT_VERIFICATION_PROFILE = 'mvx-audit-verification-v1';
 export const DEFAULT_AUDIT_VERIFICATION_LIMITS = Object.freeze({
-  maxReportBytes: 25_000_000
+  maxReportBytes: 25_000_000,
+  maxReportValues: 500_000
 });
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -165,14 +168,17 @@ function snapshotOptions(options) {
   if (reportLimitKeys.some((key) => !Object.hasOwn(DEFAULT_AUDIT_VERIFICATION_LIMITS, key))) {
     throw new MvxError('Unknown audit verification report limit', { code: 'INVALID_ARGUMENT' });
   }
-  const maxReportBytes = values.reportLimits?.maxReportBytes
-    ?? DEFAULT_AUDIT_VERIFICATION_LIMITS.maxReportBytes;
-  if (!Number.isSafeInteger(maxReportBytes) || maxReportBytes <= 0) {
-    throw new MvxError('maxReportBytes must be a positive safe integer', {
-      code: 'INVALID_ARGUMENT'
-    });
+  const normalizedReportLimits = Object.create(null);
+  for (const [key, fallback] of Object.entries(DEFAULT_AUDIT_VERIFICATION_LIMITS)) {
+    const value = values.reportLimits?.[key] ?? fallback;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new MvxError(`${key} must be a positive safe integer`, {
+        code: 'INVALID_ARGUMENT'
+      });
+    }
+    normalizedReportLimits[key] = value;
   }
-  values.reportLimits = Object.freeze(Object.assign(Object.create(null), { maxReportBytes }));
+  values.reportLimits = Object.freeze(normalizedReportLimits);
   return Object.freeze(values);
 }
 
@@ -238,10 +244,21 @@ function rejectDuplicateKeys(source) {
   value();
 }
 
-function assertJsonDepth(source) {
+function assertJsonStructure(source, limits) {
   let depth = 0;
   let inString = false;
   let escaped = false;
+  let primitive = false;
+  let values = 0;
+  const countValue = () => {
+    values += 1;
+    if (values > limits.maxReportValues) {
+      throw new MvxError(
+        `Audit report exceeds ${limits.maxReportValues} JSON values`,
+        { code: 'AUDIT_REPORT_LIMIT' }
+      );
+    }
+  };
   for (const character of source) {
     if (inString) {
       if (escaped) escaped = false;
@@ -250,10 +267,14 @@ function assertJsonDepth(source) {
       continue;
     }
     if (character === '"') {
+      countValue();
       inString = true;
+      primitive = false;
       continue;
     }
     if (character === '{' || character === '[') {
+      countValue();
+      primitive = false;
       depth += 1;
       if (depth > 128) {
         throw new MvxError('Audit report exceeds 128 JSON nesting levels', {
@@ -261,13 +282,39 @@ function assertJsonDepth(source) {
         });
       }
     } else if (character === '}' || character === ']') {
+      primitive = false;
       depth -= 1;
+    } else if (/[\s,:]/.test(character)) {
+      primitive = false;
+    } else if (!primitive) {
+      countValue();
+      primitive = true;
     }
   }
 }
 
 function normalizeData(value) {
-  if (Array.isArray(value)) return value.map((item) => normalizeData(item));
+  if (Array.isArray(value)) {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const length = descriptors.length.value;
+    const result = [];
+    Object.setPrototypeOf(result, null);
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+        throw new MvxError('Audit report arrays must contain only own data elements', {
+          code: 'INVALID_AUDIT_REPORT'
+        });
+      }
+      Object.defineProperty(result, String(index), {
+        value: normalizeData(descriptor.value),
+        configurable: true,
+        enumerable: true,
+        writable: true
+      });
+    }
+    return result;
+  }
   if (!value || typeof value !== 'object') return value;
   const result = Object.create(null);
   for (const key of Object.getOwnPropertyNames(value)) {
@@ -276,7 +323,7 @@ function normalizeData(value) {
   return result;
 }
 
-function parseReport(bytes) {
+function parseReport(bytes, limits) {
   let source;
   try {
     source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -286,12 +333,12 @@ function parseReport(bytes) {
       cause: error
     });
   }
-  assertJsonDepth(source);
+  assertJsonStructure(source, limits);
   let report;
   try {
     report = JSON.parse(source);
   } catch (error) {
-    throw new MvxError(`Audit report is not valid JSON: ${error.message}`, {
+    throw new MvxError('Audit report is not valid JSON', {
       code: 'INVALID_AUDIT_REPORT',
       cause: error
     });
@@ -409,63 +456,46 @@ async function realTemporaryParent(input) {
   return realpath(absolute);
 }
 
-async function copyAuditTree(sourceRoot, destinationRoot, requestedLimits) {
+const SNAPSHOT_WORKER = fileURLToPath(
+  new URL('./directory-snapshot-worker.js', import.meta.url)
+);
+
+async function copyAuditTree(sourceRoot, destinationRoot, requestedLimits, rootStat) {
   const limits = normalizeScanLimits(requestedLimits ?? {});
-  const state = { entries: 0, files: 0, bytes: 0 };
-  async function visit(source, destination, depth) {
-    if (depth > limits.maxDepth) {
-      throw new MvxError(`Extension directory depth exceeds ${limits.maxDepth}`, {
-        code: 'SCAN_LIMIT'
-      });
-    }
-    await mkdir(destination, { mode: 0o700 });
-    const entries = await readdir(source, { withFileTypes: true });
-    entries.sort((left, right) => compareText(left.name, right.name));
-    for (const entry of entries) {
-      state.entries += 1;
-      if (state.entries > limits.maxEntries) {
-        throw new MvxError(`Extension contains more than ${limits.maxEntries} entries`, {
-          code: 'SCAN_LIMIT'
-        });
+  await new Promise((resolve, reject) => {
+    const child = fork(SNAPSHOT_WORKER, [
+      destinationRoot,
+      rootStat.dev.toString(),
+      rootStat.ino.toString(),
+      JSON.stringify(limits)
+    ], {
+      cwd: sourceRoot,
+      execArgv: [],
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    });
+    let response;
+    child.once('message', (message) => {
+      response = message;
+    });
+    child.once('error', (error) => {
+      reject(new MvxError('Cannot start the private audit snapshot worker', {
+        code: 'AUDIT_SNAPSHOT_FAILED',
+        cause: error
+      }));
+    });
+    child.once('close', (code) => {
+      if (response?.ok === true && code === 0) {
+        resolve();
+        return;
       }
-      const sourcePath = path.join(source, entry.name);
-      const destinationPath = path.join(destination, entry.name);
-      const stat = await lstat(sourcePath);
-      if (stat.isSymbolicLink()) {
-        const target = await readlink(sourcePath, { encoding: 'buffer' });
-        await symlink(target, destinationPath);
-      } else if (stat.isDirectory()) {
-        await visit(sourcePath, destinationPath, depth + 1);
-      } else if (stat.isFile()) {
-        state.files += 1;
-        if (state.files > limits.maxFiles) {
-          throw new MvxError(`Extension contains more than ${limits.maxFiles} files`, {
-            code: 'SCAN_LIMIT'
-          });
-        }
-        const bytes = await readBoundedRegularFile(sourcePath, {
-          maxBytes: limits.maxPackageFileBytes,
-          label: 'Audit snapshot file',
-          limitCode: 'SCAN_LIMIT',
-          missingCode: 'INVALID_INPUT',
-          unsafeCode: 'UNSAFE_INPUT'
-        });
-        state.bytes += bytes.length;
-        if (state.bytes > limits.maxPackageBytes) {
-          throw new MvxError(`Package content exceeds ${limits.maxPackageBytes} bytes`, {
-            code: 'SCAN_LIMIT'
-          });
-        }
-        await writeFile(destinationPath, bytes, { flag: 'wx', mode: 0o400 });
-      } else {
-        throw new MvxError(
-          'Audit verification cannot snapshot special filesystem entries safely',
-          { code: 'UNSAFE_INPUT' }
-        );
-      }
-    }
-  }
-  await visit(sourceRoot, destinationRoot, 0);
+      reject(new MvxError(
+        typeof response?.message === 'string'
+          ? response.message
+          : 'Private audit snapshot worker failed',
+        { code: typeof response?.code === 'string' ? response.code : 'AUDIT_SNAPSHOT_FAILED' }
+      ));
+    });
+  });
 }
 
 async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
@@ -509,11 +539,17 @@ async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
     realpath(root),
     realTemporaryParent(temporaryDirectory)
   ]);
+  const rootStat = await lstat(sourceRoot, { bigint: true });
+  if (!rootStat.isDirectory()) {
+    throw new MvxError('The extension root changed before it could be snapshotted', {
+      code: 'UNSAFE_INPUT'
+    });
+  }
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-audit-input-'));
   try {
     await chmod(workspace, 0o700);
     const snapshot = path.join(workspace, 'extension');
-    await copyAuditTree(sourceRoot, snapshot, limits);
+    await copyAuditTree(sourceRoot, snapshot, limits, rootStat);
     return { input: snapshot, location: sourceRoot, workspace };
   } catch (error) {
     const failure = sanitizeSnapshotError(error, workspace);
@@ -556,25 +592,6 @@ async function auditDirectorySnapshot(inputPath, auditOptions, temporaryDirector
   return { actual, location: snapshot.location };
 }
 
-function mapVerificationPreconditionError(error, stable) {
-  if (error?.code === 'ARCHIVE_IDENTITY_MISMATCH'
-    && (stable.expectedArchiveSha256 !== undefined
-      || stable.expectedExtensionId !== undefined)) {
-    return new MvxError('Packed input does not match an independently expected identity', {
-      code: 'AUDIT_IDENTITY_MISMATCH'
-    });
-  }
-  if ((error?.code === 'ARCHIVE_IDENTITY_UNVERIFIABLE'
-      && stable.expectedExtensionId !== undefined)
-    || (error?.code === 'CRX_SIGNATURE_REQUIRED'
-      && stable.requireValidSignature === true)) {
-    return new MvxError('Packed input does not have the independently required authenticity', {
-      code: 'AUDIT_IDENTITY_UNVERIFIABLE'
-    });
-  }
-  return error;
-}
-
 export async function verifyAuditReport(reportPath, inputPath, options = {}) {
   for (const [label, value] of [['reportPath', reportPath], ['inputPath', inputPath]]) {
     if (typeof value !== 'string' || value.length === 0) {
@@ -591,8 +608,15 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
   });
   const reportSha256 = sha256(reportBytes);
   assertExpected(reportSha256, stable.expectedReportSha256, 'Audit report SHA-256');
-  const report = parseReport(reportBytes);
+  const report = parseReport(reportBytes, stable.reportLimits);
   const packed = report.artifact !== undefined;
+  const legacySignaturePolicy = packed
+    && report.artifact.identityPolicy
+    && typeof report.artifact.identityPolicy === 'object'
+    && !Object.hasOwn(report.artifact.identityPolicy, 'requireValidSignature');
+  if (legacySignaturePolicy) {
+    report.artifact.identityPolicy.requireValidSignature = false;
+  }
   const dispositionAt = report.dispositionEvaluation?.evaluatedAt;
   const auditOptions = Object.assign(Object.create(null), {
     archiveLimits: stable.archiveLimits,
@@ -606,23 +630,19 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
   let actual;
   let inputLocation;
   if (packed) {
-    try {
-      actual = await auditExtensionArchive(inputPath, Object.assign(Object.create(null), {
-        ...auditOptions,
-        temporaryDirectory: stable.temporaryDirectory,
-        requireValidSignature:
-          report.artifact.identityPolicy?.requireValidSignature ?? false,
-        expectedArchiveSha256:
-          report.artifact.identityPolicy?.expectedArchiveSha256 ?? undefined,
-        expectedExtensionId:
-          report.artifact.identityPolicy?.expectedExtensionId ?? undefined,
-        _verificationExpectedArchiveSha256: stable.expectedArchiveSha256,
-        _verificationExpectedExtensionId: stable.expectedExtensionId,
-        _verificationRequireValidSignature: stable.requireValidSignature
-      }));
-    } catch (error) {
-      throw mapVerificationPreconditionError(error, stable);
-    }
+    actual = await auditExtensionArchive(inputPath, Object.assign(Object.create(null), {
+      ...auditOptions,
+      temporaryDirectory: stable.temporaryDirectory,
+      requireValidSignature:
+        report.artifact.identityPolicy?.requireValidSignature ?? false,
+      expectedArchiveSha256:
+        report.artifact.identityPolicy?.expectedArchiveSha256 ?? undefined,
+      expectedExtensionId:
+        report.artifact.identityPolicy?.expectedExtensionId ?? undefined,
+      _verificationExpectedArchiveSha256: stable.expectedArchiveSha256,
+      _verificationExpectedExtensionId: stable.expectedExtensionId,
+      _verificationRequireValidSignature: stable.requireValidSignature
+    }));
     inputLocation = actual.target.root;
   } else {
     if (stable.expectedArchiveSha256 !== undefined
@@ -684,12 +704,18 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
       rulePackProvenance: true,
       dispositionProvenance: true,
       locationMetadataMatchesInput,
+      recordedSignatureRequirement: packed
+        ? (legacySignaturePolicy ? null : true)
+        : null,
       independent: independentChecks
     },
     caveats: [
       'The target.root and packed artifact.path fields are local transport metadata and are excluded from deterministic comparison.',
       ...(Object.values(independentChecks).every((value) => value === null) ? [
         'The report is reproducible from the supplied inputs, but no independently trusted identity was supplied.'
+      ] : []),
+      ...(legacySignaturePolicy ? [
+        'This legacy packed report did not record whether a valid signature was required; verification replayed the historical default (false).'
       ] : [])
     ]
   };

@@ -216,6 +216,31 @@ export async function runCli(argv, streams = process) {
 
     if (command === 'audit') {
       if (auditVerificationRequested) {
+        const allowedVerificationOptions = new Set([
+          'acknowledgeRisk',
+          'dispositionAt',
+          'dispositionPolicies',
+          'expectedAnalysisSha256',
+          'expectedArchiveSha256',
+          'expectedExtensionId',
+          'expectedPackageSha256',
+          'expectedReportSha256',
+          'failOn',
+          'failOnUnreviewed',
+          'format',
+          'output',
+          'requireValidSignature',
+          'rulePacks'
+        ]);
+        const unsupported = Object.keys(options)
+          .filter((key) => !allowedVerificationOptions.has(key))
+          .sort();
+        if (unsupported.length > 0) {
+          throw new MvxError(
+            `Unsupported audit verify option(s): ${unsupported.join(', ')}`,
+            { code: 'INVALID_ARGUMENT' }
+          );
+        }
         if (args.length !== 3) {
           throw new MvxError('audit verify requires report and extension/archive paths', {
             code: 'INVALID_ARGUMENT'

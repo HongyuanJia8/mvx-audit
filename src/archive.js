@@ -281,25 +281,44 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
     unsafeCode: 'UNSAFE_ARCHIVE'
   });
   const archiveSha256 = createHash('sha256').update(buffer).digest('hex');
-  if ([options.expectedArchiveSha256, verificationExpectedArchiveSha256]
-    .some((expected) => expected !== undefined && archiveSha256 !== expected)) {
+  if (verificationExpectedArchiveSha256 !== undefined
+    && archiveSha256 !== verificationExpectedArchiveSha256) {
+    throw new MvxError('Archive SHA-256 does not match its independently expected identity', {
+      code: 'AUDIT_IDENTITY_MISMATCH'
+    });
+  }
+  if (options.expectedArchiveSha256 !== undefined
+    && archiveSha256 !== options.expectedArchiveSha256) {
     throw new MvxError('Archive SHA-256 does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
   }
   const { format, version, offset: zipOffset } = archiveZipOffset(buffer, allowZip);
   const authenticity = verifyCrxAuthenticity(buffer, { format, version, zipOffset }, limits);
-  if ((options.expectedExtensionId || verificationExpectedExtensionId)
+  if (verificationExpectedExtensionId !== undefined
     && authenticity.status !== 'verified') {
+    throw new MvxError(
+      'The independently expected extension ID cannot be verified without a valid CRX signature',
+      { code: 'AUDIT_IDENTITY_UNVERIFIABLE' }
+    );
+  }
+  if (options.expectedExtensionId && authenticity.status !== 'verified') {
     throw new MvxError('Expected extension ID cannot be verified without a valid CRX signature', {
       code: 'ARCHIVE_IDENTITY_UNVERIFIABLE'
     });
   }
-  const verifiedExtensionIdExpectations = [
+  if (authenticity.status === 'verified'
+    && verificationExpectedExtensionId !== undefined
+    && authenticity.extensionId !== verificationExpectedExtensionId) {
+    throw new MvxError(
+      'Verified CRX extension ID does not match its independently expected identity',
+      { code: 'AUDIT_IDENTITY_MISMATCH' }
+    );
+  }
+  const recordedExtensionIdExpectations = [
     options.expectedExtensionId,
-    verificationExpectedExtensionId,
     expectedExtensionIdIfVerified
   ].filter((value) => value !== undefined);
   if (authenticity.status === 'verified'
-    && verifiedExtensionIdExpectations.some(
+    && recordedExtensionIdExpectations.some(
       (expected) => authenticity.extensionId !== expected
     )) {
     throw new MvxError('Verified CRX extension ID does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
@@ -310,8 +329,12 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
       code: 'ARCHIVE_IDENTITY_MISMATCH'
     });
   }
-  if ((options.requireValidSignature || verificationRequireValidSignature)
-    && authenticity.status !== 'verified') {
+  if (verificationRequireValidSignature && authenticity.status !== 'verified') {
+    throw new MvxError('The packed input does not have independently required authenticity', {
+      code: 'AUDIT_IDENTITY_UNVERIFIABLE'
+    });
+  }
+  if (options.requireValidSignature && authenticity.status !== 'verified') {
     const reason = authenticity.error ?? authenticity.status;
     throw new MvxError(`A valid CRX signature is required: ${reason}`, { code: 'CRX_SIGNATURE_REQUIRED' });
   }

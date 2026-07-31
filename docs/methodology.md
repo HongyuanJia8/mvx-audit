@@ -196,6 +196,9 @@ Successful results include the `mvx-archive-identity-v1` policy record with the
 effective `requireValidSignature` setting, exact expected values, and match
 state. JSON retains it directly, text renders a matched summary, and SARIF
 carries it under the packed artifact properties.
+Offline verification accepts older schema-v1 packed reports that lack the
+newer `requireValidSignature` record by replaying the historical `false`
+default, but marks the recorded-signature check unknown and emits a caveat.
 The policy makes an external assertion reproducible; it cannot make an
 untrusted, stale, or incorrectly attributed assertion trustworthy.
 
