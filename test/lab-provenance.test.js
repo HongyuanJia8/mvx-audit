@@ -1,0 +1,401 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import {
+  access, chmod, mkdtemp, readFile, rm, symlink, writeFile
+} from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { auditExtension } from '../src/analyzer.js';
+import { runCli } from '../src/cli.js';
+import {
+  LAB_EVALUATION_PROFILE, LAB_EVIDENCE_PROFILE, LAB_EXECUTION_PROFILE,
+  LAB_VERIFICATION_PROFILE, evaluateLabFiles, evaluateLabRun, labReportToText,
+  labVerificationToText, parseLabEvents, verifyLabReport
+} from '../src/lab.js';
+import { prepareLabInputSnapshot, removeLabInputSnapshot } from '../src/lab-snapshot.js';
+import { VERSION } from '../src/version.js';
+import { captureStreams, writeExtension } from '../support/helpers.js';
+
+const IMAGE_ID = `sha256:${'1'.repeat(64)}`;
+const AT = '2026-07-30T12:00:00.000Z';
+const DONE = '2026-07-30T12:00:01.000Z';
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function run(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
+
+async function evidenceFixture(t) {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-lab-provenance-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const extension = await writeExtension(path.join(temp, 'extension'), {
+    manifest_version: 3,
+    name: 'Lab provenance fixture',
+    version: '1.0.0'
+  }, { 'worker.js': 'chrome.runtime.onInstalled.addListener(() => {});\n' });
+  const scenarioDocument = {
+    schemaVersion: 1,
+    id: 'provenance-test',
+    targetUrl: 'https://accounts.example.test/login',
+    canaries: { sessionCookie: 'mvx-session-provenance-123456' },
+    durationMs: 1_000
+  };
+  const scenarioSource = `${JSON.stringify(scenarioDocument, null, 2)}\n`;
+  const scenario = path.join(temp, 'scenario.json');
+  await writeFile(scenario, scenarioSource);
+  const audit = await auditExtension(extension);
+  const seccompSha256 = sha256(await readFile(path.resolve('lab/seccomp-chromium.json')));
+  const events = [
+    {
+      schemaVersion: 1,
+      timestamp: AT,
+      type: 'lab.started',
+      data: {
+        profile: LAB_EXECUTION_PROFILE,
+        browser: 'Chromium 140.0.0.0',
+        imageId: IMAGE_ID,
+        imageReference: 'mvx-lab:test',
+        network: 'none',
+        durationMs: 1_000,
+        packageSha256: audit.package.sha256,
+        analysisSha256: audit.analysis.sha256,
+        scenarioSha256: sha256(scenarioSource),
+        seccompSha256,
+        toolVersion: VERSION
+      }
+    },
+    { schemaVersion: 1, timestamp: DONE, type: 'lab.completed', data: { extensionTargetsObserved: 1 } }
+  ];
+  const eventsSource = `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
+  const eventsPath = path.join(temp, 'events.jsonl');
+  await writeFile(eventsPath, eventsSource);
+  const report = await evaluateLabFiles(scenario, eventsPath);
+  const reportPath = path.join(temp, 'report.json');
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  return {
+    temp, extension, scenario, scenarioSource, events, eventsPath, eventsSource, report, reportPath, audit
+  };
+}
+
+test('file evaluation binds exact scenario, event, execution, and deterministic result identities', async (t) => {
+  const fixture = await evidenceFixture(t);
+  assert.equal(JSON.parse(await readFile(path.resolve('package.json'), 'utf8')).version, VERSION);
+  const { report } = fixture;
+  assert.equal(report.evidenceProvenance.profile, LAB_EVIDENCE_PROFILE);
+  assert.equal(report.evidenceProvenance.scenario.sha256, sha256(fixture.scenarioSource));
+  assert.equal(report.evidenceProvenance.events.sha256, sha256(fixture.eventsSource));
+  assert.equal(report.evidenceProvenance.events.records, 2);
+  assert.equal(report.evidenceProvenance.evaluation.profile, LAB_EVALUATION_PROFILE);
+  assert.match(report.evidenceProvenance.evaluation.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(report.execution.profile, LAB_EXECUTION_PROFILE);
+  assert.equal(report.execution.extension.packageSha256, fixture.audit.package.sha256);
+  assert.equal(report.execution.container.imageId, IMAGE_ID);
+  assert.match(labReportToText(report), new RegExp(`Events SHA-256: ${sha256(fixture.eventsSource)}`));
+
+  const copiedScenario = path.join(fixture.temp, 'copied-scenario.json');
+  const copiedEvents = path.join(fixture.temp, 'copied-events.jsonl');
+  await writeFile(copiedScenario, fixture.scenarioSource);
+  await writeFile(copiedEvents, fixture.eventsSource);
+  assert.deepEqual(await evaluateLabFiles(copiedScenario, copiedEvents), report);
+});
+
+test('lab report verification recomputes all local identities and exposes image trust explicitly', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const verified = await verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { expectedImageId: IMAGE_ID }
+  );
+  assert.equal(verified.profile, LAB_VERIFICATION_PROFILE);
+  assert.equal(verified.valid, true);
+  assert.equal(verified.checks.expectedImageIdentity, true);
+  assert.equal(verified.caveat, null);
+  assert.equal(verified.report.sha256, sha256(await readFile(fixture.reportPath)));
+  assert.match(labVerificationToText(verified), /Expected image checked: yes/);
+
+  const recordedOnly = await verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath
+  );
+  assert.equal(recordedOnly.checks.expectedImageIdentity, null);
+  assert.match(recordedOnly.caveat, /not compared with an independently supplied/);
+
+  const cli = captureStreams();
+  assert.equal(await runCli([
+    'lab', 'verify', fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    '--expected-image-id', IMAGE_ID, '--format', 'json'
+  ], cli.streams), 0);
+  assert.equal(JSON.parse(cli.output().stdout).valid, true);
+});
+
+test('verification rejects semantic, raw-byte, extension, image, and isolation identity drift', async (t) => {
+  const fixture = await evidenceFixture(t);
+  await writeFile(fixture.eventsPath, `${fixture.eventsSource}\n`);
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath
+  ), (error) => error.code === 'LAB_REPORT_MISMATCH');
+  await writeFile(fixture.eventsPath, fixture.eventsSource);
+
+  const changedReport = { ...fixture.report, verdict: 'suspicious_activity' };
+  await writeFile(fixture.reportPath, `${JSON.stringify(changedReport, null, 2)}\n`);
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath
+  ), (error) => error.code === 'LAB_REPORT_MISMATCH');
+  await writeFile(fixture.reportPath, `${JSON.stringify(fixture.report, null, 2)}\n`);
+
+  const otherExtension = await writeExtension(path.join(fixture.temp, 'other-extension'), {
+    manifest_version: 3, name: 'Other extension', version: '1.0.0'
+  }, { 'other.js': 'void 0;\n' });
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, otherExtension, fixture.scenario, fixture.eventsPath
+  ), (error) => error.code === 'LAB_IDENTITY_MISMATCH');
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { expectedImageId: `sha256:${'2'.repeat(64)}` }
+  ), (error) => error.code === 'LAB_IDENTITY_MISMATCH');
+
+  const otherSeccomp = path.join(fixture.temp, 'seccomp.json');
+  await writeFile(otherSeccomp, '{}\n');
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { seccompProfile: otherSeccomp }
+  ), (error) => error.code === 'LAB_IDENTITY_MISMATCH');
+});
+
+test('strict evidence inputs reject duplicate keys, invalid UTF-8, symlinks, and ambiguous streams', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const invalidScenario = path.join(fixture.temp, 'duplicate-scenario.json');
+  await writeFile(invalidScenario, `{"schemaVersion":1,"schemaVersion":1,"id":"x","targetUrl":"https://example.test","canaries":{"token":"1234567890123456"}}`);
+  await assert.rejects(() => evaluateLabFiles(invalidScenario, fixture.eventsPath),
+    (error) => error.code === 'INVALID_LAB_SCENARIO' && /duplicate JSON field/.test(error.message));
+
+  const duplicateEvent = path.join(fixture.temp, 'duplicate-event.jsonl');
+  await writeFile(duplicateEvent, `{"schemaVersion":1,"timestamp":"${AT}","type":"lab.completed","type":"lab.error","data":{}}\n`);
+  await assert.rejects(() => evaluateLabFiles(fixture.scenario, duplicateEvent),
+    (error) => error.code === 'INVALID_LAB_EVENTS' && /duplicate JSON field/.test(error.message));
+
+  const invalidUtf8 = path.join(fixture.temp, 'invalid-utf8.jsonl');
+  await writeFile(invalidUtf8, Buffer.from([0xff, 0xfe]));
+  await assert.rejects(() => evaluateLabFiles(fixture.scenario, invalidUtf8),
+    (error) => error.code === 'INVALID_LAB_EVENTS');
+
+  const scenarioLink = path.join(fixture.temp, 'scenario-link.json');
+  const eventsLink = path.join(fixture.temp, 'events-link.jsonl');
+  const reportLink = path.join(fixture.temp, 'report-link.json');
+  await symlink(fixture.scenario, scenarioLink);
+  await symlink(fixture.eventsPath, eventsLink);
+  await symlink(fixture.reportPath, reportLink);
+  await assert.rejects(() => evaluateLabFiles(scenarioLink, fixture.eventsPath),
+    (error) => error.code === 'UNSAFE_LAB_INPUT');
+  await assert.rejects(() => evaluateLabFiles(fixture.scenario, eventsLink),
+    (error) => error.code === 'UNSAFE_LAB_INPUT');
+  await assert.rejects(() => verifyLabReport(
+    reportLink, fixture.extension, fixture.scenario, fixture.eventsPath
+  ), (error) => error.code === 'UNSAFE_LAB_REPORT');
+  const duplicateReport = path.join(fixture.temp, 'duplicate-report.json');
+  await writeFile(duplicateReport, '{"schemaVersion":1,"schemaVersion":1}\n');
+  await assert.rejects(() => verifyLabReport(
+    duplicateReport, fixture.extension, fixture.scenario, fixture.eventsPath
+  ), (error) => error.code === 'INVALID_LAB_REPORT' && /duplicate JSON field/.test(error.message));
+
+  const completed = { schemaVersion: 1, timestamp: AT, type: 'lab.completed', data: {} };
+  const started = { schemaVersion: 1, timestamp: DONE, type: 'lab.started', data: {} };
+  assert.throws(() => evaluateLabRun({
+    schemaVersion: 1, id: 'ordering', targetUrl: 'https://example.test/',
+    canaries: { tokenValue: '1234567890123456' }
+  }, [completed, started]), (error) => error.code === 'INVALID_LAB_EVENTS');
+  assert.throws(() => parseLabEvents(`${JSON.stringify(completed)}\n${JSON.stringify(completed)}\n`),
+    (error) => error.code === 'INVALID_LAB_EVENTS');
+  const hidden = { ...completed };
+  Object.defineProperty(hidden, 'hidden', { value: 'ambiguous' });
+  assert.throws(() => evaluateLabRun({
+    schemaVersion: 1, id: 'hidden', targetUrl: 'https://example.test/',
+    canaries: { tokenValue: '1234567890123456' }
+  }, [hidden]), (error) => error.code === 'INVALID_LAB_EVENTS');
+
+  const nonCanonicalScenario = path.join(fixture.temp, 'noncanonical-scenario.json');
+  await writeFile(nonCanonicalScenario, JSON.stringify({
+    schemaVersion: 1, id: 'noncanonical', targetUrl: 'https://EXAMPLE.test',
+    canaries: { tokenValue: '1234567890123456' }
+  }));
+  await assert.rejects(() => evaluateLabFiles(nonCanonicalScenario, fixture.eventsPath),
+    (error) => error.code === 'INVALID_LAB_SCENARIO');
+});
+
+test('offline evaluation remains available but verification requires live execution provenance', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const events = path.join(fixture.temp, 'external-events.jsonl');
+  await writeFile(events, `${JSON.stringify({
+    schemaVersion: 1, timestamp: AT, type: 'lab.completed', data: {}
+  })}\n`);
+  const report = await evaluateLabFiles(fixture.scenario, events);
+  assert.equal(report.execution, undefined);
+  const reportPath = path.join(fixture.temp, 'external-report.json');
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  await assert.rejects(() => verifyLabReport(
+    reportPath, fixture.extension, fixture.scenario, events
+  ), (error) => error.code === 'LAB_PROVENANCE_MISSING');
+});
+
+test('lab input snapshots isolate mounted bytes from later source mutations and clean safely', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-lab-snapshot-test-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const extension = await writeExtension(path.join(temp, 'extension'), {
+    manifest_version: 3, name: 'Snapshot', version: '1.0.0'
+  }, { 'worker.js': 'const original = true;\n' });
+  const scenario = path.join(temp, 'scenario.json');
+  const scenarioBytes = Buffer.from('{"schemaVersion":1,"id":"snapshot","targetUrl":"https://example.test/","canaries":{"tokenValue":"1234567890123456"}}\n');
+  await writeFile(scenario, scenarioBytes);
+  const temporaryDirectory = path.join(temp, 'temporary');
+  await writeExtension(temporaryDirectory, { manifest_version: 3, name: 'Temp holder', version: '1.0.0' });
+  await rm(path.join(temporaryDirectory, 'manifest.json'));
+  const snapshot = await prepareLabInputSnapshot(extension, scenario, { temporaryDirectory });
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.deepEqual(await readFile(snapshot.scenario), scenarioBytes);
+  const snapshotWorker = await readFile(path.join(snapshot.extension, 'worker.js'), 'utf8');
+  await writeFile(path.join(extension, 'worker.js'), 'const changed = true;\n');
+  await writeFile(scenario, '{}\n');
+  assert.equal(await readFile(path.join(snapshot.extension, 'worker.js'), 'utf8'), snapshotWorker);
+  assert.deepEqual(await readFile(snapshot.scenario), scenarioBytes);
+  assert.notEqual((await auditExtension(extension)).package.sha256, snapshot.package.sha256);
+  const workspace = snapshot.workspace;
+  await removeLabInputSnapshot(snapshot);
+  await assert.rejects(() => access(workspace));
+  await assert.rejects(() => removeLabInputSnapshot(snapshot),
+    (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => removeLabInputSnapshot({ workspace }),
+    (error) => error.code === 'INVALID_ARGUMENT');
+
+  const extensionLink = path.join(temp, 'extension-link');
+  const scenarioLink = path.join(temp, 'scenario-link.json');
+  await symlink(extension, extensionLink);
+  await symlink(scenario, scenarioLink);
+  await assert.rejects(() => prepareLabInputSnapshot(extensionLink, scenario, { temporaryDirectory }),
+    (error) => error.code === 'UNSAFE_LAB_INPUT');
+  await assert.rejects(() => prepareLabInputSnapshot(extension, scenarioLink, { temporaryDirectory }),
+    (error) => error.code === 'UNSAFE_LAB_INPUT');
+});
+
+test('image identity CLI option is scoped to lab verify and malformed verifier options fail closed', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const ignored = captureStreams();
+  assert.equal(await runCli([
+    'audit', fixture.extension, '--expected-image-id', IMAGE_ID
+  ], ignored.streams), 2);
+  assert.match(ignored.output().stderr, /--expected-image-id applies only to lab verify/);
+  const evaluate = captureStreams();
+  assert.equal(await runCli([
+    'lab', 'evaluate', fixture.scenario, fixture.eventsPath, '--expected-image-id', IMAGE_ID
+  ], evaluate.streams), 2);
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath, null
+  ), (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { expectedImageId: 'sha256:not-a-digest' }
+  ), (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => evaluateLabFiles(null, fixture.eventsPath),
+    (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, Symbol('extension'), fixture.scenario, fixture.eventsPath
+  ), (error) => error.code === 'INVALID_ARGUMENT');
+});
+
+test('host wrapper runs immutable snapshots by image ID and emits a verifiable retained bundle', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-lab-wrapper-test-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const extension = await writeExtension(path.join(temp, 'extension'), {
+    manifest_version: 3, name: 'Wrapper fixture', version: '1.0.0'
+  }, { 'worker.js': 'void 0;\n' });
+  const scenario = path.join(temp, 'scenario.json');
+  await writeFile(scenario, JSON.stringify({
+    schemaVersion: 1,
+    id: 'wrapper-test',
+    targetUrl: 'https://example.test/',
+    canaries: { tokenValue: '1234567890123456' },
+    durationMs: 1_000
+  }, null, 2) + '\n');
+  const fakeBin = path.join(temp, 'bin');
+  await writeExtension(fakeBin, { manifest_version: 3, name: 'Fake bin holder', version: '1.0.0' });
+  await rm(path.join(fakeBin, 'manifest.json'));
+  const docker = path.join(fakeBin, 'docker');
+  const dockerLog = path.join(temp, 'docker-log.jsonl');
+  await writeFile(docker, `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(args) + '\\n');
+if (args[0] === 'image') {
+  process.stdout.write('${IMAGE_ID}\\n');
+} else {
+  const environment = {};
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== '--env') continue;
+    const pair = args[++index];
+    const boundary = pair.indexOf('=');
+    environment[pair.slice(0, boundary)] = pair.slice(boundary + 1);
+  }
+  const data = {
+    profile: environment.MVX_LAB_PROFILE,
+    browser: 'Chromium fake-wrapper-test',
+    imageId: environment.MVX_LAB_IMAGE_ID,
+    imageReference: environment.MVX_LAB_IMAGE_REFERENCE,
+    network: 'none',
+    durationMs: 1000,
+    packageSha256: environment.MVX_LAB_PACKAGE_SHA256,
+    analysisSha256: environment.MVX_LAB_ANALYSIS_SHA256,
+    scenarioSha256: environment.MVX_LAB_SCENARIO_SHA256,
+    seccompSha256: environment.MVX_LAB_SECCOMP_SHA256,
+    toolVersion: environment.MVX_LAB_TOOL_VERSION
+  };
+  process.stdout.write(JSON.stringify({ schemaVersion: 1, timestamp: '${AT}', type: 'lab.started', data }) + '\\n');
+  process.stdout.write(JSON.stringify({ schemaVersion: 1, timestamp: '${DONE}', type: 'lab.completed', data: { extensionTargetsObserved: 1 } }) + '\\n');
+}
+`);
+  await chmod(docker, 0o700);
+  const output = path.join(temp, 'output');
+  const execution = await run(process.execPath, [
+    path.resolve('scripts/run-lab.mjs'),
+    '--extension', extension,
+    '--scenario', scenario,
+    '--output', output,
+    '--image', 'mvx-lab:test',
+    '--acknowledge-risk'
+  ], {
+    cwd: path.resolve('.'),
+    env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, FAKE_DOCKER_LOG: dockerLog }
+  });
+  assert.equal(execution.code, 0, execution.stderr);
+  assert.match(execution.stdout, /Lab verdict: no_trigger_observed; contained: yes/);
+  const reportPath = path.join(output, 'report.json');
+  const retainedScenario = path.join(output, 'scenario.json');
+  const events = path.join(output, 'events.jsonl');
+  const report = JSON.parse(await readFile(reportPath, 'utf8'));
+  assert.equal(report.execution.container.imageId, IMAGE_ID);
+  assert.equal((await verifyLabReport(
+    reportPath, extension, retainedScenario, events, { expectedImageId: IMAGE_ID }
+  )).valid, true);
+
+  const invocations = (await readFile(dockerLog, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(invocations.length, 2);
+  const dockerRun = invocations[1];
+  assert.deepEqual(dockerRun.slice(-2), [IMAGE_ID, '--acknowledge-risk']);
+  const securityOption = dockerRun[dockerRun.findIndex((value) => value.startsWith('seccomp='))];
+  const seccompSnapshot = securityOption.slice('seccomp='.length);
+  assert.notEqual(seccompSnapshot, path.resolve('lab/seccomp-chromium.json'));
+  await assert.rejects(() => access(seccompSnapshot));
+  const mounts = dockerRun.filter((value) => value.startsWith('type=bind,src='));
+  assert.equal(mounts.some((value) => value.includes(`src=${extension},`)), false);
+  assert.equal(mounts.some((value) => value.includes(`src=${retainedScenario},`)), false);
+  assert.ok(mounts.every((value) => value.endsWith(',readonly')));
+});

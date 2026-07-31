@@ -21,10 +21,17 @@ The host wrapper starts Docker with:
 - an ephemeral profile in a bounded tmpfs; and
 - CPU, memory, process, and runtime limits.
 
-The wrapper rejects symlinks and special files anywhere in the extension tree
-and requires a fresh, empty result directory. Untrusted code cannot write to
-that directory directly. Do not weaken these flags to accommodate an
-environment where Chromium cannot start; that run is `inconclusive`.
+The wrapper rejects symlinks and special files anywhere in the extension tree,
+copies the tree and scenario into a private temporary snapshot, audits the
+snapshot, and mounts only those stable bytes. Later changes to the source tree
+cannot change the running sample. It requires a fresh, empty result directory;
+untrusted code cannot write there directly. Do not weaken these flags to
+accommodate an environment where Chromium cannot start; that run is
+`inconclusive`.
+
+The wrapper also snapshots the exact seccomp bytes after hashing them and runs
+Docker by the inspected content-addressed image ID rather than the mutable image
+tag. The requested tag is retained only as context.
 
 ## Build and run
 
@@ -42,13 +49,40 @@ npm run lab:run -- \
   --acknowledge-risk
 ```
 
-The run emits `events.jsonl` and a deterministic `report.json`. A captured event
-stream can be reevaluated without a browser:
+The run retains the exact `scenario.json`, raw `events.jsonl`, and deterministic
+`report.json`. A captured event stream can be reevaluated without a browser:
 
 ```bash
 mvx lab evaluate lab/scenarios/credential-exfiltration.json \
   results/local/lab-<id>/events.jsonl --format json
 ```
+
+The report's `mvx-lab-evidence-v1` record hashes the exact scenario and event
+bytes and a domain-separated deterministic evaluation. A profiled live run also
+records the exact `mvx-package-v1` and `mvx-static-v3` identities of the mounted
+snapshot, Chromium version, Docker image ID/reference, network mode, duration,
+tool version, and seccomp SHA-256. Verify the retained bundle offline:
+
+```bash
+mvx lab verify results/local/lab-<id>/report.json \
+  quarantine/<id>/unpacked/<sha256> \
+  results/local/lab-<id>/scenario.json \
+  results/local/lab-<id>/events.jsonl \
+  --expected-image-id sha256:<digest-from-an-independent-build-record>
+```
+
+Verification uses bounded no-follow reads, strict UTF-8 and duplicate-key
+checks, re-evaluates every event, re-audits the supplied extension, and checks
+the local seccomp profile and tool version. Without `--expected-image-id`, the
+recorded content-addressed image ID remains visible but is explicitly reported
+as not independently checked. This verifies consistency, not authorship: the
+report is not signed, and supplying an attacker-chosen report, extension, and
+image expectation together does not create trust.
+
+The host stops a run after 60 seconds and terminates streaming capture as soon
+as raw JSONL exceeds 20 MB. Offline parsing also caps the stream at 100,000
+events and rejects non-canonical or out-of-order lifecycle timestamps rather
+than silently truncating evidence.
 
 ## Oracle and containment
 
@@ -85,6 +119,5 @@ Verdicts:
 The initial scenario does not simulate user gestures, OAuth, geographic
 location, long dwell time, Chrome Web Store installation, enterprise policy,
 or a live C2. Headless/browser-version differences and extension anti-analysis
-can affect activation. Report the container image digest, Chromium version,
-scenario hash, artifact SHA-256, run duration, and full event stream with any
-published result.
+can affect activation. Publish the complete retained bundle, exact extension
+bytes, and the independent source of any expected image ID.

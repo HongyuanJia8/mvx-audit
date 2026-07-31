@@ -9,7 +9,12 @@ export {
 } from './disposition-policy.js';
 export { loadCatalog, validateCatalog } from './catalog.js';
 export { loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
-export { evaluateLabFiles, evaluateLabRun, labReportToText, parseLabEvents, VERDICTS } from './lab.js';
+export {
+  DEFAULT_LAB_EVIDENCE_LIMITS, LAB_EVALUATION_PROFILE, LAB_EVIDENCE_PROFILE,
+  LAB_EXECUTION_PROFILE, LAB_VERIFICATION_PROFILE, evaluateLabFiles, evaluateLabRun,
+  labReportToText, labVerificationToText, loadLabScenario, parseLabEvents,
+  verifyLabReport, VERDICTS
+} from './lab.js';
 export {
   EVIDENCE_FINGERPRINT_PROFILE, FINDING_FINGERPRINT_PROFILE, FINGERPRINT_LIMITS,
   evidenceFingerprint, findingFingerprint, findingKey

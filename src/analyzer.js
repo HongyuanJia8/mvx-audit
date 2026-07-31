@@ -8,6 +8,7 @@ import { resolveRulePacks } from './rule-packs.js';
 import { createFinding } from './model.js';
 import { applyDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
 import { assertOptionsObject } from './options.js';
+import { VERSION } from './version.js';
 
 function manifestReferences(manifest) {
   const references = [];
@@ -77,7 +78,7 @@ export async function auditExtension(inputPath, options = {}) {
   const dispositionPoliciesApplied = preparedDispositionPolicies.summary.policies > 0;
   return {
     schemaVersion: 1,
-    tool: { name: 'mvx-audit', version: '3.0.0' },
+    tool: { name: 'mvx-audit', version: VERSION },
     target: {
       root: snapshot.root,
       name: snapshot.manifest.name ?? null,

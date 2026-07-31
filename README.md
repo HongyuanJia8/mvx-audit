@@ -93,6 +93,11 @@ node bin/mvx.js sample fetch-many --acknowledge-risk \
 node bin/mvx.js sample unpack quarantine/<id>/<sha256>.crx --acknowledge-risk
 node bin/mvx.js audit quarantine/<id>/unpacked/<sha256>
 
+# Re-evaluate and verify a retained isolated-lab evidence bundle offline
+node bin/mvx.js lab verify results/report.json /path/to/exact-extension \
+  results/scenario.json results/events.jsonl \
+  --expected-image-id sha256:<independently-pinned-image-id>
+
 # Benchmark quarantined real samples without executing extension code
 node bin/mvx.js benchmark static quarantine --acknowledge-risk \
   --label behavior-confirmed-malicious --threshold high --format json
@@ -142,6 +147,10 @@ development.
 - Bounded scanning of all packaged source (including vendored directories) that
   refuses a symlinked root, skips nested symlinks, and fails closed on file or
   byte limits.
+- Tamper-evident isolated-lab reports bound to an immutable extension snapshot,
+  package/analysis identities, exact scenario and event bytes, container image
+  ID, browser version, and seccomp profile, with deterministic offline
+  `lab verify` support.
 
 See the complete [rule reference](docs/rule-reference.md), [declarative rule
 pack guide](docs/rule-packs.md), [disposition-policy guide](docs/disposition-policies.md),
@@ -235,7 +244,7 @@ Public API:
 ```js
 import {
   auditExtension, auditExtensionArchive, compareExtensions,
-  loadDispositionPolicies, loadRulePacks
+  evaluateLabFiles, loadDispositionPolicies, loadRulePacks, verifyLabReport
 } from 'mvx-audit';
 
 const rulePacks = ['./team-iocs.json'];
@@ -253,6 +262,11 @@ const packedAudit = await auditExtensionArchive('/path/to/extension.crx', {
   expectedExtensionId: '<32-character-a-p-extension-id>'
 });
 const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3', { rulePacks });
+const labReport = await evaluateLabFiles('./scenario.json', './events.jsonl');
+const labVerification = await verifyLabReport(
+  './report.json', '/path/to/exact-extension', './scenario.json', './events.jsonl',
+  { expectedImageId: 'sha256:<independently-pinned-image-id>' }
+);
 ```
 
 Every successful audit includes `package.sha256` and `analysis.sha256`.

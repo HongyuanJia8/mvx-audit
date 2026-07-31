@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { verifyLabReport } from '../src/lab.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 if (process.argv.length !== 3 || process.argv[2] !== '--acknowledge-risk') {
@@ -35,6 +36,14 @@ async function runFixture(name, expectedVerdict) {
   assert.equal(report.verdict, expectedVerdict, `${name} verdict`);
   assert.equal(report.contained, true, `${name} containment`);
   assert.equal(report.summary.errors, 0, `${name} collection errors`);
+  const verification = await verifyLabReport(
+    path.join(output, 'report.json'),
+    path.join(ROOT, 'lab', 'fixtures', name),
+    path.join(output, 'scenario.json'),
+    path.join(output, 'events.jsonl'),
+    { expectedImageId: report.execution.container.imageId }
+  );
+  assert.equal(verification.valid, true, `${name} evidence verification`);
   return report;
 }
 

@@ -1,10 +1,18 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 
 const CHROME = '/usr/bin/chromium';
 const MAX_EVENT_STRING = 16_384;
+const SHA256 = /^[a-f0-9]{64}$/;
+const IMAGE_ID = /^sha256:[a-f0-9]{64}$/;
+const IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/;
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 function bounded(value, depth = 0) {
   if (depth > 5) return '[depth-limit]';
@@ -116,11 +124,32 @@ async function main() {
   if (process.env.MVX_LAB_CONTAINER !== '1' || process.argv[2] !== '--acknowledge-risk') {
     throw new Error('Runner is container-only and requires --acknowledge-risk');
   }
-  const scenario = JSON.parse(await readFile('/scenario.json', 'utf8'));
+  const provenance = {
+    profile: process.env.MVX_LAB_PROFILE,
+    toolVersion: process.env.MVX_LAB_TOOL_VERSION,
+    imageId: process.env.MVX_LAB_IMAGE_ID,
+    imageReference: process.env.MVX_LAB_IMAGE_REFERENCE,
+    packageSha256: process.env.MVX_LAB_PACKAGE_SHA256,
+    analysisSha256: process.env.MVX_LAB_ANALYSIS_SHA256,
+    scenarioSha256: process.env.MVX_LAB_SCENARIO_SHA256,
+    seccompSha256: process.env.MVX_LAB_SECCOMP_SHA256
+  };
+  if (provenance.profile !== 'mvx-lab-execution-v1'
+    || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(provenance.toolVersion ?? '')
+    || !IMAGE_ID.test(provenance.imageId ?? '') || !IMAGE_REFERENCE.test(provenance.imageReference ?? '')
+    || !SHA256.test(provenance.packageSha256 ?? '') || !SHA256.test(provenance.analysisSha256 ?? '')
+    || !SHA256.test(provenance.scenarioSha256 ?? '') || !SHA256.test(provenance.seccompSha256 ?? '')) {
+    throw new Error('Missing or invalid host-bound execution provenance');
+  }
+  const scenarioBytes = await readFile('/scenario.json');
+  if (sha256(scenarioBytes) !== provenance.scenarioSha256) throw new Error('Mounted scenario does not match its host-bound identity');
+  const scenario = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(scenarioBytes));
   const manifest = JSON.parse(await readFile('/sample/manifest.json', 'utf8'));
   const target = new URL(scenario.targetUrl);
   const canaries = Object.entries(scenario.canaries ?? {});
-  if (scenario.schemaVersion !== 1 || target.protocol !== 'https:' || canaries.length === 0 || canaries.some(([, value]) => typeof value !== 'string' || value.length < 16)) {
+  if (scenario.schemaVersion !== 1 || target.protocol !== 'https:' || target.username || target.password
+    || target.hash || target.href !== scenario.targetUrl || canaries.length === 0 || canaries.length > 100
+    || canaries.some(([, value]) => typeof value !== 'string' || value.length < 16 || value.length > 4_096)) {
     throw new Error('Invalid scenario');
   }
   const durationMs = Math.min(30_000, Math.max(1_000, scenario.durationMs ?? 8_000));
@@ -128,7 +157,19 @@ async function main() {
     || manifest.background?.page
     || (Array.isArray(manifest.background?.scripts) && manifest.background.scripts.length > 0));
   const browserVersion = spawnSync(CHROME, ['--version'], { encoding: 'utf8' }).stdout.trim();
-  await emit('lab.started', { browser: browserVersion, image: process.env.MVX_LAB_IMAGE_ID ?? 'unreported', network: 'none', durationMs });
+  await emit('lab.started', {
+    profile: provenance.profile,
+    browser: browserVersion,
+    imageId: provenance.imageId,
+    imageReference: provenance.imageReference,
+    network: 'none',
+    durationMs,
+    packageSha256: provenance.packageSha256,
+    analysisSha256: provenance.analysisSha256,
+    scenarioSha256: provenance.scenarioSha256,
+    seccompSha256: provenance.seccompSha256,
+    toolVersion: provenance.toolVersion
+  });
 
   const chrome = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',

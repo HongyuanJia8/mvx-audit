@@ -277,8 +277,9 @@ runtime evidence must satisfy all of these requirements:
    as separate evidence stages.
 7. Use `confirmed_attack`, `suspicious_activity`, `no_trigger_observed`, and
    `inconclusive`; never count collection errors as blocked attacks.
-8. Produce immutable run metadata containing git SHA, scenario hash, browser,
-   operating system, Node version, configuration, seed, timings, and evidence.
+8. Bind the mounted package and analysis identities, exact scenario/event
+   bytes, browser and container image, seccomp profile, tool version,
+   configuration, duration, timestamps, and deterministic evaluation digest.
 
 The checked-in runner enforces networkless Docker isolation, a non-root browser,
 read-only sample and scenario mounts, an ephemeral profile, resource limits,
@@ -286,6 +287,16 @@ and Chromium's user-namespace plus seccomp-BPF sandbox without `--no-sandbox`.
 The setuid sandbox helper is not used because all container capabilities are
 dropped. The evaluator is deterministic and can also process externally
 captured JSONL. See [dynamic analysis](dynamic-analysis.md).
+
+Before Docker starts, the wrapper copies the extension and scenario to a
+private snapshot and computes static package/analysis identities over the same
+extension tree that is mounted. `mvx-lab-execution-v1` carries those identities
+through the container event stream. `mvx-lab-evidence-v1` hashes the raw
+scenario and ordered JSONL bytes, while `mvx-lab-evaluation-v1` hashes the
+deterministic interpretation. `mvx lab verify` recomputes all locally available
+identities and can compare the recorded Docker image ID with an independent
+expected value. These hashes are tamper evidence, not signatures or publisher
+authentication.
 
 This remains an experimental behavioral observation tool, not an exploit-rate
 benchmark. Dormant C2, environment gating, timing, region checks, and
