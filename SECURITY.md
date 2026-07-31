@@ -78,3 +78,12 @@ no public network, no host browser profile, no real user data, no writable
 sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium
 sandbox cannot start under those controls, report `inconclusive`; weakening a
 boundary to obtain a result is a security defect.
+
+The lab wrapper copies extension and scenario inputs into a private snapshot,
+audits that snapshot, and mounts only those stable bytes. Published evidence
+should retain `scenario.json`, `events.jsonl`, and `report.json` together. Use
+`mvx lab verify` with the exact extension and, when available, an independently
+pinned Docker image ID. Verification recomputes package, analysis, scenario,
+event-stream, evaluation, seccomp, and tool-version identities. It detects
+drift and tampering; it is not a digital signature and cannot make an
+attacker-chosen extension or image ID trustworthy.

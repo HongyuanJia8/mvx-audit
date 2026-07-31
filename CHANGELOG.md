@@ -7,6 +7,10 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Content-bound isolated-lab evidence with private immutable input snapshots,
+  exact package/analysis/scenario/event/image/seccomp identities,
+  domain-separated deterministic evaluation hashes, retained scenarios, and an
+  offline `lab verify` command that fails closed on drift or tampering.
 - Strict external disposition policies bound to finding fingerprint and exact
   package, analysis, and packed-artifact identities, retaining raw findings
   while adding review metadata, expiry evaluation, validation CLI, and explicit

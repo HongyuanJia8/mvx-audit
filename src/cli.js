@@ -10,13 +10,13 @@ import { dispositionPoliciesToText, loadDispositionPolicies } from './dispositio
 import { MvxError } from './errors.js';
 import { auditExtensionArchive } from './packed-audit.js';
 import { intelRecordToText, intelStatsToText, loadIntelCatalog, lookupIntel, validateIntelCatalog } from './intelligence.js';
-import { evaluateLabFiles, labReportToText } from './lab.js';
+import { evaluateLabFiles, labReportToText, labVerificationToText, verifyLabReport } from './lab.js';
 import { SEVERITIES } from './model.js';
 import { fetchSample, fetchSampleBatch, planSample, planSampleBatch, sampleBatchPlanToText, samplePlanToText } from './quarantine.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
 import { loadRulePacks, rulePacksToText } from './rule-packs.js';
+import { VERSION } from './version.js';
 
-const VERSION = '3.0.0';
 const HELP = `mvx-audit ${VERSION}
 
 Usage:
@@ -46,6 +46,8 @@ Usage:
                     [--require-valid-signature]
                     [--expected-archive-sha256 digest] [--expected-extension-id id]
   mvx lab evaluate <scenario.json> <events.jsonl> [--format text|json]
+  mvx lab verify <report.json> <extension> <scenario.json> <events.jsonl>
+                 [--expected-image-id sha256:digest] [--format text|json]
   mvx benchmark static <quarantine> --acknowledge-risk [--label label]
                        [--limit number] [--threshold severity] [--format text|json]
                        [--rule-pack file ...] [--require-valid-signature]
@@ -60,7 +62,7 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = {};
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--help' || token === '-h') options.help = true;
@@ -138,6 +140,7 @@ export async function runCli(argv, streams = process) {
     const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
       || options.expectedExtensionId !== undefined;
     const signatureVerificationRequested = options.requireValidSignature === true;
+    const labImageIdentityRequested = options.expectedImageId !== undefined;
     const dispositionPolicyOptionsRequested = options.dispositionPolicies !== undefined
       || options.dispositionAt !== undefined;
     if (archiveIdentityRequested && !['audit', 'sample'].includes(command)) {
@@ -145,6 +148,9 @@ export async function runCli(argv, streams = process) {
     }
     if (signatureVerificationRequested && !['audit', 'sample', 'benchmark'].includes(command)) {
       throw new MvxError('Archive signature verification applies only to packed audit, sample unpack, or static benchmark', { code: 'INVALID_ARGUMENT' });
+    }
+    if (labImageIdentityRequested && command !== 'lab') {
+      throw new MvxError('--expected-image-id applies only to lab verify', { code: 'INVALID_ARGUMENT' });
     }
     if (dispositionPolicyOptionsRequested && !['audit', 'compare', 'dispositions'].includes(command)) {
       throw new MvxError('Disposition policy options apply only to audit, compare, or dispositions validate', { code: 'INVALID_ARGUMENT' });
@@ -393,14 +399,22 @@ export async function runCli(argv, streams = process) {
     }
 
     if (command === 'lab') {
-      if (args.length !== 3 || args[0] !== 'evaluate') {
-        throw new MvxError('lab action must be evaluate <scenario.json> <events.jsonl>', { code: 'INVALID_ARGUMENT' });
-      }
       const format = options.format ?? 'text';
       if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported lab format: ${format}`, { code: 'INVALID_ARGUMENT' });
-      const report = await evaluateLabFiles(args[1], args[2]);
-      await emit(format === 'json' ? json(report) : labReportToText(report), options.output, streams.stdout);
-      return report.contained ? 0 : 1;
+      if (args[0] === 'evaluate' && args.length === 3) {
+        if (options.expectedImageId !== undefined) throw new MvxError('--expected-image-id applies only to lab verify', { code: 'INVALID_ARGUMENT' });
+        const report = await evaluateLabFiles(args[1], args[2]);
+        await emit(format === 'json' ? json(report) : labReportToText(report), options.output, streams.stdout);
+        return report.contained ? 0 : 1;
+      }
+      if (args[0] === 'verify' && args.length === 5) {
+        const verification = await verifyLabReport(args[1], args[2], args[3], args[4], {
+          ...(options.expectedImageId !== undefined ? { expectedImageId: options.expectedImageId } : {})
+        });
+        await emit(format === 'json' ? json(verification) : labVerificationToText(verification), options.output, streams.stdout);
+        return 0;
+      }
+      throw new MvxError('lab action must be evaluate <scenario.json> <events.jsonl> or verify <report.json> <extension> <scenario.json> <events.jsonl>', { code: 'INVALID_ARGUMENT' });
     }
 
     if (command === 'benchmark') {
