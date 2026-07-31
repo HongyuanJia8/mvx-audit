@@ -35,6 +35,13 @@ requires a fresh, empty result directory; untrusted code cannot write there
 directly. Do not weaken these flags to accommodate an environment where
 Chromium cannot start; that run is `inconclusive`.
 
+Snapshot resource failures remain in the lab error domain: missing temporary
+parents use `LAB_INPUT_NOT_FOUND`, unsafe parents use `UNSAFE_LAB_INPUT`, and
+tree limits use `LAB_LIMIT`. If cleanup fails, the snapshot capability remains
+valid so an operator can restore the recorded workspace path and retry removal;
+the host wrapper reports the retained private path rather than claiming that it
+was deleted.
+
 The wrapper also snapshots the exact seccomp bytes after hashing them and runs
 Docker by the inspected content-addressed image ID rather than the mutable image
 tag. The requested tag is retained only as context.

@@ -72,6 +72,9 @@ versioning from the 2.0 reset onward.
 
 ### Fixed
 
+- Lab snapshot failures now remain in the lab error domain, and a failed
+  cleanup retains its managed capability so removal can be retried after the
+  workspace path is restored.
 - Strict CRX verification now rejects trailing bytes after the DER public-key
   sequence and malformed oversized protobuf fields inside unknown groups.
 - Static benchmark binds actual archive SHA-256/verified extension ID to

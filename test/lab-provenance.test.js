@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile
+  access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink,
+  writeFile
 } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -448,6 +449,79 @@ test('lab input snapshots isolate mounted bytes from later source mutations and 
   ), (error) => error.code === 'UNSAFE_LAB_INPUT');
 });
 
+test('lab snapshot failures retain the lab error domain', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const missingTemporary = path.join(fixture.temp, 'missing-temporary');
+  for (const operation of [
+    () => prepareLabInputSnapshot(
+      fixture.extension,
+      fixture.scenario,
+      { temporaryDirectory: missingTemporary }
+    ),
+    () => verifyLabReport(
+      fixture.reportPath,
+      fixture.extension,
+      fixture.scenario,
+      fixture.eventsPath,
+      { temporaryDirectory: missingTemporary }
+    )
+  ]) {
+    await assert.rejects(operation, (error) =>
+      error.code === 'LAB_INPUT_NOT_FOUND'
+      && !/audit snapshot/i.test(error.message));
+  }
+
+  const deepExtension = await writeExtension(
+    path.join(fixture.temp, 'deep-extension'),
+    { manifest_version: 3, name: 'Deep extension', version: '1.0.0' }
+  );
+  const deepSegments = Array.from({ length: 65 }, (_, index) => `d${index}`);
+  await mkdir(path.join(deepExtension, ...deepSegments), { recursive: true });
+  for (const operation of [
+    () => prepareLabInputSnapshot(deepExtension, fixture.scenario),
+    () => verifyLabReport(
+      fixture.reportPath,
+      deepExtension,
+      fixture.scenario,
+      fixture.eventsPath
+    )
+  ]) {
+    await assert.rejects(operation, (error) =>
+      error.code === 'LAB_LIMIT'
+      && !/audit snapshot/i.test(error.message));
+  }
+});
+
+test('failed lab snapshot cleanup retains a retryable cleanup capability', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const temporaryDirectory = path.join(fixture.temp, 'retry-temporary');
+  await mkdir(temporaryDirectory);
+  const snapshot = await prepareLabInputSnapshot(
+    fixture.extension,
+    fixture.scenario,
+    { temporaryDirectory }
+  );
+  const parkedWorkspace = `${snapshot.workspace}-parked`;
+  await rename(snapshot.workspace, parkedWorkspace);
+  await mkdir(snapshot.workspace);
+  await assert.rejects(
+    () => removeLabInputSnapshot(snapshot),
+    (error) => error.code === 'LAB_SNAPSHOT_CLEANUP_FAILED'
+      && /may be retried/.test(error.message)
+  );
+  await access(snapshot.workspace);
+  await access(parkedWorkspace);
+
+  await rm(snapshot.workspace, { recursive: true });
+  await rename(parkedWorkspace, snapshot.workspace);
+  await removeLabInputSnapshot(snapshot);
+  await assert.rejects(() => access(snapshot.workspace));
+  await assert.rejects(
+    () => removeLabInputSnapshot(snapshot),
+    (error) => error.code === 'INVALID_ARGUMENT'
+  );
+});
+
 test('image identity CLI option is scoped to lab verify and malformed verifier options fail closed', async (t) => {
   const fixture = await evidenceFixture(t);
   const ignored = captureStreams();
@@ -522,7 +596,8 @@ test('host wrapper runs immutable snapshots by image ID and emits a verifiable r
   const docker = path.join(fakeBin, 'docker');
   const dockerLog = path.join(temp, 'docker-log.jsonl');
   await writeFile(docker, `#!/usr/bin/env node
-const { appendFileSync, writeFileSync } = require('node:fs');
+const { appendFileSync, mkdirSync, renameSync, writeFileSync } = require('node:fs');
+const { dirname } = require('node:path');
 const args = process.argv.slice(2);
 appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(args) + '\\n');
 if (args[0] === 'image') {
@@ -552,6 +627,13 @@ if (args[0] === 'image') {
   };
   process.stdout.write(JSON.stringify({ schemaVersion: 1, timestamp: '${AT}', type: 'lab.started', data }) + '\\n');
   process.stdout.write(JSON.stringify({ schemaVersion: 1, timestamp: '${DONE}', type: 'lab.completed', data: { extensionTargetsObserved: 1 } }) + '\\n');
+  if (process.env.FAKE_REPLACE_SNAPSHOT === '1') {
+    const mount = args.find((value) => value.startsWith('type=bind,src=') && value.includes(',dst=/sample,'));
+    const source = mount.slice('type=bind,src='.length, mount.indexOf(',dst=/sample,'));
+    const workspace = dirname(source);
+    renameSync(workspace, workspace + '-parked');
+    mkdirSync(workspace);
+  }
 }
 `);
   await chmod(docker, 0o700);
@@ -593,6 +675,31 @@ if (args[0] === 'image') {
   assert.equal(mounts.some((value) => value.includes(`src=${extension},`)), false);
   assert.equal(mounts.some((value) => value.includes(`src=${retainedScenario},`)), false);
   assert.ok(mounts.every((value) => value.endsWith(',readonly')));
+
+  const cleanupOutput = path.join(temp, 'cleanup-output');
+  const cleanupFailure = await run(process.execPath, [
+    path.resolve('scripts/run-lab.mjs'),
+    '--extension', extension,
+    '--scenario', scenario,
+    '--output', cleanupOutput,
+    '--image', 'mvx-lab:test',
+    '--acknowledge-risk'
+  ], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+      FAKE_DOCKER_LOG: dockerLog,
+      FAKE_REPLACE_SNAPSHOT: '1'
+    }
+  });
+  assert.equal(cleanupFailure.code, 1);
+  const retainedMatch = cleanupFailure.stderr.match(
+    /Private lab snapshot cleanup failed; private snapshot retained at ([^\n]+)/
+  );
+  assert.ok(retainedMatch, cleanupFailure.stderr);
+  await access(retainedMatch[1]);
+  await access(`${retainedMatch[1]}-parked`);
 });
 
 test('host wrapper force-removes a container after event output overflow', async (t) => {

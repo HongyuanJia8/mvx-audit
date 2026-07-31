@@ -127,10 +127,18 @@ function mapLabSnapshotError(error) {
     AUDIT_SNAPSHOT_FAILED: 'LAB_SNAPSHOT_FAILED',
     INPUT_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
     INVALID_INPUT: 'UNSAFE_LAB_INPUT',
+    SCAN_LIMIT: 'LAB_LIMIT',
+    TEMP_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
     UNSAFE_INPUT: 'UNSAFE_LAB_INPUT',
     UNSAFE_TEMP: 'UNSAFE_LAB_INPUT'
   }[error.code];
-  return mapped ? new MvxError(error.message, { code: mapped, cause: error }) : error;
+  if (!mapped) return error;
+  const message = error.message
+    .replaceAll('Audit verification', 'Lab verification')
+    .replaceAll('Audit snapshot', 'Lab snapshot')
+    .replaceAll('audit snapshot', 'lab snapshot')
+    .replaceAll('Private audit', 'Private lab');
+  return new MvxError(message, { code: mapped, cause: error });
 }
 
 function profileDigest(profile, value) {

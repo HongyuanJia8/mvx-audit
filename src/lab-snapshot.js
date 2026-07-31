@@ -49,10 +49,18 @@ function mapLabSnapshotError(error) {
     AUDIT_SNAPSHOT_FAILED: 'LAB_SNAPSHOT_FAILED',
     INPUT_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
     INVALID_INPUT: 'UNSAFE_LAB_INPUT',
+    SCAN_LIMIT: 'LAB_LIMIT',
+    TEMP_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
     UNSAFE_INPUT: 'UNSAFE_LAB_INPUT',
     UNSAFE_TEMP: 'UNSAFE_LAB_INPUT'
   }[error.code];
-  return mapped ? new MvxError(error.message, { code: mapped, cause: error }) : error;
+  if (!mapped) return error;
+  const message = error.message
+    .replaceAll('Audit verification', 'Lab execution')
+    .replaceAll('Audit snapshot', 'Lab snapshot')
+    .replaceAll('audit snapshot', 'lab snapshot')
+    .replaceAll('Private audit', 'Private lab');
+  return new MvxError(message, { code: mapped, cause: error });
 }
 
 export async function assertLabTreeHasNoLinks(root) {
@@ -155,7 +163,6 @@ export async function removeLabInputSnapshot(snapshot) {
   if (!workspace) {
     throw new MvxError('Lab input snapshot is invalid', { code: 'INVALID_ARGUMENT' });
   }
-  SNAPSHOTS.delete(snapshot);
   try {
     await removePrivateWorkspace(workspace, {
       changedMessage: 'Private lab snapshot workspace changed before cleanup',
@@ -163,6 +170,11 @@ export async function removeLabInputSnapshot(snapshot) {
       cleanupCode: 'LAB_SNAPSHOT_CLEANUP_FAILED'
     });
   } catch (error) {
-    throw sanitizeSnapshotError(error, workspace.path);
+    const failure = sanitizeSnapshotError(error, workspace.path);
+    throw new MvxError(
+      `Private lab snapshot cleanup failed; cleanup may be retried after the workspace is restored: ${failure.message}`,
+      { code: 'LAB_SNAPSHOT_CLEANUP_FAILED', cause: error }
+    );
   }
+  SNAPSHOTS.delete(snapshot);
 }
