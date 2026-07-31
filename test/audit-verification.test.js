@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile
+  cp, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -370,6 +370,28 @@ test('audit verification rejects ambiguous reports and hostile options before an
   }
   assert.equal(arrayPrototypeTrapExecuted, false);
 
+  const primitivePackage = structuredClone(report);
+  primitivePackage.package = 1;
+  const primitivePackageReport = path.join(root, 'primitive-package.json');
+  await writeFile(primitivePackageReport, `${JSON.stringify(primitivePackage)}\n`);
+  let boxedPrototypeTrapExecuted = false;
+  Object.defineProperty(Number.prototype, 'sha256', {
+    configurable: true,
+    get() {
+      boxedPrototypeTrapExecuted = true;
+      throw new Error('must not execute');
+    }
+  });
+  try {
+    await assert.rejects(
+      () => verifyAuditReport(primitivePackageReport, extension),
+      (error) => error.code === 'INVALID_AUDIT_REPORT'
+    );
+  } finally {
+    delete Number.prototype.sha256;
+  }
+  assert.equal(boxedPrototypeTrapExecuted, false);
+
   const realReport = path.join(root, 'real-report.json');
   await writeFile(realReport, `${JSON.stringify(report)}\n`);
   assert.equal((await verifyAuditReport(
@@ -556,6 +578,49 @@ test('audit verification rejects ambiguous reports and hostile options before an
     shallowChildScript
   ], { timeout: 10_000, maxBuffer: 1_024 });
   assert.equal(shallowChild.stdout, 'AUDIT_REPORT_LIMIT');
+});
+
+test('directory snapshot cannot be redirected by a root symlink race', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-root-race-verification-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const input = await writeExtension(path.join(root, 'input'), {
+    manifest_version: 3, name: 'Original root', version: '1.0.0'
+  });
+  const outside = await writeExtension(path.join(root, 'outside'), {
+    manifest_version: 3, name: 'Outside root', version: '1.0.0'
+  });
+  const outsideAudit = await auditExtension(outside);
+  const reportPath = path.join(root, 'outside-report.json');
+  await writeFile(reportPath, `${JSON.stringify(outsideAudit)}\n`);
+  const parked = path.join(root, 'parked-input');
+  let racing = true;
+  const race = (async () => {
+    while (racing) {
+      let moved = false;
+      try {
+        await rename(input, parked);
+        moved = true;
+        await symlink(outside, input);
+        await new Promise((resolve) => setImmediate(resolve));
+        await rm(input, { force: true });
+      } catch {
+        await rm(input, { force: true }).catch(() => {});
+      }
+      if (moved) await rename(parked, input);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  })();
+  try {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await assert.rejects(() => verifyAuditReport(reportPath, input));
+      await assert.rejects(
+        () => verifyAuditReport(reportPath, path.join(input, 'manifest.json'))
+      );
+    }
+  } finally {
+    racing = false;
+    await race;
+  }
 });
 
 test('audit verification replays exact rule-pack and disposition-policy provenance', async (t) => {

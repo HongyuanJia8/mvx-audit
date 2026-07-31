@@ -323,6 +323,10 @@ function normalizeData(value) {
   return result;
 }
 
+function isDataRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function parseReport(bytes, limits) {
   let source;
   try {
@@ -345,13 +349,13 @@ function parseReport(bytes, limits) {
   }
   rejectDuplicateKeys(source);
   report = normalizeData(report);
-  if (!report || Array.isArray(report) || typeof report !== 'object'
+  if (!isDataRecord(report)
     || report.schemaVersion !== 1
-    || !report.target || Array.isArray(report.target) || typeof report.target !== 'object'
+    || !isDataRecord(report.target)
     || typeof report.target.root !== 'string' || report.target.root.length === 0
     || report.target.root.length > 4_096
-    || !report.package || typeof report.package.sha256 !== 'string'
-    || !report.analysis || typeof report.analysis.sha256 !== 'string'
+    || !isDataRecord(report.package) || typeof report.package.sha256 !== 'string'
+    || !isDataRecord(report.analysis) || typeof report.analysis.sha256 !== 'string'
     || !Array.isArray(report.rulePacks)
     || !Array.isArray(report.findings)) {
     throw new MvxError('Audit report does not have the required schema-v1 audit structure', {
@@ -359,12 +363,18 @@ function parseReport(bytes, limits) {
     });
   }
   if (report.artifact !== undefined
-    && (!report.artifact || Array.isArray(report.artifact)
-      || typeof report.artifact !== 'object'
+    && (!isDataRecord(report.artifact)
       || typeof report.artifact.path !== 'string'
       || report.artifact.path.length === 0
-      || report.artifact.path.length > 4_096)) {
+      || report.artifact.path.length > 4_096
+      || !isDataRecord(report.artifact.identityPolicy))) {
     throw new MvxError('Packed audit report has an invalid artifact path', {
+      code: 'INVALID_AUDIT_REPORT'
+    });
+  }
+  if (report.dispositionEvaluation !== undefined
+    && !isDataRecord(report.dispositionEvaluation)) {
+    throw new MvxError('Audit report has an invalid disposition evaluation record', {
       code: 'INVALID_AUDIT_REPORT'
     });
   }
@@ -500,36 +510,51 @@ async function copyAuditTree(sourceRoot, destinationRoot, requestedLimits, rootS
 
 async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
   const absolute = path.resolve(inputPath);
-  let stat;
+  const possibleManifestRoot = path.basename(absolute) === 'manifest.json'
+    ? path.dirname(absolute)
+    : undefined;
+  let possibleManifestRootStat;
+  if (possibleManifestRoot !== undefined) {
+    possibleManifestRootStat = await lstat(possibleManifestRoot, { bigint: true })
+      .catch(() => undefined);
+  }
+  let inputStat;
   try {
-    stat = await lstat(absolute);
+    inputStat = await lstat(absolute, { bigint: true });
   } catch (error) {
     throw new MvxError(`Input does not exist: ${absolute}`, {
       code: 'INPUT_NOT_FOUND',
       cause: error
     });
   }
-  if (stat.isSymbolicLink()) {
+  if (inputStat.isSymbolicLink()) {
     throw new MvxError('The extension root may not be a symbolic link', {
       code: 'UNSAFE_INPUT'
     });
   }
   let root;
-  if (stat.isFile()) {
+  let expectedRootStat;
+  if (inputStat.isFile()) {
     if (path.basename(absolute) !== 'manifest.json') {
       throw new MvxError('A file input must be named manifest.json', {
         code: 'INVALID_INPUT'
       });
     }
     root = path.dirname(absolute);
-    const rootStat = await lstat(root);
-    if (rootStat.isSymbolicLink()) {
+    expectedRootStat = possibleManifestRootStat;
+    if (expectedRootStat === undefined) {
+      throw new MvxError('The extension root changed before it could be snapshotted', {
+        code: 'UNSAFE_INPUT'
+      });
+    }
+    if (expectedRootStat.isSymbolicLink()) {
       throw new MvxError('The extension root may not be a symbolic link', {
         code: 'UNSAFE_INPUT'
       });
     }
-  } else if (stat.isDirectory()) {
+  } else if (inputStat.isDirectory()) {
     root = absolute;
+    expectedRootStat = inputStat;
   } else {
     throw new MvxError('Input must be an extension directory or manifest.json', {
       code: 'INVALID_INPUT'
@@ -540,7 +565,9 @@ async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
     realTemporaryParent(temporaryDirectory)
   ]);
   const rootStat = await lstat(sourceRoot, { bigint: true });
-  if (!rootStat.isDirectory()) {
+  if (!rootStat.isDirectory()
+    || rootStat.dev !== expectedRootStat.dev
+    || rootStat.ino !== expectedRootStat.ino) {
     throw new MvxError('The extension root changed before it could be snapshotted', {
       code: 'UNSAFE_INPUT'
     });
