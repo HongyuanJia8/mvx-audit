@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { auditExtension } from './analyzer.js';
@@ -9,20 +9,9 @@ import { resolveRulePacks } from './rule-packs.js';
 import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
 import { applyDispositionPolicies, loadDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
 import { assertOptionsObject } from './options.js';
-
-async function resolveTemporaryParent(input) {
-  const absolute = path.resolve(input ?? os.tmpdir());
-  let stat;
-  try {
-    stat = await lstat(absolute);
-  } catch (error) {
-    throw new MvxError(`Temporary directory does not exist: ${absolute}`, { code: 'TEMP_NOT_FOUND', cause: error });
-  }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new MvxError('Temporary directory must be a real directory', { code: 'UNSAFE_TEMP' });
-  }
-  return realpath(absolute);
-}
+import {
+  createPrivateWorkspace, resolvePrivateWorkspaceParent
+} from './private-workspace.js';
 
 function ownDataProperty(value, key) {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
@@ -90,8 +79,22 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     evaluationTime: preparedDispositionPolicies.evaluationTime
   });
   const requestedTemporaryParent = path.resolve(options.temporaryDirectory ?? os.tmpdir());
-  const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
-  const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
+  const temporaryParent = await resolvePrivateWorkspaceParent(
+    options.temporaryDirectory ?? os.tmpdir(),
+    {
+      missingMessage: `Temporary directory does not exist: ${requestedTemporaryParent}`,
+      unsafeMessage: 'Temporary directory must be a real directory',
+      changedMessage: 'Temporary directory changed during resolution'
+    }
+  );
+  const workspace = await createPrivateWorkspace(
+    temporaryParent,
+    'mvx-packed-audit-',
+    {
+      changedMessage: 'Temporary directory changed during workspace creation',
+      cleanupMessage: 'Temporary workspace cleanup failed during creation'
+    }
+  );
   const workspaceAliases = [
     workspace,
     path.join(requestedTemporaryParent, path.basename(workspace))
@@ -100,7 +103,6 @@ export async function auditExtensionArchive(inputPath, options = {}) {
   let failure;
   let failed = false;
   try {
-    await chmod(workspace, 0o700);
     const extracted = path.join(workspace, 'extension');
     const archive = await unpackExtensionArchive(inputPath, extracted, {
       limits: options.archiveLimits,

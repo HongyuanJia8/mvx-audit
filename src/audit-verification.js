@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { fork } from 'node:child_process';
 import {
-  chmod, lstat, mkdtemp, realpath, rm
+  lstat, realpath, rm
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,9 @@ import { MvxError } from './errors.js';
 import { normalizeScanLimits } from './io.js';
 import { assertOptionsObject } from './options.js';
 import { auditExtensionArchive } from './packed-audit.js';
+import {
+  createPrivateWorkspace, resolvePrivateWorkspaceParent
+} from './private-workspace.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
 export const AUDIT_VERIFICATION_PROFILE = 'mvx-audit-verification-v1';
@@ -47,14 +50,6 @@ function sha256(value) {
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function isWithin(parent, candidate) {
-  const relative = path.relative(parent, candidate);
-  return relative === ''
-    || (relative !== '..'
-      && !relative.startsWith(`..${path.sep}`)
-      && !path.isAbsolute(relative));
 }
 
 function ownValue(object, key) {
@@ -482,32 +477,6 @@ function sanitizeSnapshotError(error, workspace) {
   return sanitized;
 }
 
-async function realTemporaryParent(input) {
-  const absolute = path.resolve(input ?? os.tmpdir());
-  let stat;
-  try {
-    stat = await lstat(absolute);
-  } catch (error) {
-    throw new MvxError('Audit snapshot temporary directory does not exist', {
-      code: 'TEMP_NOT_FOUND',
-      cause: error
-    });
-  }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new MvxError('Audit snapshot temporary directory must be a real directory', {
-      code: 'UNSAFE_TEMP'
-    });
-  }
-  try {
-    return await realpath(absolute);
-  } catch (error) {
-    throw new MvxError('Audit snapshot temporary directory changed during resolution', {
-      code: 'UNSAFE_TEMP',
-      cause: error
-    });
-  }
-}
-
 const SNAPSHOT_WORKER = fileURLToPath(
   new URL('./directory-snapshot-worker.js', import.meta.url)
 );
@@ -611,7 +580,14 @@ async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
       cause: error
     });
   }
-  const temporaryParent = await realTemporaryParent(temporaryDirectory);
+  const temporaryParent = await resolvePrivateWorkspaceParent(
+    temporaryDirectory ?? os.tmpdir(),
+    {
+      missingMessage: 'Audit snapshot temporary directory does not exist',
+      unsafeMessage: 'Audit snapshot temporary directory must be a real directory',
+      changedMessage: 'Audit snapshot temporary directory changed during resolution'
+    }
+  );
   let rootStat;
   try {
     rootStat = await lstat(sourceRoot, { bigint: true });
@@ -628,15 +604,18 @@ async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
       code: 'UNSAFE_INPUT'
     });
   }
-  if (isWithin(sourceRoot, temporaryParent)) {
-    throw new MvxError(
-      'Audit snapshot temporary directory may not be inside the extension root',
-      { code: 'UNSAFE_TEMP' }
-    );
-  }
-  const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-audit-input-'));
+  const workspace = await createPrivateWorkspace(
+    temporaryParent,
+    'mvx-audit-input-',
+    {
+      changedMessage:
+        'Audit snapshot temporary directory changed or is inside the extension root',
+      cleanupMessage: 'Untrusted audit snapshot workspace cleanup failed',
+      cleanupCode: 'AUDIT_SNAPSHOT_CLEANUP_FAILED',
+      forbiddenRoot: sourceRoot
+    }
+  );
   try {
-    await chmod(workspace, 0o700);
     const snapshot = path.join(workspace, 'extension');
     await copyAuditTree(sourceRoot, snapshot, limits, rootStat);
     return { input: snapshot, location: sourceRoot, workspace };

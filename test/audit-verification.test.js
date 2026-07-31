@@ -16,6 +16,9 @@ import {
 } from '../src/audit-verification.js';
 import { runCli } from '../src/cli.js';
 import { auditExtensionArchive } from '../src/packed-audit.js';
+import {
+  createPrivateWorkspace, resolvePrivateWorkspaceParent
+} from '../src/private-workspace.js';
 import { makeSignedCrx3, makeZip } from '../support/archive-fixture.js';
 import { captureStreams, writeExtension } from '../support/helpers.js';
 
@@ -678,6 +681,30 @@ test('directory snapshot rejects a temporary parent inside the extension', async
     (error) => error.code === 'UNSAFE_TEMP'
   );
   assert.deepEqual(await readdir(containedTemporary), []);
+});
+
+test('private workspace creation rejects a redirected validated parent', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-workspace-race-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const parent = path.join(root, 'parent');
+  const parked = path.join(root, 'parked-parent');
+  const redirected = path.join(root, 'redirected');
+  await Promise.all([mkdir(parent), mkdir(redirected)]);
+  const validated = await resolvePrivateWorkspaceParent(parent, {
+    missingMessage: 'missing',
+    unsafeMessage: 'unsafe',
+    changedMessage: 'changed'
+  });
+  await rename(parent, parked);
+  await symlink(redirected, parent);
+  await assert.rejects(
+    () => createPrivateWorkspace(validated, 'workspace-', {
+      changedMessage: 'changed',
+      cleanupMessage: 'cleanup failed'
+    }),
+    (error) => error.code === 'UNSAFE_TEMP'
+  );
+  assert.deepEqual(await readdir(redirected), []);
 });
 
 test('audit verification replays exact rule-pack and disposition-policy provenance', async (t) => {
