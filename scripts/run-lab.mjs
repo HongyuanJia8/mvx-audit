@@ -273,10 +273,11 @@ if (!retainSnapshot) {
   try {
     await removeLabInputSnapshot(snapshot);
   } catch (cleanupError) {
-    const combined = new Error(`Private lab snapshot cleanup failed${labError ? ` after ${labError.code ?? labError.name ?? 'run failure'}` : ''}; private snapshot retained at ${snapshot.workspace}`);
+    const combined = new Error(`Private lab snapshot cleanup failed${labError ? ` after ${labError.code ?? labError.name ?? 'run failure'}` : ''}; recorded snapshot path may be stale: ${snapshot.workspace}`);
     combined.code = 'LAB_TEMP_CLEANUP_FAILED';
     if (labError) combined.originalCode = labError.code ?? labError.name ?? 'ERROR';
-    combined.snapshotPath = snapshot.workspace;
+    combined.recordedSnapshotPath = snapshot.workspace;
+    combined.snapshotPathConfirmed = false;
     combined.cause = cleanupError;
     throw combined;
   }

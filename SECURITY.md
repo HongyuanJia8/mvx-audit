@@ -134,8 +134,10 @@ The lab wrapper copies the extension through an inode/device-anchored worker
 and captures the scenario with one bounded no-follow read into a private
 snapshot. It audits that snapshot and mounts only those stable bytes. Workspace
 identity is revalidated before cleanup. A failed removal retains its managed
-cleanup capability for a later retry, and the host wrapper reports the retained
-path. Published evidence should retain `scenario.json`, `events.jsonl`, and
+cleanup capability for a later retry. If workspace identity changed, the host
+wrapper labels its recorded path as potentially stale instead of claiming it
+locates the retained inode; investigate the private temporary parent before
+removal. Published evidence should retain `scenario.json`, `events.jsonl`, and
 `report.json` together. Use `mvx lab verify` with the exact extension and, when
 available, independently pinned
 report/package/evidence/seccomp hashes and Docker image ID. Verification

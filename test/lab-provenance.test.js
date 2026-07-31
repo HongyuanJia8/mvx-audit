@@ -694,12 +694,22 @@ if (args[0] === 'image') {
     }
   });
   assert.equal(cleanupFailure.code, 1);
-  const retainedMatch = cleanupFailure.stderr.match(
-    /Private lab snapshot cleanup failed; private snapshot retained at ([^\n]+)/
+  const recordedMatch = cleanupFailure.stderr.match(
+    /Private lab snapshot cleanup failed; recorded snapshot path may be stale: ([^\n]+)/
   );
-  assert.ok(retainedMatch, cleanupFailure.stderr);
-  await access(retainedMatch[1]);
-  await access(`${retainedMatch[1]}-parked`);
+  assert.ok(recordedMatch, cleanupFailure.stderr);
+  const recordedPath = recordedMatch[1];
+  const actualMovedPath = `${recordedPath}-parked`;
+  t.after(() => Promise.all([
+    rm(recordedPath, { recursive: true, force: true }),
+    rm(actualMovedPath, { recursive: true, force: true })
+  ]));
+  assert.deepEqual(await readdir(recordedPath), []);
+  assert.ok((await readdir(actualMovedPath)).includes('extension'));
+  await Promise.all([
+    rm(recordedPath, { recursive: true, force: true }),
+    rm(actualMovedPath, { recursive: true, force: true })
+  ]);
 });
 
 test('host wrapper force-removes a container after event output overflow', async (t) => {
