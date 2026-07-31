@@ -21,13 +21,19 @@ The host wrapper starts Docker with:
 - an ephemeral profile in a bounded tmpfs; and
 - CPU, memory, process, and runtime limits.
 
-The wrapper rejects symlinks and special files anywhere in the extension tree,
-copies the tree and scenario into a private temporary snapshot, audits the
-snapshot, and mounts only those stable bytes. Later changes to the source tree
-cannot change the running sample. It requires a fresh, empty result directory;
-untrusted code cannot write there directly. Do not weaken these flags to
-accommodate an environment where Chromium cannot start; that run is
-`inconclusive`.
+The wrapper rejects symlinks and special files anywhere in the extension tree.
+An inode/device-anchored worker copies the tree into a mode-0700 private
+workspace, verifies every directory handoff, opens files without following
+links, audits the captured tree, and mounts only those stable bytes. Captured
+files are read-only and directories are traversable by the container's fixed
+non-root UID, while the inaccessible private parent prevents other host users
+from reaching them. The scenario is copied from one bounded no-follow read into
+the same workspace.
+Later changes to the source tree cannot change the running sample. Cleanup
+revalidates the private workspace and its parent before removal. The wrapper
+requires a fresh, empty result directory; untrusted code cannot write there
+directly. Do not weaken these flags to accommodate an environment where
+Chromium cannot start; that run is `inconclusive`.
 
 The wrapper also snapshots the exact seccomp bytes after hashing them and runs
 Docker by the inspected content-addressed image ID rather than the mutable image
@@ -68,16 +74,43 @@ mvx lab verify results/local/lab-<id>/report.json \
   quarantine/<id>/unpacked/<sha256> \
   results/local/lab-<id>/scenario.json \
   results/local/lab-<id>/events.jsonl \
+  --expected-report-sha256 <digest-from-an-independent-record> \
+  --expected-package-sha256 <digest-from-an-independent-record> \
+  --expected-events-sha256 <digest-from-an-independent-record> \
   --expected-image-id sha256:<digest-from-an-independent-build-record>
 ```
 
 Verification uses bounded no-follow reads, strict UTF-8 and duplicate-key
-checks, re-evaluates every event, re-audits the supplied extension, and checks
-the local seccomp profile and tool version. Without `--expected-image-id`, the
+checks, and re-evaluates every event. It copies the supplied extension through
+an inode/device-anchored worker into a private workspace, audits only that
+snapshot, waits for cleanup, and rejects directory replacement, unsafe
+temporary parents, symlink roots, and special entries rather than treating a
+changing tree as stable evidence.
+
+The following optional assertions bind identities obtained independently of
+the retained bundle:
+
+| CLI option | Exact value checked |
+|---|---|
+| `--expected-report-sha256` | Raw `report.json` bytes. |
+| `--expected-package-sha256` | Re-audited `mvx-package-v1` snapshot identity. |
+| `--expected-analysis-sha256` | Re-audited `mvx-static-v3` snapshot identity. |
+| `--expected-scenario-sha256` | Raw scenario bytes actually evaluated. |
+| `--expected-events-sha256` | Raw JSONL bytes actually evaluated. |
+| `--expected-evaluation-sha256` | Domain-separated deterministic evaluation identity. |
+| `--expected-seccomp-sha256` | Verifier seccomp-profile bytes. |
+| `--expected-image-id` | Content-addressed Docker image ID recorded by live execution. |
+
+Every SHA-256 option requires a canonical lowercase digest; the image ID uses
+`sha256:<digest>`. An independent mismatch is reported before bundle
+self-consistency can be mistaken for trust. Without `--expected-image-id`, the
 recorded content-addressed image ID remains visible but is explicitly reported
-as not independently checked. This verifies consistency, not authorship: the
-report is not signed, and supplying an attacker-chosen report, extension, and
-image expectation together does not create trust.
+as not independently checked. With no expected identity at all, verification
+also emits an explicit self-consistency caveat.
+
+This verifies consistency and independently supplied identities, not
+authorship: the report is not signed, and supplying attacker-chosen evidence
+and expected values together does not create trust.
 
 The host stops a run after 60 seconds and terminates streaming capture as soon
 as raw JSONL exceeds 20 MB. Offline parsing also caps the stream at 100,000

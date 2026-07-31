@@ -371,15 +371,19 @@ The setuid sandbox helper is not used because all container capabilities are
 dropped. The evaluator is deterministic and can also process externally
 captured JSONL. See [dynamic analysis](dynamic-analysis.md).
 
-Before Docker starts, the wrapper copies the extension and scenario to a
-private snapshot and computes static package/analysis identities over the same
-extension tree that is mounted. `mvx-lab-execution-v1` carries those identities
-through the container event stream. `mvx-lab-evidence-v1` hashes the raw
-scenario and ordered JSONL bytes, while `mvx-lab-evaluation-v1` hashes the
-deterministic interpretation. `mvx lab verify` recomputes all locally available
-identities and can compare the recorded Docker image ID with an independent
-expected value. These hashes are tamper evidence, not signatures or publisher
-authentication.
+Before Docker starts, an inode/device-anchored worker copies the extension to a
+cleanup-enforced private snapshot, while one bounded no-follow read captures
+the scenario into the same workspace. Static package/analysis identities are
+computed over the same extension tree that is mounted.
+`mvx-lab-execution-v1` carries those identities through the container event
+stream. `mvx-lab-evidence-v1` hashes the raw scenario and ordered JSONL bytes,
+while `mvx-lab-evaluation-v1` hashes the deterministic interpretation. `mvx lab
+verify` independently creates the same kind of private extension snapshot and
+can assert the exact report, package, analysis, scenario, event-stream,
+evaluation, seccomp, and Docker-image identities.
+Independent assertions apply to bytes or values actually read and recomputed,
+not fields merely copied from the report. These hashes are tamper evidence, not
+signatures or publisher authentication.
 
 This remains an experimental behavioral observation tool, not an exploit-rate
 benchmark. Dormant C2, environment gating, timing, region checks, and

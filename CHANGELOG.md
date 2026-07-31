@@ -7,6 +7,11 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Independent identity-bound isolated-lab verification for exact report,
+  package, analysis, scenario, event-stream, deterministic evaluation, seccomp,
+  and container-image identities, with private inode/device-anchored extension
+  snapshots shared by live execution and offline verification, cleanup
+  enforcement, CLI/API controls, and explicit self-consistency caveats.
 - Bounded offline verification for directory and packed comparison reports,
   with isolated replay of both complete audits, deterministic finding/evidence
   and capability deltas, packed signature continuity and package-entry delta

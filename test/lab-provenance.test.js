@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  access, chmod, mkdtemp, readFile, rm, symlink, writeFile
+  access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile
 } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -137,6 +137,126 @@ test('lab report verification recomputes all local identities and exposes image 
     '--expected-image-id', IMAGE_ID, '--format', 'json'
   ], cli.streams), 0);
   assert.equal(JSON.parse(cli.output().stdout).valid, true);
+});
+
+test('lab verification binds every independently supplied identity', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const reportSha256 = sha256(await readFile(fixture.reportPath));
+  const seccompSha256 = sha256(await readFile(path.resolve('lab/seccomp-chromium.json')));
+  const expected = {
+    expectedReportSha256: reportSha256,
+    expectedPackageSha256: fixture.audit.package.sha256,
+    expectedAnalysisSha256: fixture.audit.analysis.sha256,
+    expectedScenarioSha256: sha256(fixture.scenarioSource),
+    expectedEventsSha256: sha256(fixture.eventsSource),
+    expectedEvaluationSha256: fixture.report.evidenceProvenance.evaluation.sha256,
+    expectedSeccompSha256: seccompSha256,
+    expectedImageId: IMAGE_ID
+  };
+  const verified = await verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath, expected
+  );
+  assert.deepEqual(verified.checks.independent, {
+    reportSha256: true,
+    packageSha256: true,
+    analysisSha256: true,
+    scenarioSha256: true,
+    eventsSha256: true,
+    evaluationSha256: true,
+    seccompSha256: true,
+    imageId: true
+  });
+  assert.equal(verified.checks.privateExtensionSnapshot, true);
+  assert.equal(verified.caveat, null);
+  assert.deepEqual(verified.caveats, []);
+  assert.deepEqual(verified.identities, {
+    packageSha256: fixture.audit.package.sha256,
+    analysisSha256: fixture.audit.analysis.sha256,
+    scenarioSha256: sha256(fixture.scenarioSource),
+    eventsSha256: sha256(fixture.eventsSource),
+    evaluationSha256: fixture.report.evidenceProvenance.evaluation.sha256,
+    seccompSha256,
+    imageId: IMAGE_ID
+  });
+  assert.match(labVerificationToText(verified), /Independent identities checked: 8\/8/);
+
+  const cli = captureStreams();
+  assert.equal(await runCli([
+    'lab', 'verify', fixture.reportPath, fixture.extension, fixture.scenario,
+    fixture.eventsPath,
+    '--expected-report-sha256', reportSha256,
+    '--expected-package-sha256', fixture.audit.package.sha256,
+    '--expected-analysis-sha256', fixture.audit.analysis.sha256,
+    '--expected-scenario-sha256', sha256(fixture.scenarioSource),
+    '--expected-events-sha256', sha256(fixture.eventsSource),
+    '--expected-evaluation-sha256', fixture.report.evidenceProvenance.evaluation.sha256,
+    '--expected-seccomp-sha256', seccompSha256,
+    '--expected-image-id', IMAGE_ID,
+    '--format', 'json'
+  ], cli.streams), 0);
+  assert.equal(Object.values(JSON.parse(cli.output().stdout).checks.independent)
+    .every((value) => value === true), true);
+});
+
+test('lab verification rejects each mismatched independent identity before trust is claimed', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const wrongDigest = '0'.repeat(64);
+  const mismatches = [
+    ['expectedReportSha256', wrongDigest],
+    ['expectedPackageSha256', wrongDigest],
+    ['expectedAnalysisSha256', wrongDigest],
+    ['expectedScenarioSha256', wrongDigest],
+    ['expectedEventsSha256', wrongDigest],
+    ['expectedEvaluationSha256', wrongDigest],
+    ['expectedSeccompSha256', wrongDigest],
+    ['expectedImageId', `sha256:${'2'.repeat(64)}`]
+  ];
+  for (const [key, value] of mismatches) {
+    await assert.rejects(() => verifyLabReport(
+      fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+      { [key]: value }
+    ), (error) => error.code === 'LAB_IDENTITY_MISMATCH', key);
+  }
+});
+
+test('lab verification snapshots options and cleans a private extension copy', async (t) => {
+  const fixture = await evidenceFixture(t);
+  const temporaryDirectory = path.join(fixture.temp, 'verification-temporary');
+  await mkdir(temporaryDirectory);
+  const options = {
+    expectedPackageSha256: fixture.audit.package.sha256,
+    temporaryDirectory
+  };
+  const pending = verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath, options
+  );
+  options.expectedPackageSha256 = '0'.repeat(64);
+  options.temporaryDirectory = fixture.extension;
+  const verified = await pending;
+  assert.equal(verified.checks.privateExtensionSnapshot, true);
+  assert.deepEqual(await readdir(temporaryDirectory), []);
+
+  const insideExtension = path.join(fixture.extension, 'temporary');
+  await mkdir(insideExtension);
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { temporaryDirectory: insideExtension }
+  ), (error) => error.code === 'UNSAFE_LAB_INPUT');
+  const temporaryLink = path.join(fixture.temp, 'temporary-link');
+  await symlink(temporaryDirectory, temporaryLink);
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { temporaryDirectory: temporaryLink }
+  ), (error) => error.code === 'UNSAFE_LAB_INPUT');
+
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    {
+      seccompProfile: path.join(fixture.temp, 'missing-seccomp.json'),
+      temporaryDirectory
+    }
+  ), (error) => error.code === 'LAB_INPUT_NOT_FOUND');
+  assert.deepEqual(await readdir(temporaryDirectory), []);
 });
 
 test('verification rejects semantic, raw-byte, extension, image, and isolation identity drift', async (t) => {
@@ -287,6 +407,12 @@ test('lab input snapshots isolate mounted bytes from later source mutations and 
   assert.equal(Object.isFrozen(snapshot), true);
   assert.deepEqual(await readFile(snapshot.scenario), scenarioBytes);
   const snapshotWorker = await readFile(path.join(snapshot.extension, 'worker.js'), 'utf8');
+  if (process.platform !== 'win32') {
+    assert.equal((await lstat(snapshot.workspace)).mode & 0o777, 0o700);
+    assert.equal((await lstat(snapshot.extension)).mode & 0o777, 0o755);
+    assert.equal((await lstat(path.join(snapshot.extension, 'worker.js'))).mode & 0o777, 0o444);
+    assert.equal((await lstat(snapshot.scenario)).mode & 0o777, 0o444);
+  }
   await writeFile(path.join(extension, 'worker.js'), 'const changed = true;\n');
   await writeFile(scenario, '{}\n');
   assert.equal(await readFile(path.join(snapshot.extension, 'worker.js'), 'utf8'), snapshotWorker);
@@ -308,6 +434,18 @@ test('lab input snapshots isolate mounted bytes from later source mutations and 
     (error) => error.code === 'UNSAFE_LAB_INPUT');
   await assert.rejects(() => prepareLabInputSnapshot(extension, scenarioLink, { temporaryDirectory }),
     (error) => error.code === 'UNSAFE_LAB_INPUT');
+
+  await writeFile(scenario, scenarioBytes);
+  const temporaryLink = path.join(temp, 'temporary-link');
+  await symlink(temporaryDirectory, temporaryLink);
+  await assert.rejects(() => prepareLabInputSnapshot(
+    extension, scenario, { temporaryDirectory: temporaryLink }
+  ), (error) => error.code === 'UNSAFE_LAB_INPUT');
+  const insideExtension = path.join(extension, 'temporary');
+  await mkdir(insideExtension);
+  await assert.rejects(() => prepareLabInputSnapshot(
+    extension, scenario, { temporaryDirectory: insideExtension }
+  ), (error) => error.code === 'UNSAFE_LAB_INPUT');
 });
 
 test('image identity CLI option is scoped to lab verify and malformed verifier options fail closed', async (t) => {
@@ -328,6 +466,35 @@ test('image identity CLI option is scoped to lab verify and malformed verifier o
     fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
     { expectedImageId: 'sha256:not-a-digest' }
   ), (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { expectedScenarioSha256: 'A'.repeat(64) }
+  ), (error) => error.code === 'INVALID_ARGUMENT');
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    { unexpected: true }
+  ), (error) => error.code === 'INVALID_ARGUMENT');
+  const accessorOptions = {};
+  Object.defineProperty(accessorOptions, 'expectedReportSha256', {
+    enumerable: true,
+    get: () => '0'.repeat(64)
+  });
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    accessorOptions
+  ), (error) => error.code === 'INVALID_ARGUMENT');
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  await assert.rejects(() => verifyLabReport(
+    fixture.reportPath, fixture.extension, fixture.scenario, fixture.eventsPath,
+    proxy
+  ), (error) => error.code === 'INVALID_ARGUMENT');
+  const scoped = captureStreams();
+  assert.equal(await runCli([
+    'lab', 'evaluate', fixture.scenario, fixture.eventsPath,
+    '--expected-events-sha256', sha256(fixture.eventsSource)
+  ], scoped.streams), 2);
+  assert.match(scoped.output().stderr, /Lab evidence identity options apply only to lab verify/);
   await assert.rejects(() => evaluateLabFiles(null, fixture.eventsPath),
     (error) => error.code === 'INVALID_ARGUMENT');
   await assert.rejects(() => verifyLabReport(

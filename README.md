@@ -112,6 +112,9 @@ node bin/mvx.js audit quarantine/<id>/unpacked/<sha256>
 # Re-evaluate and verify a retained isolated-lab evidence bundle offline
 node bin/mvx.js lab verify results/report.json /path/to/exact-extension \
   results/scenario.json results/events.jsonl \
+  --expected-report-sha256 <sha256> \
+  --expected-package-sha256 <sha256> \
+  --expected-events-sha256 <sha256> \
   --expected-image-id sha256:<independently-pinned-image-id>
 
 # Benchmark quarantined real samples without executing extension code
@@ -171,6 +174,10 @@ development.
   package/analysis identities, exact scenario and event bytes, container image
   ID, browser version, and seccomp profile, with deterministic offline
   `lab verify` support.
+- Independent identity assertions for retained lab evidence, covering exact
+  report, package, analysis, scenario, event-stream, evaluation, seccomp, and
+  container-image identities. Offline verification re-audits a private,
+  cleanup-enforced snapshot rather than a changing source directory.
 - Bounded offline static-report verification that replays exact tool semantics,
   package/analysis identities, rule packs, disposition policies, packed
   authenticity policy, and optional independently trusted identities, using
@@ -320,7 +327,12 @@ const comparisonVerification = await verifyComparisonReport(
 const labReport = await evaluateLabFiles('./scenario.json', './events.jsonl');
 const labVerification = await verifyLabReport(
   './report.json', '/path/to/exact-extension', './scenario.json', './events.jsonl',
-  { expectedImageId: 'sha256:<independently-pinned-image-id>' }
+  {
+    expectedReportSha256: '<lowercase-sha256>',
+    expectedPackageSha256: '<lowercase-sha256>',
+    expectedEventsSha256: '<lowercase-sha256>',
+    expectedImageId: 'sha256:<independently-pinned-image-id>'
+  }
 );
 ```
 
