@@ -69,7 +69,7 @@ function snapshotRecord(value, label) {
 
 function snapshotPaths(value, label) {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || utilTypes.isProxy(value)
+  if (utilTypes.isProxy(value) || !Array.isArray(value)
     || Object.getPrototypeOf(value) !== Array.prototype
     || Object.getOwnPropertySymbols(value).length > 0) {
     throw new MvxError(`${label} must be a non-proxy array of file paths`, {

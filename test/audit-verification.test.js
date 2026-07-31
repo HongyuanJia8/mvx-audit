@@ -442,6 +442,12 @@ test('audit verification rejects ambiguous reports and hostile options before an
       (error) => error.code === 'INVALID_ARGUMENT'
     );
   }
+  const revokedOptions = Proxy.revocable({}, {});
+  revokedOptions.revoke();
+  await assert.rejects(
+    () => verifyAuditReport(realReport, extension, revokedOptions.proxy),
+    (error) => error.code === 'INVALID_ARGUMENT'
+  );
   const accessor = {};
   Object.defineProperty(accessor, 'expectedReportSha256', {
     get() {
@@ -471,6 +477,8 @@ test('audit verification rejects ambiguous reports and hostile options before an
   symbolPaths[Symbol('ignored')] = 'ignored.json';
   const customPrototypePaths = [];
   Object.setPrototypeOf(customPrototypePaths, null);
+  const revokedPaths = Proxy.revocable([], {});
+  revokedPaths.revoke();
   const invalidOptionSets = [
     { zUnknown: true, aUnknown: true },
     { expectedPackageSha256: 'A'.repeat(64) },
@@ -482,6 +490,7 @@ test('audit verification rejects ambiguous reports and hostile options before an
     { reportLimits: { maxReportValues: 0 } },
     { rulePacks: null },
     { rulePacks: new Proxy([], {}) },
+    { rulePacks: revokedPaths.proxy },
     { rulePacks: accessorPaths },
     { rulePacks: symbolPaths },
     { rulePacks: customPrototypePaths },
