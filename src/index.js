@@ -1,4 +1,8 @@
 export { auditExtension } from './analyzer.js';
+export {
+  AUDIT_VERIFICATION_PROFILE, DEFAULT_AUDIT_VERIFICATION_LIMITS,
+  auditVerificationToText, verifyAuditReport
+} from './audit-verification.js';
 export { auditExtensionArchive } from './packed-audit.js';
 export { unpackCrx, unpackExtensionArchive } from './archive.js';
 export { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';

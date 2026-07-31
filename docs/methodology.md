@@ -126,6 +126,27 @@ CRX, retain the hash-verified quarantine metadata as the authoritative packed-
 artifact identity. Matching package or analysis hashes also do not imply that
 two extensions are benign or equivalent at runtime.
 
+## Static report verification
+
+The `mvx-audit-verification-v1` profile re-runs a schema-v1 directory or packed
+audit and performs deep deterministic equality. It covers the exact tool
+version, findings, summaries, package and analysis identities, rule-pack byte
+provenance and limits, disposition-policy byte provenance and recorded
+evaluation time, and packed authenticity and extraction metadata.
+
+Only the local `target.root` and packed `artifact.path` fields are normalized
+during comparison. Their equality with the current input is reported
+separately. Every other field must match. The raw report reader is bounded,
+no-follow, strict UTF-8 and JSON, duplicate-key rejecting, and depth limited.
+An optional expected report SHA-256 binds exact JSON bytes and therefore also
+binds the excluded paths and formatting.
+
+Caller-supplied package, analysis, archive, extension-ID, and valid-signature
+requirements are independent assertions. Once the fresh audit exists, they are
+checked before report equality so a trusted input mismatch remains explicit.
+Reproducibility alone authenticates neither the report author nor the input
+source. See [offline static-audit verification](audit-verification.md).
+
 ## CRX authenticity semantics
 
 For CRX2, MVX verifies the legacy RSA PKCS#1 v1.5 SHA-1 signature over the ZIP

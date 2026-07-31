@@ -87,6 +87,19 @@ the original finding or raw summary. Prefer `--fail-on` when policy provenance
 is not independently trusted; `--fail-on-unreviewed` explicitly chooses to rely
 on active external dispositions.
 
+Retained static reports can be replayed with `mvx audit verify`. Verification
+uses bounded, no-follow report reads, rejects ambiguous JSON and unsafe
+location text, and recomputes the complete audit with the supplied rule packs
+and disposition policies. It excludes only `target.root` and packed
+`artifact.path` from semantic equality so identical content can move between
+machines. Use an independently obtained report, package, analysis, or archive
+SHA-256 when provenance matters; self-consistent attacker-chosen inputs are not
+trusted merely because they reproduce. An expected extension ID additionally
+requires verified CRX authenticity. Verification is not a signature, publisher
+identity, timestamp, safety verdict, or authorization to handle live malware.
+The CLI always requires `--acknowledge-risk`, because an untrusted report can
+select packed verification and temporary extraction.
+
 Live browser analysis is accepted only through the documented container lab:
 no public network, no host browser profile, no real user data, no writable
 sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium

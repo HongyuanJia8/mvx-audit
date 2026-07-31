@@ -2,6 +2,7 @@ import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { auditExtension } from './analyzer.js';
+import { auditVerificationToText, verifyAuditReport } from './audit-verification.js';
 import { unpackExtensionArchive } from './archive.js';
 import { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
@@ -26,6 +27,14 @@ Usage:
             [--disposition-at timestamp]
             [--acknowledge-risk] [--require-valid-signature]
             [--expected-archive-sha256 digest] [--expected-extension-id id]
+  mvx audit verify <report.json> <extension|archive> --acknowledge-risk
+            [--format text|json] [--rule-pack file ...]
+            [--disposition-policy file ...]
+            [--expected-report-sha256 digest]
+            [--expected-package-sha256 digest]
+            [--expected-analysis-sha256 digest]
+            [--expected-archive-sha256 digest] [--expected-extension-id id]
+            [--require-valid-signature]
   mvx compare <before> <after> [--format markdown|json] [--output file]
               [--rule-pack file ...] [--disposition-policy file ...]
               [--disposition-at timestamp]
@@ -68,7 +77,7 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = Object.create(null);
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256', '--expected-report-sha256', '--expected-package-sha256', '--expected-analysis-sha256']);
   const setSingleton = (key, value, token) => {
     if (Object.hasOwn(options, key)) {
       throw new MvxError(`Duplicate option: ${token}`, { code: 'INVALID_ARGUMENT' });
@@ -151,6 +160,11 @@ export async function runCli(argv, streams = process) {
       return 0;
     }
     const [command, ...args] = positionals;
+    const auditVerificationRequested = command === 'audit' && args[0] === 'verify'
+      && (args.length !== 1
+        || options.expectedReportSha256 !== undefined
+        || options.expectedPackageSha256 !== undefined
+        || options.expectedAnalysisSha256 !== undefined);
     const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
       || options.expectedExtensionId !== undefined;
     const sideArchiveIdentityRequested = options.beforeArchiveSha256 !== undefined
@@ -168,6 +182,14 @@ export async function runCli(argv, streams = process) {
     const labImageIdentityRequested = options.expectedImageId !== undefined;
     const dispositionPolicyOptionsRequested = options.dispositionPolicies !== undefined
       || options.dispositionAt !== undefined;
+    const auditVerificationIdentityRequested = options.expectedReportSha256 !== undefined
+      || options.expectedPackageSha256 !== undefined
+      || options.expectedAnalysisSha256 !== undefined;
+    if (auditVerificationIdentityRequested && !auditVerificationRequested) {
+      throw new MvxError('Audit report identity options apply only to audit verify', {
+        code: 'INVALID_ARGUMENT'
+      });
+    }
     if (archiveIdentityRequested && !['audit', 'sample'].includes(command) && !packedComparisonRequested) {
       throw new MvxError('Archive identity options apply only to audit, sample unpack, or packed comparison', { code: 'INVALID_ARGUMENT' });
     }
@@ -197,6 +219,50 @@ export async function runCli(argv, streams = process) {
     }
 
     if (command === 'audit') {
+      if (auditVerificationRequested) {
+        if (args.length !== 3) {
+          throw new MvxError('audit verify requires report and extension/archive paths', {
+            code: 'INVALID_ARGUMENT'
+          });
+        }
+        if (!options.acknowledgeRisk) {
+          throw new MvxError('audit verify requires --acknowledge-risk', {
+            code: 'RISK_ACK_REQUIRED'
+          });
+        }
+        if (options.failOn !== undefined || options.failOnUnreviewed !== undefined) {
+          throw new MvxError('Finding thresholds do not apply to audit verify', {
+            code: 'INVALID_ARGUMENT'
+          });
+        }
+        if (options.dispositionAt !== undefined) {
+          throw new MvxError('audit verify derives disposition time from the report', {
+            code: 'INVALID_ARGUMENT'
+          });
+        }
+        const format = options.format ?? 'text';
+        if (!['text', 'json'].includes(format)) {
+          throw new MvxError(`Unsupported audit verification format: ${format}`, {
+            code: 'INVALID_ARGUMENT'
+          });
+        }
+        const verification = await verifyAuditReport(args[1], args[2], {
+          rulePacks: options.rulePacks,
+          dispositionPolicies: options.dispositionPolicies,
+          requireValidSignature: options.requireValidSignature,
+          expectedReportSha256: options.expectedReportSha256,
+          expectedPackageSha256: options.expectedPackageSha256,
+          expectedAnalysisSha256: options.expectedAnalysisSha256,
+          expectedArchiveSha256: options.expectedArchiveSha256,
+          expectedExtensionId: options.expectedExtensionId
+        });
+        await emit(
+          format === 'json' ? json(verification) : auditVerificationToText(verification),
+          options.output,
+          streams.stdout
+        );
+        return 0;
+      }
       if (args.length !== 1) throw new MvxError('audit requires exactly one extension or archive path', { code: 'INVALID_ARGUMENT' });
       const format = options.format ?? 'text';
       if (options.dispositionAt !== undefined && options.dispositionPolicies === undefined) {

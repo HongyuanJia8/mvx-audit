@@ -53,6 +53,11 @@ node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
 node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
   --expected-archive-sha256 <sha256> --expected-extension-id <extension-id>
 
+# Reproduce a retained static report against exact input and trusted identities
+node bin/mvx.js audit verify report.json /path/to/extension \
+  --acknowledge-risk --expected-report-sha256 <sha256> \
+  --expected-package-sha256 <sha256>
+
 # Fail CI when a high- or critical-severity finding exists
 node bin/mvx.js audit /path/to/extension --format sarif \
   --output results.sarif --fail-on high
@@ -160,9 +165,13 @@ development.
   package/analysis identities, exact scenario and event bytes, container image
   ID, browser version, and seccomp profile, with deterministic offline
   `lab verify` support.
+- Bounded offline static-report verification that replays exact tool semantics,
+  package/analysis identities, rule packs, disposition policies, packed
+  authenticity, and optional independently trusted identities.
 
 See the complete [rule reference](docs/rule-reference.md), [declarative rule
 pack guide](docs/rule-packs.md), [disposition-policy guide](docs/disposition-policies.md),
+[audit-verification guide](docs/audit-verification.md),
 [packed comparison guide](docs/packed-comparison.md), and
 [methodology](docs/methodology.md).
 
@@ -254,7 +263,8 @@ Public API:
 ```js
 import {
   auditExtension, auditExtensionArchive, compareExtensionArchives, compareExtensions,
-  evaluateLabFiles, loadDispositionPolicies, loadRulePacks, verifyLabReport
+  evaluateLabFiles, loadDispositionPolicies, loadRulePacks, verifyAuditReport,
+  verifyLabReport
 } from 'mvx-audit';
 
 const rulePacks = ['./team-iocs.json'];
@@ -278,6 +288,15 @@ const packedComparison = await compareExtensionArchives('before.crx', 'after.crx
   expectedBeforeArchiveSha256: '<lowercase-sha256>',
   expectedAfterArchiveSha256: '<lowercase-sha256>'
 });
+const auditVerification = await verifyAuditReport(
+  './report.json', '/path/to/exact-extension',
+  {
+    rulePacks,
+    dispositionPolicies,
+    expectedReportSha256: '<lowercase-sha256>',
+    expectedPackageSha256: '<lowercase-sha256>'
+  }
+);
 const labReport = await evaluateLabFiles('./scenario.json', './events.jsonl');
 const labVerification = await verifyLabReport(
   './report.json', '/path/to/exact-extension', './scenario.json', './events.jsonl',
