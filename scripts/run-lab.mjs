@@ -260,10 +260,11 @@ try {
       await forceRemoveContainer(containerIdFile);
     } catch (cleanupError) {
       retainSnapshot = true;
-      const combined = new Error(`Lab container cleanup failed after ${labError.code ?? labError.name ?? 'run failure'}; private snapshot retained at ${snapshot.workspace}`);
+      const combined = new Error(`Lab container cleanup failed after ${labError.code ?? labError.name ?? 'run failure'}; recorded snapshot path may be stale: ${snapshot.workspace}`);
       combined.code = 'LAB_CONTAINER_CLEANUP_FAILED';
       combined.originalCode = labError.code ?? labError.name ?? 'ERROR';
-      combined.snapshotPath = snapshot.workspace;
+      combined.recordedSnapshotPath = snapshot.workspace;
+      combined.snapshotPathConfirmed = false;
       combined.cause = cleanupError;
       labError = combined;
     }

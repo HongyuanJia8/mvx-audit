@@ -730,7 +730,8 @@ test('host wrapper force-removes a container after event output overflow', async
   const dockerLog = path.join(temp, 'docker-log.jsonl');
   const containerId = '3'.repeat(64);
   await writeFile(docker, `#!/usr/bin/env node
-const { appendFileSync, chmodSync, writeFileSync } = require('node:fs');
+const { appendFileSync, chmodSync, mkdirSync, renameSync, writeFileSync } = require('node:fs');
+const { dirname } = require('node:path');
 const args = process.argv.slice(2);
 appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(args) + '\\n');
 if (args[0] === 'image') {
@@ -741,6 +742,12 @@ if (args[0] === 'image') {
 } else {
   const cidIndex = args.indexOf('--cidfile');
   writeFileSync(args[cidIndex + 1], '${containerId}\\n');
+  if (process.env.FAKE_REPLACE_SNAPSHOT === '1') {
+    const workspace = dirname(args[cidIndex + 1]);
+    renameSync(workspace, workspace + '-parked');
+    mkdirSync(workspace);
+    writeFileSync(args[cidIndex + 1], 'not-a-container-id\\n');
+  }
   if (process.env.FAKE_CID_UNREADABLE) chmodSync(args[cidIndex + 1], 0o000);
   process.on('SIGTERM', () => {});
   process.stdout.on('error', () => {});
@@ -781,7 +788,7 @@ if (args[0] === 'image') {
     }
   });
   assert.equal(failedCleanup.code, 1);
-  assert.match(failedCleanup.stderr, /Lab container cleanup failed after LAB_LIMIT; private snapshot retained at/);
+  assert.match(failedCleanup.stderr, /Lab container cleanup failed after LAB_LIMIT; recorded snapshot path may be stale:/);
   const allInvocations = (await readFile(dockerLog, 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(allInvocations.length, 6);
   assert.deepEqual(allInvocations[5], ['rm', '--force', containerId]);
@@ -806,7 +813,7 @@ if (args[0] === 'image') {
     }
   });
   assert.equal(unreadableCid.code, 1);
-  assert.match(unreadableCid.stderr, /Lab container cleanup failed after LAB_LIMIT; private snapshot retained at/);
+  assert.match(unreadableCid.stderr, /Lab container cleanup failed after LAB_LIMIT; recorded snapshot path may be stale:/);
   const finalInvocations = (await readFile(dockerLog, 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(finalInvocations.length, 8);
   assert.equal(finalInvocations[7][0], 'run');
@@ -815,4 +822,36 @@ if (args[0] === 'image') {
   await access(unreadableSnapshot);
   assert.match(unreadableCid.stderr, new RegExp(unreadableSnapshot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   await rm(unreadableSnapshot, { recursive: true, force: true });
+
+  const replacedOutput = path.join(temp, 'replaced-cleanup-output');
+  const replacedCleanup = await run(process.execPath, [
+    path.resolve('scripts/run-lab.mjs'),
+    '--extension', extension, '--scenario', scenario, '--output', replacedOutput,
+    '--image', 'mvx-lab:test', '--acknowledge-risk'
+  ], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+      FAKE_DOCKER_LOG: dockerLog,
+      FAKE_REPLACE_SNAPSHOT: '1'
+    }
+  });
+  assert.equal(replacedCleanup.code, 1);
+  const recordedMatch = replacedCleanup.stderr.match(
+    /Lab container cleanup failed after LAB_LIMIT; recorded snapshot path may be stale: ([^\n]+)/
+  );
+  assert.ok(recordedMatch, replacedCleanup.stderr);
+  const recordedPath = recordedMatch[1];
+  const actualMovedPath = `${recordedPath}-parked`;
+  t.after(() => Promise.all([
+    rm(recordedPath, { recursive: true, force: true }),
+    rm(actualMovedPath, { recursive: true, force: true })
+  ]));
+  assert.deepEqual(await readdir(recordedPath), ['container.cid']);
+  assert.ok((await readdir(actualMovedPath)).includes('extension'));
+  await Promise.all([
+    rm(recordedPath, { recursive: true, force: true }),
+    rm(actualMovedPath, { recursive: true, force: true })
+  ]);
 });
