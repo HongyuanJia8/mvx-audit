@@ -320,16 +320,21 @@ test('packed comparison cleans both sides on failure and rejects ambiguous API o
   }), (error) => error.code === 'ARCHIVE_LIMIT');
   assert.deepEqual(await readdir(fixture.temporaryDirectory), []);
 
-  const inheritedKey = 'expectedBeforeArchiveSha256';
-  const previousInherited = Object.getOwnPropertyDescriptor(Object.prototype, inheritedKey);
+  const inheritedKeys = ['expectedBeforeArchiveSha256', '_preparedRulePacks'];
+  const previousInherited = new Map(inheritedKeys.map((key) => [
+    key,
+    Object.getOwnPropertyDescriptor(Object.prototype, key)
+  ]));
   let inheritedGetterCalls = 0;
-  Object.defineProperty(Object.prototype, inheritedKey, {
-    configurable: true,
-    get() {
-      inheritedGetterCalls += 1;
-      throw new Error('inherited getter must not execute');
-    }
-  });
+  for (const key of inheritedKeys) {
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true,
+      get() {
+        inheritedGetterCalls += 1;
+        throw new Error('inherited getter must not execute');
+      }
+    });
+  }
   try {
     const inheritedSafe = await compareExtensionArchives(fixture.before, fixture.after, {
       temporaryDirectory: fixture.temporaryDirectory
@@ -337,10 +342,13 @@ test('packed comparison cleans both sides on failure and rejects ambiguous API o
     assert.equal(inheritedSafe.archiveContinuity.status, 'verified-same');
     assert.equal(inheritedGetterCalls, 0);
   } finally {
-    if (previousInherited) {
-      Object.defineProperty(Object.prototype, inheritedKey, previousInherited);
-    } else {
-      delete Object.prototype[inheritedKey];
+    for (const key of inheritedKeys) {
+      const previous = previousInherited.get(key);
+      if (previous) {
+        Object.defineProperty(Object.prototype, key, previous);
+      } else {
+        delete Object.prototype[key];
+      }
     }
   }
 

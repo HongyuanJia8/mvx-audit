@@ -253,7 +253,7 @@ function snapshotPaths(value, label) {
 }
 
 function snapshotPackedComparisonOptions(options) {
-  return Object.freeze({
+  return Object.freeze(Object.assign(Object.create(null), {
     archiveLimits: snapshotRecord(
       ownOption(options, 'archiveLimits'),
       'Packed comparison archive limits'
@@ -279,7 +279,7 @@ function snapshotPackedComparisonOptions(options) {
     ),
     rulePacks: snapshotPaths(ownOption(options, 'rulePacks'), 'rulePacks'),
     temporaryDirectory: ownOption(options, 'temporaryDirectory')
-  });
+  }));
 }
 
 async function auditPackedComparisonSide(inputPath, options, implicitSignatureRequirement) {

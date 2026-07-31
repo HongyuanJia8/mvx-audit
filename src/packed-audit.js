@@ -24,21 +24,60 @@ async function resolveTemporaryParent(input) {
   return realpath(absolute);
 }
 
+function ownDataProperty(value, key) {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeErrorMessage(error) {
+  const message = ownDataProperty(error, 'message');
+  if (typeof message === 'string') return message;
+  if (typeof error === 'string') return error;
+  if (error === null) return 'null';
+  if (['number', 'boolean', 'bigint', 'undefined', 'symbol'].includes(typeof error)) {
+    return String(error);
+  }
+  return 'Unexpected packed audit failure';
+}
+
 function sanitizeTemporaryError(error, workspace) {
   let current = error;
   const seen = new Set();
   let containsWorkspace = false;
-  while (current && typeof current === 'object' && !seen.has(current)) {
+  while ((typeof current === 'object' || typeof current === 'function')
+    && current !== null && !seen.has(current)) {
     seen.add(current);
-    if (typeof current.message === 'string' && current.message.includes(workspace)) containsWorkspace = true;
-    current = current.cause;
+    const message = ownDataProperty(current, 'message');
+    if (typeof message === 'string' && message.includes(workspace)) containsWorkspace = true;
+    current = ownDataProperty(current, 'cause');
   }
-  if (!containsWorkspace) return error;
-  const message = String(error?.message ?? error).split(workspace).join('<temporary extraction>');
-  if (error instanceof MvxError) return new MvxError(message, { code: error.code });
+  const rawMessage = safeErrorMessage(error);
+  const message = containsWorkspace
+    ? rawMessage.split(workspace).join('<temporary extraction>')
+    : rawMessage;
+  const code = ownDataProperty(error, 'code');
+  let mvxError = false;
+  try {
+    mvxError = error instanceof MvxError;
+  } catch {
+    mvxError = false;
+  }
+  if (mvxError) {
+    return new MvxError(message, {
+      code: typeof code === 'string' ? code : 'MVX_ERROR'
+    });
+  }
   const sanitized = new Error(message);
-  sanitized.name = error?.name ?? 'Error';
-  if (error?.code !== undefined) sanitized.code = error.code;
+  const name = ownDataProperty(error, 'name');
+  sanitized.name = typeof name === 'string' ? name : 'Error';
+  if (typeof code === 'string') sanitized.code = code;
   return sanitized;
 }
 
@@ -133,13 +172,16 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       ]
     };
   } catch (error) {
-    failure = sanitizeTemporaryError(error, workspace);
+    failure = error;
   }
   try {
     await rm(workspace, { recursive: true, force: true });
   } catch (error) {
     const cleanupFailure = sanitizeTemporaryError(error, workspace);
-    const originalCode = failure?.code ?? null;
+    const sanitizedFailure = failure
+      ? sanitizeTemporaryError(failure, workspace)
+      : null;
+    const originalCode = sanitizedFailure?.code ?? null;
     const reported = new MvxError(
       `Temporary extraction cleanup failed${originalCode ? ` after ${originalCode}` : ''}: ${cleanupFailure.message}`,
       { code: 'TEMP_CLEANUP_FAILED', cause: cleanupFailure }
@@ -147,6 +189,6 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     if (originalCode) reported.originalCode = originalCode;
     throw reported;
   }
-  if (failure) throw failure;
+  if (failure) throw sanitizeTemporaryError(failure, workspace);
   return result;
 }

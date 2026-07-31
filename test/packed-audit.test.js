@@ -139,6 +139,32 @@ test('packed ZIP audit and archive failures always clean private temporary state
   );
   assert.deepEqual(await readdir(sample.temporaryDirectory), []);
 
+  let hostileCauseReads = 0;
+  const hostileFailure = Object.assign(new Error('archive limit trap'), {
+    code: 'ARCHIVE_LIMIT_TRAP'
+  });
+  Object.defineProperty(hostileFailure, 'cause', {
+    get() {
+      hostileCauseReads += 1;
+      throw new Error('SANITIZER_EXPLODED');
+    }
+  });
+  const hostileLimits = new Proxy({}, {
+    ownKeys() {
+      throw hostileFailure;
+    }
+  });
+  await assert.rejects(
+    () => auditExtensionArchive(sample.input, {
+      temporaryDirectory: sample.temporaryDirectory,
+      archiveLimits: hostileLimits
+    }),
+    (error) => error.code === 'ARCHIVE_LIMIT_TRAP'
+      && error.message === 'archive limit trap'
+  );
+  assert.equal(hostileCauseReads, 0);
+  assert.deepEqual(await readdir(sample.temporaryDirectory), []);
+
   await writeFile(sample.input, 'not an archive', 'utf8');
   await assert.rejects(
     () => auditExtensionArchive(sample.input, { temporaryDirectory: sample.temporaryDirectory }),
