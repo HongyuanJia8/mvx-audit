@@ -90,6 +90,10 @@ function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function ownOption(options, key) {
+  return Object.getOwnPropertyDescriptor(options, key)?.value;
+}
+
 function packageDelta(before, after) {
   const beforeEntries = new Map(before.entries.map((entry) => [entry.path, entry]));
   const afterEntries = new Map(after.entries.map((entry) => [entry.path, entry]));
@@ -204,17 +208,20 @@ function validatePackedComparisonOptions(options) {
     throw new MvxError(`Unknown packed comparison option(s): ${unknown.join(', ')}`, { code: 'INVALID_ARGUMENT' });
   }
   for (const key of ['requireSameExtensionId', 'requireValidSignature']) {
-    if (options[key] !== undefined && typeof options[key] !== 'boolean') {
+    const value = ownOption(options, key);
+    if (value !== undefined && typeof value !== 'boolean') {
       throw new MvxError(`${key} must be boolean`, { code: 'INVALID_ARGUMENT' });
     }
   }
   for (const key of ['expectedBeforeArchiveSha256', 'expectedAfterArchiveSha256']) {
-    if (options[key] !== undefined && (typeof options[key] !== 'string' || !SHA256.test(options[key]))) {
+    const value = ownOption(options, key);
+    if (value !== undefined && (typeof value !== 'string' || !SHA256.test(value))) {
       throw new MvxError(`${key} must be a lowercase SHA-256 digest`, { code: 'INVALID_ARGUMENT' });
     }
   }
-  if (options.expectedExtensionId !== undefined
-    && (typeof options.expectedExtensionId !== 'string' || !EXTENSION_ID.test(options.expectedExtensionId))) {
+  const expectedExtensionId = ownOption(options, 'expectedExtensionId');
+  if (expectedExtensionId !== undefined
+    && (typeof expectedExtensionId !== 'string' || !EXTENSION_ID.test(expectedExtensionId))) {
     throw new MvxError('expectedExtensionId must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
   }
 }
@@ -222,7 +229,8 @@ function validatePackedComparisonOptions(options) {
 function snapshotRecord(value, label) {
   if (value === undefined) return undefined;
   assertOptionsObject(value, label);
-  return Object.freeze(Object.fromEntries(Object.entries(value)));
+  return Object.freeze(Object.fromEntries(Object.getOwnPropertyNames(value)
+    .map((key) => [key, Object.getOwnPropertyDescriptor(value, key).value])));
 }
 
 function snapshotPaths(value, label) {
@@ -246,23 +254,46 @@ function snapshotPaths(value, label) {
 
 function snapshotPackedComparisonOptions(options) {
   return Object.freeze({
-    archiveLimits: snapshotRecord(options.archiveLimits, 'Packed comparison archive limits'),
-    dispositionAt: options.dispositionAt,
-    dispositionPolicies: snapshotPaths(options.dispositionPolicies, 'dispositionPolicies'),
+    archiveLimits: snapshotRecord(
+      ownOption(options, 'archiveLimits'),
+      'Packed comparison archive limits'
+    ),
+    dispositionAt: ownOption(options, 'dispositionAt'),
+    dispositionPolicies: snapshotPaths(
+      ownOption(options, 'dispositionPolicies'),
+      'dispositionPolicies'
+    ),
     dispositionPolicyLimits: snapshotRecord(
-      options.dispositionPolicyLimits,
+      ownOption(options, 'dispositionPolicyLimits'),
       'Packed comparison disposition-policy limits'
     ),
-    expectedAfterArchiveSha256: options.expectedAfterArchiveSha256,
-    expectedBeforeArchiveSha256: options.expectedBeforeArchiveSha256,
-    expectedExtensionId: options.expectedExtensionId,
-    limits: snapshotRecord(options.limits, 'Packed comparison scan limits'),
-    requireSameExtensionId: options.requireSameExtensionId,
-    requireValidSignature: options.requireValidSignature,
-    rulePackLimits: snapshotRecord(options.rulePackLimits, 'Packed comparison rule-pack limits'),
-    rulePacks: snapshotPaths(options.rulePacks, 'rulePacks'),
-    temporaryDirectory: options.temporaryDirectory
+    expectedAfterArchiveSha256: ownOption(options, 'expectedAfterArchiveSha256'),
+    expectedBeforeArchiveSha256: ownOption(options, 'expectedBeforeArchiveSha256'),
+    expectedExtensionId: ownOption(options, 'expectedExtensionId'),
+    limits: snapshotRecord(ownOption(options, 'limits'), 'Packed comparison scan limits'),
+    requireSameExtensionId: ownOption(options, 'requireSameExtensionId'),
+    requireValidSignature: ownOption(options, 'requireValidSignature'),
+    rulePackLimits: snapshotRecord(
+      ownOption(options, 'rulePackLimits'),
+      'Packed comparison rule-pack limits'
+    ),
+    rulePacks: snapshotPaths(ownOption(options, 'rulePacks'), 'rulePacks'),
+    temporaryDirectory: ownOption(options, 'temporaryDirectory')
   });
+}
+
+async function auditPackedComparisonSide(inputPath, options, implicitSignatureRequirement) {
+  try {
+    return await auditExtensionArchive(inputPath, options);
+  } catch (error) {
+    if (implicitSignatureRequirement && error?.code === 'CRX_SIGNATURE_REQUIRED') {
+      throw new MvxError(
+        'Same-extension comparison requires two cryptographically verified CRX identities',
+        { code: 'ARCHIVE_IDENTITY_UNVERIFIABLE', cause: error }
+      );
+    }
+    throw error;
+  }
 }
 
 export async function compareExtensions(beforePath, afterPath, options = {}) {
@@ -299,25 +330,34 @@ export async function compareExtensionArchives(beforePath, afterPath, options = 
   const stableOptions = snapshotPackedComparisonOptions(options);
   const preparedRulePacks = await resolveRulePacks(stableOptions);
   const preparedDispositionPolicies = await resolveDispositionPolicies(stableOptions);
+  const strictContinuity = stableOptions.requireSameExtensionId === true;
+  const implicitSignatureRequirement = strictContinuity
+    && stableOptions.requireValidSignature !== true;
   const shared = {
     archiveLimits: stableOptions.archiveLimits,
     limits: stableOptions.limits,
-    requireValidSignature: stableOptions.requireValidSignature,
+    requireValidSignature: stableOptions.requireValidSignature || strictContinuity,
     temporaryDirectory: stableOptions.temporaryDirectory,
     _preparedRulePacks: preparedRulePacks,
     _preparedDispositionPolicies: preparedDispositionPolicies
   };
-  const before = await auditExtensionArchive(beforePath, {
+  const before = await auditPackedComparisonSide(beforePath, {
     ...shared,
     expectedArchiveSha256: stableOptions.expectedBeforeArchiveSha256,
     expectedExtensionId: stableOptions.expectedExtensionId
-  });
-  const after = await auditExtensionArchive(afterPath, {
+  }, implicitSignatureRequirement);
+  const after = await auditPackedComparisonSide(afterPath, {
     ...shared,
     expectedArchiveSha256: stableOptions.expectedAfterArchiveSha256,
-    expectedExtensionId: stableOptions.expectedExtensionId
-  });
-  const continuity = archiveContinuity(before, after, stableOptions.requireSameExtensionId === true);
+    expectedExtensionId: stableOptions.expectedExtensionId,
+    ...(strictContinuity ? {
+      ...(stableOptions.expectedExtensionId === undefined ? {
+        _expectedExtensionIdIfVerified: before.artifact.authenticity.extensionId
+      } : {}),
+      _expectedDeveloperKeySha256IfVerified: before.artifact.authenticity.developerKeySha256
+    } : {})
+  }, implicitSignatureRequirement);
+  const continuity = archiveContinuity(before, after, strictContinuity);
   if (continuity.required && continuity.status === 'unverifiable') {
     throw new MvxError('Same-extension comparison requires two cryptographically verified CRX identities', {
       code: 'ARCHIVE_IDENTITY_UNVERIFIABLE'

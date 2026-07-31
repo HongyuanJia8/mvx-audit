@@ -70,9 +70,12 @@ archive digests when exact acquisition provenance matters. A
 the complete developer-key SHA-256 to match; it proves neither publisher
 identity nor benign evolution. ZIP or invalid-signature input is explicitly
 `unverifiable`. Use `--require-same-extension-id` to fail closed rather than
-accept that state. Both temporary extractions are completed and removed
-sequentially, so a second-side failure cannot leave a first-side task running
-after the comparison rejects.
+accept that state. Strict continuity verifies and binds the second CRX's
+extension ID and full developer key before extracting it. Temporary audits and
+cleanup run sequentially, so a second-side failure cannot leave a first-side
+task running after the comparison rejects. A cleanup failure is reported as
+`TEMP_CLEANUP_FAILED`; treat any residual directory under the configured
+temporary parent as quarantined extension content.
 
 Treat disposition policies as privileged review inputs. Keep them outside the
 extension package, review changes like code, and require exact package SHA-256,

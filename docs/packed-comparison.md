@@ -2,9 +2,9 @@
 
 `mvx compare packed` compares two CRX/ZIP artifacts without trusting a
 persistent extraction. Each side goes through the ordinary bounded packed
-audit in its own private temporary workspace; the first workspace is removed
-before the second audit begins, and every success or failure path removes its
-workspace before returning.
+audit in its own private temporary workspace. A side does not return success
+until its workspace has been removed, and the second audit does not begin until
+the first has returned.
 
 ```bash
 mvx compare packed before.crx after.crx --acknowledge-risk \
@@ -54,9 +54,16 @@ By default all three states are reportable for forensic comparison.
 `--require-same-extension-id` fails with
 `ARCHIVE_IDENTITY_UNVERIFIABLE` or `ARCHIVE_IDENTITY_MISMATCH` unless continuity
 is `verified-same`. `--require-valid-signature` independently requires each
-side to be a valid CRX. An externally trusted `--expected-extension-id` is
-stronger still: it must verify against both artifacts before either contained
-package is accepted.
+side to be a valid CRX; when both flags are present, its
+`CRX_SIGNATURE_REQUIRED` failure can be reported first. An externally trusted
+`--expected-extension-id` is stronger still: it must verify against both
+artifacts before either contained package is accepted.
+
+Strict continuity makes signature verification part of the extraction gate.
+After the first CRX verifies, its extension ID and full developer-key SHA-256
+are applied as internal expectations while authenticating the second archive,
+before its ZIP entries are parsed or extracted. These internally derived
+expectations are not represented as analyst-supplied `identityPolicy` values.
 
 Matching embedded keys establish package lineage under that key, not the
 identity of a person or organization. They do not prove Web Store publication,
@@ -101,3 +108,9 @@ strictness flags are rejected before temporary extraction. Rule/policy path
 lists and scan, archive, rule-pack, and disposition-policy limit objects are
 snapshotted before asynchronous work, so a caller cannot change the second
 side's analysis semantics while a comparison is running.
+
+Normal and error returns attempt cleanup before control reaches the caller.
+If filesystem cleanup itself fails, MVX throws `TEMP_CLEANUP_FAILED`, includes
+the original failure code when one exists, and does not claim that the private
+workspace was removed. Residual `mvx-packed-audit-*` directories under the
+configured temporary parent must be handled as quarantined extension content.

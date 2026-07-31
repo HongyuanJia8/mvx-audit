@@ -169,6 +169,11 @@ function archiveIdentityToMarkdown(artifact) {
   return 'not applicable';
 }
 
+function developerKeyToMarkdown(artifact) {
+  const digest = artifact.authenticity.developerKeySha256;
+  return digest ? `\`${digest}\`` : 'not verified';
+}
+
 function packageEntryToMarkdown(entry) {
   return `${escapeMarkdown(entry.path)} — ${escapeMarkdown(entry.type)}${entry.type === 'file'
     ? `, ${entry.bytes} bytes, SHA-256 \`${entry.sha256}\``
@@ -202,7 +207,8 @@ export function comparisonToMarkdown(comparison) {
     ...(before.artifact && after.artifact ? [
       `| Archive SHA-256 | \`${before.artifact.sha256}\` | \`${after.artifact.sha256}\` |`,
       `| Archive format | ${before.artifact.format === 'crx' ? `CRX${before.artifact.crxVersion}` : 'ZIP'} | ${after.artifact.format === 'crx' ? `CRX${after.artifact.crxVersion}` : 'ZIP'} |`,
-      `| Archive authenticity | ${archiveIdentityToMarkdown(before.artifact)} | ${archiveIdentityToMarkdown(after.artifact)} |`
+      `| Archive authenticity | ${archiveIdentityToMarkdown(before.artifact)} | ${archiveIdentityToMarkdown(after.artifact)} |`,
+      `| Developer key SHA-256 | ${developerKeyToMarkdown(before.artifact)} | ${developerKeyToMarkdown(after.artifact)} |`
     ] : []), '',
     ...(comparison.archiveContinuity ? [
       '## Archive identity continuity', '',

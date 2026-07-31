@@ -111,7 +111,10 @@ extraction when the input may be adversarial or changing during analysis.
 Packed audit hashes the exact bounded archive buffer used by the extractor and
 records its byte length, format, CRX version, signature status, and extraction
 statistics. The unpacked tree is created under a private temporary workspace (mode 0700 on
-POSIX) and removed in a `finally` path after successful analysis or any error.
+POSIX), and cleanup is attempted after successful analysis or any error.
+Cleanup failure is reported as `TEMP_CLEANUP_FAILED`, including the original
+analysis failure code when applicable; any residual workspace remains
+quarantined content rather than being reported as removed.
 The CLI requires `--acknowledge-risk`; the library API remains non-interactive. No extension
 code is imported or executed. Abrupt process or machine termination can bypass
 language-level cleanup and leave a workspace under the operating system's
@@ -178,8 +181,11 @@ The extracted `mvx-package-v1` inventories produce an
 It reports all added, removed, content-modified, metadata-modified, and
 file/directory type changes without using timestamps. Rule packs and
 disposition policies are prepared once, and both sides use the same disposition
-evaluation instant. Each packed audit and cleanup finishes before the next
-begins, avoiding background extraction after a returned failure.
+evaluation instant. Strict continuity authenticates the second archive against
+the first archive's verified extension ID and complete developer-key SHA-256
+before second-side entry parsing or extraction. Each packed audit and cleanup
+finishes before the next begins, avoiding background extraction after a
+returned failure.
 
 Static benchmark discovery treats the quarantine directory ID and the CRX
 filename digest as expected identities, not trusted labels. Before extraction

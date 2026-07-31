@@ -119,6 +119,10 @@ test('packed comparison binds archive identity and reports deterministic package
   assert.match(markdown, /## Package entry changes/);
   assert.match(markdown, /flip — type/);
   assert.match(markdown, new RegExp(fixture.beforeSha256));
+  assert.match(
+    markdown,
+    new RegExp(result.before.artifact.authenticity.developerKeySha256)
+  );
 
   const cli = captureStreams();
   assert.equal(await runCli([
@@ -138,6 +142,8 @@ test('packed comparison binds archive identity and reports deterministic package
   assert.equal(identical.archiveContinuity.status, 'verified-same');
   assert.equal(identical.archiveContinuity.sameArchiveBytes, true);
   assert.equal(identical.archiveContinuity.samePackage, true);
+  assert.equal(identical.after.artifact.identityPolicy.expectedExtensionId, null);
+  assert.equal(identical.after.artifact.identityPolicy.matched, null);
   assert.deepEqual(identical.packageDelta.summary.entries, {
     before: 5, after: 5, added: 0, removed: 0, modified: 0, unchanged: 5
   });
@@ -163,6 +169,20 @@ test('packed comparison distinguishes verified identity changes from unverifiabl
     temporaryDirectory: fixture.temporaryDirectory,
     requireSameExtensionId: true
   }), (error) => error.code === 'ARCHIVE_IDENTITY_MISMATCH');
+
+  const mismatchedInvalidManifest = makeSignedCrx3([
+    { name: 'manifest.json', content: 'not JSON' }
+  ], { algorithms: ['publisher-rsa'] });
+  const mismatchedInvalidManifestPath = path.join(fixture.root, 'other-invalid-manifest.crx');
+  await writeFile(mismatchedInvalidManifestPath, mismatchedInvalidManifest.bytes);
+  await assert.rejects(() => compareExtensionArchives(
+    fixture.before,
+    mismatchedInvalidManifestPath,
+    {
+      temporaryDirectory: fixture.temporaryDirectory,
+      requireSameExtensionId: true
+    }
+  ), (error) => error.code === 'ARCHIVE_IDENTITY_MISMATCH');
 
   const zipPath = path.join(fixture.root, 'unsigned.zip');
   await writeFile(zipPath, makeZip([
@@ -288,6 +308,42 @@ test('packed comparison cleans both sides on failure and rejects ambiguous API o
   await assert.rejects(() => compareExtensionArchives(fixture.before, fixture.after, {
     rulePacks: new Proxy([], {})
   }), (error) => error.code === 'INVALID_ARGUMENT' && /non-proxy array/.test(error.message));
+
+  const nonEnumerableArchiveLimits = {};
+  Object.defineProperty(nonEnumerableArchiveLimits, 'maxArchiveBytes', {
+    value: 1,
+    enumerable: false
+  });
+  await assert.rejects(() => compareExtensionArchives(fixture.before, fixture.after, {
+    archiveLimits: nonEnumerableArchiveLimits,
+    temporaryDirectory: fixture.temporaryDirectory
+  }), (error) => error.code === 'ARCHIVE_LIMIT');
+  assert.deepEqual(await readdir(fixture.temporaryDirectory), []);
+
+  const inheritedKey = 'expectedBeforeArchiveSha256';
+  const previousInherited = Object.getOwnPropertyDescriptor(Object.prototype, inheritedKey);
+  let inheritedGetterCalls = 0;
+  Object.defineProperty(Object.prototype, inheritedKey, {
+    configurable: true,
+    get() {
+      inheritedGetterCalls += 1;
+      throw new Error('inherited getter must not execute');
+    }
+  });
+  try {
+    const inheritedSafe = await compareExtensionArchives(fixture.before, fixture.after, {
+      temporaryDirectory: fixture.temporaryDirectory
+    });
+    assert.equal(inheritedSafe.archiveContinuity.status, 'verified-same');
+    assert.equal(inheritedGetterCalls, 0);
+  } finally {
+    if (previousInherited) {
+      Object.defineProperty(Object.prototype, inheritedKey, previousInherited);
+    } else {
+      delete Object.prototype[inheritedKey];
+    }
+  }
+
   await assert.rejects(() => compareExtensionArchives(Symbol('before'), fixture.after),
     (error) => error.code === 'INVALID_ARGUMENT' && /beforePath/.test(error.message));
 
@@ -307,4 +363,18 @@ test('packed comparison cleans both sides on failure and rejects ambiguous API o
     '--expected-archive-sha256', fixture.beforeSha256
   ], ambiguous.streams), 2);
   assert.match(ambiguous.output().stderr, /requires --before-archive-sha256/);
+
+  const duplicateIdentity = captureStreams();
+  assert.equal(await runCli([
+    'compare', 'packed', fixture.before, fixture.after, '--acknowledge-risk',
+    '--before-archive-sha256', '0'.repeat(64),
+    '--before-archive-sha256', fixture.beforeSha256
+  ], duplicateIdentity.streams), 2);
+  assert.match(duplicateIdentity.output().stderr, /Duplicate option: --before-archive-sha256/);
+
+  const legacyPackedPath = captureStreams();
+  assert.equal(await runCli([
+    'compare', 'packed', fixture.root
+  ], legacyPackedPath.streams), 2);
+  assert.doesNotMatch(legacyPackedPath.output().stderr, /compare packed requires/);
 });

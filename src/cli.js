@@ -67,15 +67,21 @@ Exit codes:
 
 function parseArgs(argv) {
   const positionals = [];
-  const options = {};
+  const options = Object.create(null);
   const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256']);
+  const setSingleton = (key, value, token) => {
+    if (Object.hasOwn(options, key)) {
+      throw new MvxError(`Duplicate option: ${token}`, { code: 'INVALID_ARGUMENT' });
+    }
+    options[key] = value;
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === '--help' || token === '-h') options.help = true;
-    else if (token === '--version' || token === '-v') options.version = true;
-    else if (token === '--acknowledge-risk') options.acknowledgeRisk = true;
-    else if (token === '--require-valid-signature') options.requireValidSignature = true;
-    else if (token === '--require-same-extension-id') options.requireSameExtensionId = true;
+    if (token === '--help' || token === '-h') setSingleton('help', true, token);
+    else if (token === '--version' || token === '-v') setSingleton('version', true, token);
+    else if (token === '--acknowledge-risk') setSingleton('acknowledgeRisk', true, token);
+    else if (token === '--require-valid-signature') setSingleton('requireValidSignature', true, token);
+    else if (token === '--require-same-extension-id') setSingleton('requireSameExtensionId', true, token);
     else if (token === '--rule-pack') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError('--rule-pack requires a value', { code: 'INVALID_ARGUMENT' });
@@ -93,7 +99,8 @@ function parseArgs(argv) {
     else if (valueOptions.has(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError(`${token} requires a value`, { code: 'INVALID_ARGUMENT' });
-      options[token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
+      const key = token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      setSingleton(key, value, token);
       index += 1;
     } else if (token.startsWith('--')) throw new MvxError(`Unknown option: ${token}`, { code: 'INVALID_ARGUMENT' });
     else positionals.push(token);
@@ -149,7 +156,15 @@ export async function runCli(argv, streams = process) {
     const sideArchiveIdentityRequested = options.beforeArchiveSha256 !== undefined
       || options.afterArchiveSha256 !== undefined;
     const signatureVerificationRequested = options.requireValidSignature === true;
-    const packedComparisonRequested = command === 'compare' && args[0] === 'packed';
+    const packedComparisonKeyword = command === 'compare' && args[0] === 'packed';
+    const packedComparisonRequested = packedComparisonKeyword && (
+      args.length !== 2
+      || options.acknowledgeRisk === true
+      || archiveIdentityRequested
+      || sideArchiveIdentityRequested
+      || signatureVerificationRequested
+      || options.requireSameExtensionId === true
+    );
     const labImageIdentityRequested = options.expectedImageId !== undefined;
     const dispositionPolicyOptionsRequested = options.dispositionPolicies !== undefined
       || options.dispositionAt !== undefined;

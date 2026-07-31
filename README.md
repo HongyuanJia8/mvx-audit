@@ -42,7 +42,7 @@ npm ci
 # Audit an unpacked extension directory
 node bin/mvx.js audit /path/to/extension
 
-# Audit a CRX/ZIP through an automatically removed temporary extraction
+# Audit a CRX/ZIP through a cleanup-enforced temporary extraction
 node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk
 
 # Fail before extraction unless a CRX2/CRX3 developer signature verifies
@@ -137,9 +137,9 @@ development.
 - A deterministic inventory of every in-scope regular file, including byte
   length and SHA-256, plus explicit review findings for packaged WebAssembly,
   PE/DOS, ELF, and Mach-O payloads that the text rules do not parse.
-- Direct CRX/ZIP audit through a private, automatically removed extraction,
+- Direct CRX/ZIP audit through a private, cleanup-enforced extraction,
   binding the exact archive SHA-256, byte length, format, version, and
-  extraction statistics to the static report.
+  extraction statistics to the static report; cleanup failures are explicit.
 - Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 verification, including
   Chromium extension-ID derivation, per-proof digest metadata, an `MVX004`
   integrity finding on failure, and an optional fail-closed mode.

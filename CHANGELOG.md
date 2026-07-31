@@ -10,7 +10,9 @@ versioning from the 2.0 reset onward.
 - Identity-aware packed CRX/ZIP comparison with exact before/after archive
   constraints, verified extension/developer-key continuity, deterministic
   package-entry deltas, shared rule/policy evaluation, CLI/API support, and
-  private sequential extraction cleanup.
+  private sequential extraction cleanup. Strict continuity authenticates both
+  identities and binds the second extension ID and full developer key before
+  extracting it; cleanup failures are explicit.
 - Content-bound isolated-lab evidence with private immutable input snapshots,
   exact package/analysis/scenario/event/image/seccomp identities,
   domain-separated deterministic evaluation hashes, retained scenarios, and an

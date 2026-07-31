@@ -44,6 +44,10 @@ function sanitizeTemporaryError(error, workspace) {
 
 export async function auditExtensionArchive(inputPath, options = {}) {
   assertOptionsObject(options, 'Packed audit');
+  const expectedExtensionIdIfVerified =
+    Object.getOwnPropertyDescriptor(options, '_expectedExtensionIdIfVerified')?.value;
+  const expectedDeveloperKeySha256IfVerified =
+    Object.getOwnPropertyDescriptor(options, '_expectedDeveloperKeySha256IfVerified')?.value;
   const preparedRulePacks = await resolveRulePacks(options);
   const preparedDispositionPolicies = await resolveDispositionPolicies(options);
   const emptyDispositionPolicies = await loadDispositionPolicies([], {
@@ -51,6 +55,8 @@ export async function auditExtensionArchive(inputPath, options = {}) {
   });
   const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
+  let result;
+  let failure;
   try {
     await chmod(workspace, 0o700);
     const extracted = path.join(workspace, 'extension');
@@ -58,7 +64,9 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       limits: options.archiveLimits,
       requireValidSignature: options.requireValidSignature,
       expectedArchiveSha256: options.expectedArchiveSha256,
-      expectedExtensionId: options.expectedExtensionId
+      expectedExtensionId: options.expectedExtensionId,
+      _expectedExtensionIdIfVerified: expectedExtensionIdIfVerified,
+      _expectedDeveloperKeySha256IfVerified: expectedDeveloperKeySha256IfVerified
     });
     const audit = await auditExtension(extracted, {
       limits: options.limits,
@@ -75,7 +83,7 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       artifactSha256: archive.archiveSha256
     }, preparedDispositionPolicies);
     const dispositionPoliciesApplied = preparedDispositionPolicies.summary.policies > 0;
-    return {
+    result = {
       ...audit,
       summary: summarizeFindings(findings),
       ...(dispositionPoliciesApplied ? {
@@ -125,12 +133,20 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       ]
     };
   } catch (error) {
-    throw sanitizeTemporaryError(error, workspace);
-  } finally {
-    try {
-      await rm(workspace, { recursive: true, force: true });
-    } catch (error) {
-      throw sanitizeTemporaryError(error, workspace);
-    }
+    failure = sanitizeTemporaryError(error, workspace);
   }
+  try {
+    await rm(workspace, { recursive: true, force: true });
+  } catch (error) {
+    const cleanupFailure = sanitizeTemporaryError(error, workspace);
+    const originalCode = failure?.code ?? null;
+    const reported = new MvxError(
+      `Temporary extraction cleanup failed${originalCode ? ` after ${originalCode}` : ''}: ${cleanupFailure.message}`,
+      { code: 'TEMP_CLEANUP_FAILED', cause: cleanupFailure }
+    );
+    if (originalCode) reported.originalCode = originalCode;
+    throw reported;
+  }
+  if (failure) throw failure;
+  return result;
 }
