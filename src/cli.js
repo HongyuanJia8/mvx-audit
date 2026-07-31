@@ -5,7 +5,7 @@ import { auditExtension } from './analyzer.js';
 import { unpackExtensionArchive } from './archive.js';
 import { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
-import { compareExtensions } from './compare.js';
+import { compareExtensionArchives, compareExtensions } from './compare.js';
 import { dispositionPoliciesToText, loadDispositionPolicies } from './disposition-policy.js';
 import { MvxError } from './errors.js';
 import { auditExtensionArchive } from './packed-audit.js';
@@ -29,6 +29,12 @@ Usage:
   mvx compare <before> <after> [--format markdown|json] [--output file]
               [--rule-pack file ...] [--disposition-policy file ...]
               [--disposition-at timestamp]
+  mvx compare packed <before.crx|zip> <after.crx|zip> --acknowledge-risk
+              [--format markdown|json] [--output file]
+              [--rule-pack file ...] [--disposition-policy file ...]
+              [--disposition-at timestamp] [--require-valid-signature]
+              [--require-same-extension-id] [--expected-extension-id id]
+              [--before-archive-sha256 digest] [--after-archive-sha256 digest]
   mvx rules validate <file> [file ...] [--format text|json]
   mvx dispositions validate <file> [file ...] [--disposition-at timestamp]
                            [--format text|json]
@@ -61,14 +67,21 @@ Exit codes:
 
 function parseArgs(argv) {
   const positionals = [];
-  const options = {};
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id']);
+  const options = Object.create(null);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256']);
+  const setSingleton = (key, value, token) => {
+    if (Object.hasOwn(options, key)) {
+      throw new MvxError(`Duplicate option: ${token}`, { code: 'INVALID_ARGUMENT' });
+    }
+    options[key] = value;
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === '--help' || token === '-h') options.help = true;
-    else if (token === '--version' || token === '-v') options.version = true;
-    else if (token === '--acknowledge-risk') options.acknowledgeRisk = true;
-    else if (token === '--require-valid-signature') options.requireValidSignature = true;
+    if (token === '--help' || token === '-h') setSingleton('help', true, token);
+    else if (token === '--version' || token === '-v') setSingleton('version', true, token);
+    else if (token === '--acknowledge-risk') setSingleton('acknowledgeRisk', true, token);
+    else if (token === '--require-valid-signature') setSingleton('requireValidSignature', true, token);
+    else if (token === '--require-same-extension-id') setSingleton('requireSameExtensionId', true, token);
     else if (token === '--rule-pack') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError('--rule-pack requires a value', { code: 'INVALID_ARGUMENT' });
@@ -86,7 +99,8 @@ function parseArgs(argv) {
     else if (valueOptions.has(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new MvxError(`${token} requires a value`, { code: 'INVALID_ARGUMENT' });
-      options[token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
+      const key = token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      setSingleton(key, value, token);
       index += 1;
     } else if (token.startsWith('--')) throw new MvxError(`Unknown option: ${token}`, { code: 'INVALID_ARGUMENT' });
     else positionals.push(token);
@@ -139,15 +153,35 @@ export async function runCli(argv, streams = process) {
     const [command, ...args] = positionals;
     const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
       || options.expectedExtensionId !== undefined;
+    const sideArchiveIdentityRequested = options.beforeArchiveSha256 !== undefined
+      || options.afterArchiveSha256 !== undefined;
     const signatureVerificationRequested = options.requireValidSignature === true;
+    const packedComparisonKeyword = command === 'compare' && args[0] === 'packed';
+    const packedComparisonRequested = packedComparisonKeyword && (
+      args.length !== 2
+      || options.acknowledgeRisk === true
+      || archiveIdentityRequested
+      || sideArchiveIdentityRequested
+      || signatureVerificationRequested
+      || options.requireSameExtensionId === true
+    );
     const labImageIdentityRequested = options.expectedImageId !== undefined;
     const dispositionPolicyOptionsRequested = options.dispositionPolicies !== undefined
       || options.dispositionAt !== undefined;
-    if (archiveIdentityRequested && !['audit', 'sample'].includes(command)) {
-      throw new MvxError('Archive identity options apply only to audit or sample unpack', { code: 'INVALID_ARGUMENT' });
+    if (archiveIdentityRequested && !['audit', 'sample'].includes(command) && !packedComparisonRequested) {
+      throw new MvxError('Archive identity options apply only to audit, sample unpack, or packed comparison', { code: 'INVALID_ARGUMENT' });
     }
-    if (signatureVerificationRequested && !['audit', 'sample', 'benchmark'].includes(command)) {
-      throw new MvxError('Archive signature verification applies only to packed audit, sample unpack, or static benchmark', { code: 'INVALID_ARGUMENT' });
+    if (sideArchiveIdentityRequested && !packedComparisonRequested) {
+      throw new MvxError('Side-specific archive SHA-256 options apply only to packed comparison', { code: 'INVALID_ARGUMENT' });
+    }
+    if (options.expectedArchiveSha256 !== undefined && packedComparisonRequested) {
+      throw new MvxError('Packed comparison requires --before-archive-sha256 and/or --after-archive-sha256', { code: 'INVALID_ARGUMENT' });
+    }
+    if (signatureVerificationRequested && !['audit', 'sample', 'benchmark'].includes(command) && !packedComparisonRequested) {
+      throw new MvxError('Archive signature verification applies only to packed audit, sample unpack, static benchmark, or packed comparison', { code: 'INVALID_ARGUMENT' });
+    }
+    if (options.requireSameExtensionId !== undefined && !packedComparisonRequested) {
+      throw new MvxError('--require-same-extension-id applies only to packed comparison', { code: 'INVALID_ARGUMENT' });
     }
     if (labImageIdentityRequested && command !== 'lab') {
       throw new MvxError('--expected-image-id applies only to lab verify', { code: 'INVALID_ARGUMENT' });
@@ -194,17 +228,37 @@ export async function runCli(argv, streams = process) {
     }
 
     if (command === 'compare') {
-      if (args.length !== 2) throw new MvxError('compare requires before and after extension paths', { code: 'INVALID_ARGUMENT' });
       if (options.dispositionAt !== undefined && options.dispositionPolicies === undefined) {
         throw new MvxError('--disposition-at requires at least one --disposition-policy', { code: 'INVALID_ARGUMENT' });
       }
       const format = options.format ?? 'markdown';
       if (!['markdown', 'json'].includes(format)) throw new MvxError(`Unsupported comparison format: ${format}`, { code: 'INVALID_ARGUMENT' });
-      const result = await compareExtensions(args[0], args[1], {
-        rulePacks: options.rulePacks,
-        dispositionPolicies: options.dispositionPolicies,
-        dispositionAt: options.dispositionAt
-      });
+      let result;
+      if (packedComparisonRequested) {
+        if (args.length !== 3) {
+          throw new MvxError('compare packed requires before and after archive paths', { code: 'INVALID_ARGUMENT' });
+        }
+        if (!options.acknowledgeRisk) {
+          throw new MvxError('Refusing packed comparison extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
+        }
+        result = await compareExtensionArchives(args[1], args[2], {
+          rulePacks: options.rulePacks,
+          dispositionPolicies: options.dispositionPolicies,
+          dispositionAt: options.dispositionAt,
+          requireValidSignature: options.requireValidSignature,
+          requireSameExtensionId: options.requireSameExtensionId,
+          expectedExtensionId: options.expectedExtensionId,
+          expectedBeforeArchiveSha256: options.beforeArchiveSha256,
+          expectedAfterArchiveSha256: options.afterArchiveSha256
+        });
+      } else {
+        if (args.length !== 2) throw new MvxError('compare requires before and after extension paths', { code: 'INVALID_ARGUMENT' });
+        result = await compareExtensions(args[0], args[1], {
+          rulePacks: options.rulePacks,
+          dispositionPolicies: options.dispositionPolicies,
+          dispositionAt: options.dispositionAt
+        });
+      }
       await emit(format === 'json' ? json(result) : comparisonToMarkdown(result), options.output, streams.stdout);
       return 0;
     }

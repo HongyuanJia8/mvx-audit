@@ -42,7 +42,7 @@ npm ci
 # Audit an unpacked extension directory
 node bin/mvx.js audit /path/to/extension
 
-# Audit a CRX/ZIP through an automatically removed temporary extraction
+# Audit a CRX/ZIP through a cleanup-enforced temporary extraction
 node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk
 
 # Fail before extraction unless a CRX2/CRX3 developer signature verifies
@@ -65,6 +65,11 @@ node bin/mvx.js audit /path/to/extension \
 # Compare a migration
 node bin/mvx.js compare /path/to/mv2 /path/to/mv3 \
   --format markdown --output migration-review.md
+
+# Compare two exact signed releases with developer-key continuity
+node bin/mvx.js compare packed before.crx after.crx --acknowledge-risk \
+  --require-valid-signature --require-same-extension-id \
+  --before-archive-sha256 <sha256> --after-archive-sha256 <sha256>
 
 # Validate and apply local declarative campaign indicators
 node bin/mvx.js rules validate examples/campaign-rule-pack.json
@@ -132,14 +137,18 @@ development.
 - A deterministic inventory of every in-scope regular file, including byte
   length and SHA-256, plus explicit review findings for packaged WebAssembly,
   PE/DOS, ELF, and Mach-O payloads that the text rules do not parse.
-- Direct CRX/ZIP audit through a private, automatically removed extraction,
+- Direct CRX/ZIP audit through a private, cleanup-enforced extraction,
   binding the exact archive SHA-256, byte length, format, version, and
-  extraction statistics to the static report.
+  extraction statistics to the static report; cleanup failures are explicit.
 - Bounded CRX2 RSA/SHA-1 and CRX3 RSA/ECDSA SHA-256 verification, including
   Chromium extension-ID derivation, per-proof digest metadata, an `MVX004`
   integrity finding on failure, and an optional fail-closed mode.
 - Fail-closed external archive identity policy for expected SHA-256 and verified
   extension ID, recorded in JSON, text, and SARIF as reproducible evidence.
+- Identity-aware CRX/ZIP comparison with both original archive hashes and
+  signature records, optional verified developer-key continuity, side-specific
+  external SHA-256 constraints, and deterministic added/removed/modified
+  package-entry evidence.
 - Strict, bounded declarative JSON rule packs for literal text, package path,
   regular-file SHA-256, and complete-package SHA-256 indicators. Packs are
   treated as untrusted data and their exact raw-byte provenance is included in
@@ -154,7 +163,8 @@ development.
 
 See the complete [rule reference](docs/rule-reference.md), [declarative rule
 pack guide](docs/rule-packs.md), [disposition-policy guide](docs/disposition-policies.md),
-and [methodology](docs/methodology.md).
+[packed comparison guide](docs/packed-comparison.md), and
+[methodology](docs/methodology.md).
 
 ## Synthetic corpus and real-world intelligence
 
@@ -243,7 +253,7 @@ Public API:
 
 ```js
 import {
-  auditExtension, auditExtensionArchive, compareExtensions,
+  auditExtension, auditExtensionArchive, compareExtensionArchives, compareExtensions,
   evaluateLabFiles, loadDispositionPolicies, loadRulePacks, verifyLabReport
 } from 'mvx-audit';
 
@@ -262,6 +272,12 @@ const packedAudit = await auditExtensionArchive('/path/to/extension.crx', {
   expectedExtensionId: '<32-character-a-p-extension-id>'
 });
 const comparison = await compareExtensions('/path/to/mv2', '/path/to/mv3', { rulePacks });
+const packedComparison = await compareExtensionArchives('before.crx', 'after.crx', {
+  rulePacks,
+  requireSameExtensionId: true,
+  expectedBeforeArchiveSha256: '<lowercase-sha256>',
+  expectedAfterArchiveSha256: '<lowercase-sha256>'
+});
 const labReport = await evaluateLabFiles('./scenario.json', './events.jsonl');
 const labVerification = await verifyLabReport(
   './report.json', '/path/to/exact-extension', './scenario.json', './events.jsonl',

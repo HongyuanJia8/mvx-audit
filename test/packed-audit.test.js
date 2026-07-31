@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readdirSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -136,6 +137,65 @@ test('packed ZIP audit and archive failures always clean private temporary state
       limits: { maxFileBytes: 10 }
     }),
     (error) => error.code === 'SCAN_LIMIT'
+  );
+  assert.deepEqual(await readdir(sample.temporaryDirectory), []);
+
+  let hostileCauseReads = 0;
+  const hostileFailure = Object.assign(new Error('archive limit trap'), {
+    code: 'ARCHIVE_LIMIT_TRAP'
+  });
+  Object.defineProperty(hostileFailure, 'cause', {
+    get() {
+      hostileCauseReads += 1;
+      throw new Error('SANITIZER_EXPLODED');
+    }
+  });
+  const hostileLimits = new Proxy({}, {
+    ownKeys() {
+      throw hostileFailure;
+    }
+  });
+  await assert.rejects(
+    () => auditExtensionArchive(sample.input, {
+      temporaryDirectory: sample.temporaryDirectory,
+      archiveLimits: hostileLimits
+    }),
+    (error) => error.code === 'ARCHIVE_LIMIT_TRAP'
+      && error.message === 'archive limit trap'
+  );
+  assert.equal(hostileCauseReads, 0);
+  assert.deepEqual(await readdir(sample.temporaryDirectory), []);
+
+  for (const primitiveFailure of [null, undefined, 0, false, '', 0n, Number.NaN]) {
+    const primitiveLimits = new Proxy({}, {
+      ownKeys() {
+        throw primitiveFailure;
+      }
+    });
+    await assert.rejects(
+      () => auditExtensionArchive(sample.input, {
+        temporaryDirectory: sample.temporaryDirectory,
+        archiveLimits: primitiveLimits
+      }),
+      (error) => error instanceof Error
+    );
+    assert.deepEqual(await readdir(sample.temporaryDirectory), []);
+  }
+
+  const leakingLimits = new Proxy({}, {
+    ownKeys() {
+      const workspace = readdirSync(sample.temporaryDirectory)
+        .find((entry) => entry.startsWith('mvx-packed-audit-'));
+      throw `${path.join(sample.temporaryDirectory, workspace, 'extension')} leaked`;
+    }
+  });
+  await assert.rejects(
+    () => auditExtensionArchive(sample.input, {
+      temporaryDirectory: sample.temporaryDirectory,
+      archiveLimits: leakingLimits
+    }),
+    (error) => error.message === '<temporary extraction>/extension leaked'
+      && !error.message.includes('mvx-packed-audit-')
   );
   assert.deepEqual(await readdir(sample.temporaryDirectory), []);
 

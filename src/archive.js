@@ -209,6 +209,10 @@ async function safeParent(destination) {
 
 async function unpackArchive(inputPath, destination, options, allowZip) {
   if (!destination) throw new MvxError('Archive extraction requires a destination directory', { code: 'INVALID_ARGUMENT' });
+  const expectedExtensionIdIfVerified =
+    Object.getOwnPropertyDescriptor(options, '_expectedExtensionIdIfVerified')?.value;
+  const expectedDeveloperKeySha256IfVerified =
+    Object.getOwnPropertyDescriptor(options, '_expectedDeveloperKeySha256IfVerified')?.value;
   if (options.requireValidSignature !== undefined && typeof options.requireValidSignature !== 'boolean') {
     throw new MvxError('requireValidSignature must be boolean', { code: 'INVALID_ARGUMENT' });
   }
@@ -220,11 +224,19 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
     && (typeof options.expectedExtensionId !== 'string' || !EXTENSION_ID.test(options.expectedExtensionId))) {
     throw new MvxError('expectedExtensionId must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
   }
-  if (options._expectedExtensionIdIfVerified !== undefined
-    && (typeof options._expectedExtensionIdIfVerified !== 'string' || !EXTENSION_ID.test(options._expectedExtensionIdIfVerified))) {
+  if (expectedExtensionIdIfVerified !== undefined
+    && (typeof expectedExtensionIdIfVerified !== 'string' || !EXTENSION_ID.test(expectedExtensionIdIfVerified))) {
     throw new MvxError('_expectedExtensionIdIfVerified must be a lowercase Chromium extension ID', { code: 'INVALID_ARGUMENT' });
   }
-  if (options.expectedExtensionId !== undefined && options._expectedExtensionIdIfVerified !== undefined) {
+  if (expectedDeveloperKeySha256IfVerified !== undefined
+    && (typeof expectedDeveloperKeySha256IfVerified !== 'string'
+      || !SHA256.test(expectedDeveloperKeySha256IfVerified))) {
+    throw new MvxError(
+      '_expectedDeveloperKeySha256IfVerified must be a lowercase SHA-256 digest',
+      { code: 'INVALID_ARGUMENT' }
+    );
+  }
+  if (options.expectedExtensionId !== undefined && expectedExtensionIdIfVerified !== undefined) {
     throw new MvxError('Extension ID expectations cannot be combined', { code: 'INVALID_ARGUMENT' });
   }
   const limits = normalizeLimits(options.limits ?? {});
@@ -251,10 +263,16 @@ async function unpackArchive(inputPath, destination, options, allowZip) {
       code: 'ARCHIVE_IDENTITY_UNVERIFIABLE'
     });
   }
-  const verifiedExtensionIdExpectation = options.expectedExtensionId ?? options._expectedExtensionIdIfVerified;
+  const verifiedExtensionIdExpectation = options.expectedExtensionId ?? expectedExtensionIdIfVerified;
   if (verifiedExtensionIdExpectation && authenticity.status === 'verified'
     && authenticity.extensionId !== verifiedExtensionIdExpectation) {
     throw new MvxError('Verified CRX extension ID does not match its expected identity', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
+  }
+  if (expectedDeveloperKeySha256IfVerified && authenticity.status === 'verified'
+    && authenticity.developerKeySha256 !== expectedDeveloperKeySha256IfVerified) {
+    throw new MvxError('Verified CRX developer key does not match its expected identity', {
+      code: 'ARCHIVE_IDENTITY_MISMATCH'
+    });
   }
   if (options.requireValidSignature && authenticity.status !== 'verified') {
     const reason = authenticity.error ?? authenticity.status;

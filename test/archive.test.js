@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { auditExtension } from '../src/analyzer.js';
 import { unpackCrx, unpackExtensionArchive } from '../src/archive.js';
-import { makeCrx, makeZip } from '../support/archive-fixture.js';
+import { makeCrx, makeSignedCrx3, makeZip } from '../support/archive-fixture.js';
 
 async function withCrx(t, entries) {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-crx-'));
@@ -60,6 +60,27 @@ test('bounded extension archive unpacker supports ZIP without weakening CRX-only
   assert.equal(result.files, 2);
   assert.equal(result.entries, 3);
   assert.match(await readFile(path.join(fixture.destination, 'manifest.json'), 'utf8'), /manifest_version/);
+});
+
+test('internal continuity expectations reject a different verified developer key before extraction', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-continuity-gate-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const signed = makeSignedCrx3([
+    {
+      name: 'manifest.json',
+      content: '{"manifest_version":3,"name":"Continuity gate","version":"1.0.0"}'
+    }
+  ]);
+  const input = path.join(root, 'signed.crx');
+  const destination = path.join(root, 'unpacked');
+  await writeFile(input, signed.bytes);
+  await assert.rejects(() => unpackExtensionArchive(input, destination, {
+    requireValidSignature: true,
+    _expectedExtensionIdIfVerified: signed.extensionId,
+    _expectedDeveloperKeySha256IfVerified: '0'.repeat(64)
+  }), (error) => error.code === 'ARCHIVE_IDENTITY_MISMATCH'
+    && /developer key/.test(error.message));
+  await assert.rejects(() => readFile(path.join(destination, 'manifest.json')));
 });
 
 test('ZIP extension packages retain traversal and link protections', async (t) => {

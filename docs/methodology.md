@@ -111,7 +111,10 @@ extraction when the input may be adversarial or changing during analysis.
 Packed audit hashes the exact bounded archive buffer used by the extractor and
 records its byte length, format, CRX version, signature status, and extraction
 statistics. The unpacked tree is created under a private temporary workspace (mode 0700 on
-POSIX) and removed in a `finally` path after successful analysis or any error.
+POSIX), and cleanup is attempted after successful analysis or any error.
+Cleanup failure is reported as `TEMP_CLEANUP_FAILED`, including the original
+analysis failure code when applicable; any residual workspace remains
+quarantined content rather than being reported as removed.
 The CLI requires `--acknowledge-risk`; the library API remains non-interactive. No extension
 code is imported or executed. Abrupt process or machine termination can bypass
 language-level cleanup and leave a workspace under the operating system's
@@ -164,6 +167,25 @@ exact expected values and match state. JSON retains it directly, text renders a
 matched summary, and SARIF carries it under the packed artifact properties.
 The policy makes an external assertion reproducible; it cannot make an
 untrusted, stale, or incorrectly attributed assertion trustworthy.
+
+Packed comparisons preserve both independent `mvx-archive-identity-v1`
+records. Side-specific expected SHA-256 values bind each original artifact,
+while a shared expected extension ID must verify against both. The
+`mvx-archive-continuity-v1` record compares both the Chromium extension ID and
+the full developer-key SHA-256. Strict continuity rejects different or
+unverifiable identities; non-strict mode retains those states for forensic
+comparison without calling them lineage.
+
+The extracted `mvx-package-v1` inventories produce an
+`mvx-package-delta-v1` record over normalized entry paths and content hashes.
+It reports all added, removed, content-modified, metadata-modified, and
+file/directory type changes without using timestamps. Rule packs and
+disposition policies are prepared once, and both sides use the same disposition
+evaluation instant. Strict continuity authenticates the second archive against
+the first archive's verified extension ID and complete developer-key SHA-256
+before second-side entry parsing or extraction. Each packed audit and cleanup
+finishes before the next begins, avoiding background extraction after a
+returned failure.
 
 Static benchmark discovery treats the quarantine directory ID and the CRX
 filename digest as expected identities, not trusted labels. Before extraction
@@ -258,6 +280,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   not contain.
 - Data-flow, control-flow, publisher identity/authorization validation, and
   Chrome Web Store policy checks are outside the current scope.
+- Verified packed lineage covers the embedded developer key only; store
+  listing history, signing-key ownership, and acquisition-channel trust require
+  external evidence.
 - Declarative rules are recognized by selected structural strings, not a full
   Chrome ruleset schema implementation.
 - Firefox and Safari extension semantics are not evaluated.
