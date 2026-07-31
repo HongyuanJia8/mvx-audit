@@ -7,6 +7,10 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Identity-aware packed CRX/ZIP comparison with exact before/after archive
+  constraints, verified extension/developer-key continuity, deterministic
+  package-entry deltas, shared rule/policy evaluation, CLI/API support, and
+  private sequential extraction cleanup.
 - Content-bound isolated-lab evidence with private immutable input snapshots,
   exact package/analysis/scenario/event/image/seccomp identities,
   domain-separated deterministic evaluation hashes, retained scenarios, and an

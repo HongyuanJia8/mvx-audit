@@ -165,6 +165,22 @@ matched summary, and SARIF carries it under the packed artifact properties.
 The policy makes an external assertion reproducible; it cannot make an
 untrusted, stale, or incorrectly attributed assertion trustworthy.
 
+Packed comparisons preserve both independent `mvx-archive-identity-v1`
+records. Side-specific expected SHA-256 values bind each original artifact,
+while a shared expected extension ID must verify against both. The
+`mvx-archive-continuity-v1` record compares both the Chromium extension ID and
+the full developer-key SHA-256. Strict continuity rejects different or
+unverifiable identities; non-strict mode retains those states for forensic
+comparison without calling them lineage.
+
+The extracted `mvx-package-v1` inventories produce an
+`mvx-package-delta-v1` record over normalized entry paths and content hashes.
+It reports all added, removed, content-modified, metadata-modified, and
+file/directory type changes without using timestamps. Rule packs and
+disposition policies are prepared once, and both sides use the same disposition
+evaluation instant. Each packed audit and cleanup finishes before the next
+begins, avoiding background extraction after a returned failure.
+
 Static benchmark discovery treats the quarantine directory ID and the CRX
 filename digest as expected identities, not trusted labels. Before extraction
 the actual archive SHA-256 must match its filename. A verified CRX extension ID
@@ -258,6 +274,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   not contain.
 - Data-flow, control-flow, publisher identity/authorization validation, and
   Chrome Web Store policy checks are outside the current scope.
+- Verified packed lineage covers the embedded developer key only; store
+  listing history, signing-key ownership, and acquisition-channel trust require
+  external evidence.
 - Declarative rules are recognized by selected structural strings, not a full
   Chrome ruleset schema implementation.
 - Firefox and Safari extension semantics are not evaluated.

@@ -2,7 +2,10 @@ export { auditExtension } from './analyzer.js';
 export { auditExtensionArchive } from './packed-audit.js';
 export { unpackCrx, unpackExtensionArchive } from './archive.js';
 export { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
-export { compareExtensions } from './compare.js';
+export {
+  ARCHIVE_CONTINUITY_PROFILE, PACKAGE_DELTA_PROFILE,
+  compareExtensionArchives, compareExtensions
+} from './compare.js';
 export {
   DEFAULT_DISPOSITION_POLICY_LIMITS, applyDispositionPolicies, dispositionPoliciesToText,
   loadDispositionPolicies
