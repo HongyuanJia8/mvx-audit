@@ -47,21 +47,12 @@ function safeErrorMessage(error) {
   return 'Unexpected packed audit failure';
 }
 
-function sanitizeTemporaryError(error, workspace) {
-  let current = error;
-  const seen = new Set();
-  let containsWorkspace = false;
-  while ((typeof current === 'object' || typeof current === 'function')
-    && current !== null && !seen.has(current)) {
-    seen.add(current);
-    const message = ownDataProperty(current, 'message');
-    if (typeof message === 'string' && message.includes(workspace)) containsWorkspace = true;
-    current = ownDataProperty(current, 'cause');
-  }
+function sanitizeTemporaryError(error, workspaces) {
   const rawMessage = safeErrorMessage(error);
-  const message = containsWorkspace
-    ? rawMessage.split(workspace).join('<temporary extraction>')
-    : rawMessage;
+  const message = workspaces.reduce(
+    (current, workspace) => current.split(workspace).join('<temporary extraction>'),
+    rawMessage
+  );
   const code = ownDataProperty(error, 'code');
   let mvxError = false;
   try {
@@ -92,10 +83,16 @@ export async function auditExtensionArchive(inputPath, options = {}) {
   const emptyDispositionPolicies = await loadDispositionPolicies([], {
     evaluationTime: preparedDispositionPolicies.evaluationTime
   });
+  const requestedTemporaryParent = path.resolve(options.temporaryDirectory ?? os.tmpdir());
   const temporaryParent = await resolveTemporaryParent(options.temporaryDirectory);
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-packed-audit-'));
+  const workspaceAliases = [
+    workspace,
+    path.join(requestedTemporaryParent, path.basename(workspace))
+  ];
   let result;
   let failure;
+  let failed = false;
   try {
     await chmod(workspace, 0o700);
     const extracted = path.join(workspace, 'extension');
@@ -172,14 +169,15 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       ]
     };
   } catch (error) {
+    failed = true;
     failure = error;
   }
   try {
     await rm(workspace, { recursive: true, force: true });
   } catch (error) {
-    const cleanupFailure = sanitizeTemporaryError(error, workspace);
-    const sanitizedFailure = failure
-      ? sanitizeTemporaryError(failure, workspace)
+    const cleanupFailure = sanitizeTemporaryError(error, workspaceAliases);
+    const sanitizedFailure = failed
+      ? sanitizeTemporaryError(failure, workspaceAliases)
       : null;
     const originalCode = sanitizedFailure?.code ?? null;
     const reported = new MvxError(
@@ -189,6 +187,6 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     if (originalCode) reported.originalCode = originalCode;
     throw reported;
   }
-  if (failure) throw sanitizeTemporaryError(failure, workspace);
+  if (failed) throw sanitizeTemporaryError(failure, workspaceAliases);
   return result;
 }
