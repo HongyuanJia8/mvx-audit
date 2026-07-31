@@ -82,7 +82,11 @@ image expectation together does not create trust.
 The host stops a run after 60 seconds and terminates streaming capture as soon
 as raw JSONL exceeds 20 MB. Offline parsing also caps the stream at 100,000
 events and rejects non-canonical or out-of-order lifecycle timestamps rather
-than silently truncating evidence.
+than silently truncating evidence. Docker writes the exact container ID into
+the private snapshot; after any failed, timed-out, or overflowing run, the host
+explicitly force-removes that ID before deleting the mounted snapshot. If
+Docker cannot confirm removal, the wrapper fails closed and reports the private
+snapshot path instead of deleting potentially mounted evidence.
 
 ## Oracle and containment
 

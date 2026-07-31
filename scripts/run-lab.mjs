@@ -39,28 +39,79 @@ function parse(argv) {
   return options;
 }
 
-function capture(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'inherit'] });
+function captureResult(command, args, { maxBytes = 4_096, runtimeMs = 10_000 } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
+    let errorOutput = '';
+    let failure;
+    let killTimer;
+    let settled = false;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(runtimeTimer);
+      clearTimeout(killTimer);
+      resolve({ ...outcome, output: output.trim(), errorOutput: errorOutput.trim(), failure });
+    };
+    const stop = (error) => {
+      if (!failure) failure = error;
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+      if (!killTimer) killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }, 2_000);
+    };
+    const runtimeTimer = setTimeout(() => {
+      const error = new Error(`${command} exceeded the ${runtimeMs}-millisecond runtime limit`);
+      error.code = 'LAB_TIMEOUT';
+      stop(error);
+    }, runtimeMs);
     child.stdout.on('data', (chunk) => {
-      output += chunk;
-      if (Buffer.byteLength(output) > 4_096 && child.exitCode === null) child.kill('SIGKILL');
+      if (failure) return;
+      if (Buffer.byteLength(output) + Buffer.byteLength(errorOutput) + chunk.length > maxBytes) {
+        const error = new Error(`${command} output exceeds ${maxBytes} bytes`);
+        error.code = 'LAB_LIMIT';
+        stop(error);
+      } else output += chunk;
     });
-    child.once('error', reject);
-    child.once('exit', (code, signal) => code === 0 ? resolve(output.trim()) : reject(new Error(`${command} exited with ${code ?? signal}`)));
+    child.stderr.on('data', (chunk) => {
+      if (failure) return;
+      if (Buffer.byteLength(output) + Buffer.byteLength(errorOutput) + chunk.length > maxBytes) {
+        const error = new Error(`${command} output exceeds ${maxBytes} bytes`);
+        error.code = 'LAB_LIMIT';
+        stop(error);
+      } else errorOutput += chunk;
+    });
+    child.once('error', (error) => finish({ error }));
+    child.once('exit', (code, signal) => finish({ code, signal }));
   });
+}
+
+async function capture(command, args) {
+  const result = await captureResult(command, args);
+  if (result.error) throw result.error;
+  if (result.failure) throw result.failure;
+  if (result.code !== 0) {
+    throw new Error(`${command} exited with ${result.code ?? result.signal}${result.errorOutput ? `: ${result.errorOutput}` : ''}`);
+  }
+  return result.output;
 }
 
 async function captureToFile(command, args, destination, maxBytes = 20_000_000, runtimeMs = 60_000) {
   const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'inherit'] });
   let bytes = 0;
-  let timedOut = false;
+  let runtimeError;
   let killTimer;
+  const requestStop = () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    if (!killTimer) killTimer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }, 2_000);
+  };
   const runtimeTimer = setTimeout(() => {
-    timedOut = true;
-    child.kill('SIGTERM');
-    killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+    runtimeError = new Error(`Lab container exceeded the ${runtimeMs}-millisecond host runtime limit`);
+    runtimeError.code = 'LAB_TIMEOUT';
+    requestStop();
   }, runtimeMs);
   const bounded = new Transform({
     transform(chunk, encoding, callback) {
@@ -72,32 +123,54 @@ async function captureToFile(command, args, destination, maxBytes = 20_000_000, 
       } else callback(null, chunk);
     }
   });
-  const exited = new Promise((resolve, reject) => {
+  const exited = new Promise((resolve) => {
     child.once('error', (error) => {
-      clearTimeout(runtimeTimer);
-      clearTimeout(killTimer);
-      reject(error);
+      resolve({ error });
     });
     child.once('exit', (code, signal) => {
-      clearTimeout(runtimeTimer);
-      clearTimeout(killTimer);
-      if (timedOut) {
-        const error = new Error(`Lab container exceeded the ${runtimeMs}-millisecond host runtime limit`);
-        error.code = 'LAB_TIMEOUT';
-        reject(error);
-      } else if (code === 0) resolve();
-      else reject(new Error(`${command} exited with ${code ?? signal}`));
+      resolve({ code, signal });
     });
   });
+  const streamError = await pipeline(
+    child.stdout, bounded, createWriteStream(destination, { flags: 'wx', mode: 0o600 })
+  ).then(() => null, (error) => {
+    requestStop();
+    return error;
+  });
+  const outcome = await exited;
+  clearTimeout(runtimeTimer);
+  clearTimeout(killTimer);
+  if (runtimeError) throw runtimeError;
+  if (streamError) throw streamError;
+  if (outcome.error) throw outcome.error;
+  if (outcome.code !== 0) throw new Error(`${command} exited with ${outcome.code ?? outcome.signal}`);
+}
+
+async function forceRemoveContainer(cidFile) {
+  let cidBytes;
   try {
-    await Promise.all([
-      exited,
-      pipeline(child.stdout, bounded, createWriteStream(destination, { flags: 'wx', mode: 0o600 }))
-    ]);
+    cidBytes = await readBoundedRegularFile(cidFile, {
+      maxBytes: 128, label: 'Lab container ID file', limitCode: 'LAB_CONTAINER_CLEANUP_FAILED',
+      missingCode: 'LAB_CONTAINER_NOT_CREATED', unsafeCode: 'LAB_CONTAINER_CLEANUP_FAILED'
+    });
   } catch (error) {
-    if (child.exitCode === null) child.kill('SIGKILL');
+    if (error.code === 'LAB_CONTAINER_NOT_CREATED') return;
     throw error;
   }
+  const containerId = cidBytes.toString('utf8').trim();
+  if (!/^[a-f0-9]{64}$/.test(containerId)) {
+    const error = new Error('Docker wrote a non-canonical container ID');
+    error.code = 'LAB_CONTAINER_CLEANUP_FAILED';
+    throw error;
+  }
+  const result = await captureResult('docker', ['rm', '--force', containerId]);
+  if (result.error) throw result.error;
+  if (result.failure) throw result.failure;
+  if (result.code === 0) return;
+  if (new RegExp(`(?:No such container|No such object):?\\s+${containerId}`, 'i').test(result.errorOutput)) return;
+  const error = new Error(`Unable to confirm removal of lab container ${containerId}`);
+  error.code = 'LAB_CONTAINER_CLEANUP_FAILED';
+  throw error;
 }
 
 const options = parse(process.argv.slice(2));
@@ -128,6 +201,8 @@ const image = options.image ?? 'mvx-lab:local';
 if (!IMAGE_REFERENCE.test(image)) throw new Error('Container image reference is invalid');
 const snapshot = await prepareLabInputSnapshot(extension, scenario);
 let labError;
+let containerIdFile;
+let retainSnapshot = false;
 try {
   const seccompBytes = await readBoundedRegularFile(SECCOMP_PROFILE, {
       maxBytes: 1_000_000, label: 'Lab seccomp profile', limitCode: 'LAB_LIMIT',
@@ -143,8 +218,9 @@ try {
   if (!/^sha256:[a-f0-9]{64}$/.test(imageId)) throw new Error('Docker returned a non-canonical image ID');
 
   const eventsPath = path.join(output, 'events.jsonl');
+  containerIdFile = path.join(snapshot.workspace, 'container.cid');
   await captureToFile('docker', [
-    'run', '--rm', '--pull', 'never', '--stop-timeout', '2', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+    'run', '--rm', '--cidfile', containerIdFile, '--pull', 'never', '--stop-timeout', '2', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges', '--security-opt', `seccomp=${seccompSnapshot}`,
     '--pids-limit', '256', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,noexec,nosuid,size=512m',
     '--env', `MVX_LAB_PROFILE=${LAB_EXECUTION_PROFILE}`,
@@ -176,15 +252,30 @@ try {
   if (!report.contained) process.exitCode = 1;
 } catch (error) {
   labError = error;
+  if (containerIdFile) {
+    try {
+      await forceRemoveContainer(containerIdFile);
+    } catch (cleanupError) {
+      retainSnapshot = true;
+      const combined = new Error(`Lab container cleanup failed after ${labError.code ?? labError.name ?? 'run failure'}; private snapshot retained at ${snapshot.workspace}`);
+      combined.code = 'LAB_CONTAINER_CLEANUP_FAILED';
+      combined.originalCode = labError.code ?? labError.name ?? 'ERROR';
+      combined.snapshotPath = snapshot.workspace;
+      combined.cause = cleanupError;
+      labError = combined;
+    }
+  }
 }
-try {
-  await removeLabInputSnapshot(snapshot);
-} catch (cleanupError) {
-  const combined = new Error(`Private lab snapshot cleanup failed${labError ? ` after ${labError.code ?? labError.name ?? 'run failure'}` : ''}`);
-  combined.code = 'LAB_TEMP_CLEANUP_FAILED';
-  if (labError) combined.originalCode = labError.code ?? labError.name ?? 'ERROR';
-  combined.cause = cleanupError;
-  throw combined;
+if (!retainSnapshot) {
+  try {
+    await removeLabInputSnapshot(snapshot);
+  } catch (cleanupError) {
+    const combined = new Error(`Private lab snapshot cleanup failed${labError ? ` after ${labError.code ?? labError.name ?? 'run failure'}` : ''}`);
+    combined.code = 'LAB_TEMP_CLEANUP_FAILED';
+    if (labError) combined.originalCode = labError.code ?? labError.name ?? 'ERROR';
+    combined.cause = cleanupError;
+    throw combined;
+  }
 }
 if (labError) throw labError;
 

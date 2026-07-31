@@ -224,6 +224,29 @@ test('strict evidence inputs reject duplicate keys, invalid UTF-8, symlinks, and
     canaries: { tokenValue: '1234567890123456' }
   }, [hidden]), (error) => error.code === 'INVALID_LAB_EVENTS');
 
+  const prototypeEvents = [];
+  Object.setPrototypeOf(prototypeEvents, {
+    forEach(callback) { callback(completed, 0); }
+  });
+  assert.throws(() => evaluateLabRun({
+    schemaVersion: 1, id: 'prototype-array', targetUrl: 'https://example.test/',
+    canaries: { tokenValue: '1234567890123456' }
+  }, prototypeEvents), (error) => error.code === 'INVALID_LAB_EVENTS');
+
+  const accessorEvents = [completed];
+  Object.defineProperty(accessorEvents, '0', { enumerable: true, get: () => completed });
+  assert.throws(() => evaluateLabRun({
+    schemaVersion: 1, id: 'accessor-array', targetUrl: 'https://example.test/',
+    canaries: { tokenValue: '1234567890123456' }
+  }, accessorEvents), (error) => error.code === 'INVALID_LAB_EVENTS');
+
+  const nestedArray = [];
+  Object.setPrototypeOf(nestedArray, null);
+  assert.throws(() => evaluateLabRun({
+    schemaVersion: 1, id: 'nested-array', targetUrl: 'https://example.test/',
+    canaries: { tokenValue: '1234567890123456' }
+  }, [{ ...completed, data: { nestedArray } }]), (error) => error.code === 'INVALID_LAB_EVENTS');
+
   const nonCanonicalScenario = path.join(fixture.temp, 'noncanonical-scenario.json');
   await writeFile(nonCanonicalScenario, JSON.stringify({
     schemaVersion: 1, id: 'noncanonical', targetUrl: 'https://EXAMPLE.test',
@@ -332,12 +355,14 @@ test('host wrapper runs immutable snapshots by image ID and emits a verifiable r
   const docker = path.join(fakeBin, 'docker');
   const dockerLog = path.join(temp, 'docker-log.jsonl');
   await writeFile(docker, `#!/usr/bin/env node
-const { appendFileSync } = require('node:fs');
+const { appendFileSync, writeFileSync } = require('node:fs');
 const args = process.argv.slice(2);
 appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(args) + '\\n');
 if (args[0] === 'image') {
   process.stdout.write('${IMAGE_ID}\\n');
 } else {
+  const cidIndex = args.indexOf('--cidfile');
+  if (cidIndex !== -1) writeFileSync(args[cidIndex + 1], '${'2'.repeat(64)}\\n');
   const environment = {};
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] !== '--env') continue;
@@ -390,6 +415,9 @@ if (args[0] === 'image') {
   assert.equal(invocations.length, 2);
   const dockerRun = invocations[1];
   assert.deepEqual(dockerRun.slice(-2), [IMAGE_ID, '--acknowledge-risk']);
+  const cidFile = dockerRun[dockerRun.indexOf('--cidfile') + 1];
+  assert.match(cidFile, /container\.cid$/);
+  await assert.rejects(() => access(cidFile));
   const securityOption = dockerRun[dockerRun.findIndex((value) => value.startsWith('seccomp='))];
   const seccompSnapshot = securityOption.slice('seccomp='.length);
   assert.notEqual(seccompSnapshot, path.resolve('lab/seccomp-chromium.json'));
@@ -398,4 +426,83 @@ if (args[0] === 'image') {
   assert.equal(mounts.some((value) => value.includes(`src=${extension},`)), false);
   assert.equal(mounts.some((value) => value.includes(`src=${retainedScenario},`)), false);
   assert.ok(mounts.every((value) => value.endsWith(',readonly')));
+});
+
+test('host wrapper force-removes a container after event output overflow', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-lab-wrapper-overflow-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const extension = await writeExtension(path.join(temp, 'extension'), {
+    manifest_version: 3, name: 'Overflow fixture', version: '1.0.0'
+  });
+  const scenario = path.join(temp, 'scenario.json');
+  await writeFile(scenario, JSON.stringify({
+    schemaVersion: 1, id: 'overflow-test', targetUrl: 'https://example.test/',
+    canaries: { tokenValue: '1234567890123456' }, durationMs: 1_000
+  }) + '\n');
+  const fakeBin = path.join(temp, 'bin');
+  await writeExtension(fakeBin, { manifest_version: 3, name: 'Fake bin holder', version: '1.0.0' });
+  await rm(path.join(fakeBin, 'manifest.json'));
+  const docker = path.join(fakeBin, 'docker');
+  const dockerLog = path.join(temp, 'docker-log.jsonl');
+  const containerId = '3'.repeat(64);
+  await writeFile(docker, `#!/usr/bin/env node
+const { appendFileSync, writeFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(args) + '\\n');
+if (args[0] === 'image') {
+  process.stdout.write('${IMAGE_ID}\\n');
+} else if (args[0] === 'rm') {
+  process.exit(args[1] === '--force' && args[2] === '${containerId}'
+    ? Number(process.env.FAKE_RM_EXIT || 0) : 9);
+} else {
+  const cidIndex = args.indexOf('--cidfile');
+  writeFileSync(args[cidIndex + 1], '${containerId}\\n');
+  process.on('SIGTERM', () => {});
+  process.stdout.on('error', () => {});
+  process.stdout.write(Buffer.alloc(20_000_001, 0x78));
+  setInterval(() => {}, 1_000);
+}
+`);
+  await chmod(docker, 0o700);
+  const output = path.join(temp, 'output');
+  const execution = await run(process.execPath, [
+    path.resolve('scripts/run-lab.mjs'),
+    '--extension', extension, '--scenario', scenario, '--output', output,
+    '--image', 'mvx-lab:test', '--acknowledge-risk'
+  ], {
+    cwd: path.resolve('.'),
+    env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, FAKE_DOCKER_LOG: dockerLog }
+  });
+  assert.equal(execution.code, 1);
+  assert.match(execution.stderr, /Lab event stream exceeds 20000000 bytes/);
+  const invocations = (await readFile(dockerLog, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(invocations.length, 3);
+  assert.deepEqual(invocations[2], ['rm', '--force', containerId]);
+  const cidFile = invocations[1][invocations[1].indexOf('--cidfile') + 1];
+  await assert.rejects(() => access(cidFile));
+
+  const failedOutput = path.join(temp, 'failed-cleanup-output');
+  const failedCleanup = await run(process.execPath, [
+    path.resolve('scripts/run-lab.mjs'),
+    '--extension', extension, '--scenario', scenario, '--output', failedOutput,
+    '--image', 'mvx-lab:test', '--acknowledge-risk'
+  ], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+      FAKE_DOCKER_LOG: dockerLog,
+      FAKE_RM_EXIT: '9'
+    }
+  });
+  assert.equal(failedCleanup.code, 1);
+  assert.match(failedCleanup.stderr, /Lab container cleanup failed after LAB_LIMIT; private snapshot retained at/);
+  const allInvocations = (await readFile(dockerLog, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(allInvocations.length, 6);
+  assert.deepEqual(allInvocations[5], ['rm', '--force', containerId]);
+  const retainedCidFile = allInvocations[4][allInvocations[4].indexOf('--cidfile') + 1];
+  const retainedSnapshot = path.dirname(retainedCidFile);
+  await access(retainedSnapshot);
+  assert.match(failedCleanup.stderr, new RegExp(retainedSnapshot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  await rm(retainedSnapshot, { recursive: true, force: true });
 });

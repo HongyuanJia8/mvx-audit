@@ -150,12 +150,15 @@ function displayString(value, label, max, code) {
 }
 
 function assertDataArray(value, label, code) {
-  if (!Array.isArray(value) || utilTypes.isProxy(value)) throw new MvxError(`${label} must be an array`, { code });
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new MvxError(`${label} must be a standard non-proxy array`, { code });
+  }
   const keys = Reflect.ownKeys(value);
   for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index)) throw new MvxError(`${label} may not be sparse`, { code });
-    if (Object.getOwnPropertyDescriptor(value, String(index)).enumerable !== true) {
-      throw new MvxError(`${label} entries must be enumerable`, { code });
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor) throw new MvxError(`${label} may not be sparse`, { code });
+    if (!Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
+      throw new MvxError(`${label} entries must be enumerable data properties`, { code });
     }
   }
   if (keys.some((key) => key !== 'length' && (typeof key !== 'string' || !/^(0|[1-9]\d*)$/.test(key)))) {
@@ -181,7 +184,10 @@ function validateJsonData(value, label, depth = 0, seen = new Set()) {
   if (Array.isArray(value)) {
     assertDataArray(value, label, 'INVALID_LAB_EVENTS');
     if (value.length > 100) throw new MvxError(`${label} array exceeds 100 entries`, { code: 'LAB_LIMIT' });
-    value.forEach((entry, index) => validateJsonData(entry, `${label}[${index}]`, depth + 1, seen));
+    for (let index = 0; index < value.length; index += 1) {
+      const entry = Object.getOwnPropertyDescriptor(value, String(index)).value;
+      validateJsonData(entry, `${label}[${index}]`, depth + 1, seen);
+    }
   } else {
     assertPlainObject(value, label, 'INVALID_LAB_EVENTS');
     const entries = Object.entries(value);
@@ -247,7 +253,8 @@ function validateEventSequence(events) {
   let previous = null;
   let started = 0;
   let completed = 0;
-  events.forEach((event, index) => {
+  for (let index = 0; index < events.length; index += 1) {
+    const event = Object.getOwnPropertyDescriptor(events, String(index)).value;
     validateEvent(event, index + 1);
     if (previous !== null && event.timestamp < previous) {
       throw new MvxError(`Lab event line ${index + 1} precedes the prior timestamp`, { code: 'INVALID_LAB_EVENTS' });
@@ -261,7 +268,7 @@ function validateEventSequence(events) {
       completed += 1;
       if (index !== events.length - 1) throw new MvxError('lab.completed must be the final event', { code: 'INVALID_LAB_EVENTS' });
     }
-  });
+  }
   if (started > 1 || completed > 1) throw new MvxError('Lab events contain duplicate lifecycle events', { code: 'INVALID_LAB_EVENTS' });
 }
 
@@ -283,7 +290,9 @@ export function parseLabEvents(source) {
 
 function stringsIn(value, output = []) {
   if (typeof value === 'string') output.push(value);
-  else if (Array.isArray(value)) value.forEach((entry) => stringsIn(entry, output));
+  else if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) stringsIn(value[index], output);
+  }
   else if (value && typeof value === 'object') Object.values(value).forEach((entry) => stringsIn(entry, output));
   return output;
 }
@@ -339,7 +348,8 @@ export function evaluateLabRun(scenario, events) {
   let blockedExternal = 0;
   let uncontainedExternal = 0;
 
-  events.forEach((event, index) => {
+  for (let index = 0; index < events.length; index += 1) {
+    const event = Object.getOwnPropertyDescriptor(events, String(index)).value;
     const data = event.data ?? {};
     if (event.type === 'lab.completed') completed = true;
     if (event.type === 'lab.error') errors.push(evidence(event, index, { message: data.message ?? 'lab error' }));
@@ -388,7 +398,7 @@ export function evaluateLabRun(scenario, events) {
       objectives.unauthorizedDownload.evidence.push(evidence(event, index, { url: data.url, userGesture: data.userGesture }));
       if (data.userGesture !== false) suspicious.push(evidence(event, index, { reason: 'download-attempt', url: data.url }));
     }
-  });
+  }
 
   const confirmed = Object.values(objectives).filter((objective) => objective.status === 'confirmed').length;
   let verdict;
