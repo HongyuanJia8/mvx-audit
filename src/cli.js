@@ -160,11 +160,7 @@ export async function runCli(argv, streams = process) {
       return 0;
     }
     const [command, ...args] = positionals;
-    const auditVerificationRequested = command === 'audit' && args[0] === 'verify'
-      && (args.length !== 1
-        || options.expectedReportSha256 !== undefined
-        || options.expectedPackageSha256 !== undefined
-        || options.expectedAnalysisSha256 !== undefined);
+    const auditVerificationRequested = command === 'audit' && args[0] === 'verify';
     const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
       || options.expectedExtensionId !== undefined;
     const sideArchiveIdentityRequested = options.beforeArchiveSha256 !== undefined

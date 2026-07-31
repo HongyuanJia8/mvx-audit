@@ -167,7 +167,8 @@ development.
   `lab verify` support.
 - Bounded offline static-report verification that replays exact tool semantics,
   package/analysis identities, rule packs, disposition policies, packed
-  authenticity, and optional independently trusted identities.
+  authenticity policy, and optional independently trusted identities, using
+  private directory snapshots and pre-extraction packed identity gates.
 
 See the complete [rule reference](docs/rule-reference.md), [declarative rule
 pack guide](docs/rule-packs.md), [disposition-policy guide](docs/disposition-policies.md),

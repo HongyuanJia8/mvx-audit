@@ -10,8 +10,9 @@ versioning from the 2.0 reset onward.
 - Bounded offline verification for schema-v1 directory and packed static audit
   reports, with deterministic tool/result replay, exact rule/disposition
   provenance, optional independent report/package/analysis/archive/extension
-  identities, strict report parsing, path relocation semantics, and CLI/API
-  support.
+  identities, pre-parse depth and prototype-pollution defenses, private bounded
+  directory snapshots, pre-extraction packed identity gates, strict report
+  parsing, path relocation semantics, and CLI/API support.
 - Identity-aware packed CRX/ZIP comparison with exact before/after archive
   constraints, verified extension/developer-key continuity, deterministic
   package-entry deltas, shared rule/policy evaluation, CLI/API support, and

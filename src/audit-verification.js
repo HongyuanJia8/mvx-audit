@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto';
+import {
+  chmod, lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, symlink, writeFile
+} from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual, types as utilTypes } from 'node:util';
 import { auditExtension } from './analyzer.js';
 import { MvxError } from './errors.js';
+import { normalizeScanLimits } from './io.js';
 import { assertOptionsObject } from './options.js';
 import { auditExtensionArchive } from './packed-audit.js';
 import { readBoundedRegularFile } from './safe-file.js';
@@ -184,12 +189,7 @@ function rejectDuplicateKeys(source) {
     }
     return JSON.parse(source.slice(start, cursor));
   };
-  const value = (depth) => {
-    if (depth > 128) {
-      throw new MvxError('Audit report exceeds 128 JSON nesting levels', {
-        code: 'AUDIT_REPORT_LIMIT'
-      });
-    }
+  const value = () => {
     whitespace();
     if (source[cursor] === '{') {
       cursor += 1;
@@ -198,14 +198,14 @@ function rejectDuplicateKeys(source) {
       while (source[cursor] !== '}') {
         const key = jsonString();
         if (keys.has(key)) {
-          throw new MvxError(`Audit report contains duplicate JSON field: ${key}`, {
+          throw new MvxError('Audit report contains duplicate JSON fields', {
             code: 'INVALID_AUDIT_REPORT'
           });
         }
         keys.add(key);
         whitespace();
         cursor += 1;
-        value(depth + 1);
+        value();
         whitespace();
         if (source[cursor] === ',') {
           cursor += 1;
@@ -219,7 +219,7 @@ function rejectDuplicateKeys(source) {
       cursor += 1;
       whitespace();
       while (source[cursor] !== ']') {
-        value(depth + 1);
+        value();
         whitespace();
         if (source[cursor] === ',') {
           cursor += 1;
@@ -235,7 +235,45 @@ function rejectDuplicateKeys(source) {
     }
     while (cursor < source.length && !/[\s,}\]]/.test(source[cursor])) cursor += 1;
   };
-  value(0);
+  value();
+}
+
+function assertJsonDepth(source) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const character of source) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === '{' || character === '[') {
+      depth += 1;
+      if (depth > 128) {
+        throw new MvxError('Audit report exceeds 128 JSON nesting levels', {
+          code: 'AUDIT_REPORT_LIMIT'
+        });
+      }
+    } else if (character === '}' || character === ']') {
+      depth -= 1;
+    }
+  }
+}
+
+function normalizeData(value) {
+  if (Array.isArray(value)) return value.map((item) => normalizeData(item));
+  if (!value || typeof value !== 'object') return value;
+  const result = Object.create(null);
+  for (const key of Object.getOwnPropertyNames(value)) {
+    result[key] = normalizeData(Object.getOwnPropertyDescriptor(value, key).value);
+  }
+  return result;
 }
 
 function parseReport(bytes) {
@@ -248,6 +286,7 @@ function parseReport(bytes) {
       cause: error
     });
   }
+  assertJsonDepth(source);
   let report;
   try {
     report = JSON.parse(source);
@@ -258,6 +297,7 @@ function parseReport(bytes) {
     });
   }
   rejectDuplicateKeys(source);
+  report = normalizeData(report);
   if (!report || Array.isArray(report) || typeof report !== 'object'
     || report.schemaVersion !== 1
     || !report.target || Array.isArray(report.target) || typeof report.target !== 'object'
@@ -295,13 +335,16 @@ function parseReport(bytes) {
 }
 
 function portableReport(report) {
-  return {
-    ...report,
-    target: { ...report.target, root: '<verified input>' },
-    ...(report.artifact ? {
-      artifact: { ...report.artifact, path: '<verified input>' }
-    } : {})
-  };
+  const result = Object.assign(Object.create(null), report);
+  result.target = Object.assign(Object.create(null), report.target, {
+    root: '<verified input>'
+  });
+  if (report.artifact !== undefined) {
+    result.artifact = Object.assign(Object.create(null), report.artifact, {
+      path: '<verified input>'
+    });
+  }
+  return result;
 }
 
 function assertExpected(actual, expected, label) {
@@ -335,6 +378,203 @@ function assertIndependentIdentities(actual, stable) {
   }
 }
 
+function sanitizeSnapshotError(error, workspace) {
+  if (!workspace || typeof error?.message !== 'string' || !error.message.includes(workspace)) {
+    return error;
+  }
+  const message = error.message.split(workspace).join('<private audit snapshot>');
+  if (error instanceof MvxError) return new MvxError(message, { code: error.code });
+  const sanitized = new Error(message);
+  sanitized.name = typeof error?.name === 'string' ? error.name : 'Error';
+  if (typeof error?.code === 'string') sanitized.code = error.code;
+  return sanitized;
+}
+
+async function realTemporaryParent(input) {
+  const absolute = path.resolve(input ?? os.tmpdir());
+  let stat;
+  try {
+    stat = await lstat(absolute);
+  } catch (error) {
+    throw new MvxError('Audit snapshot temporary directory does not exist', {
+      code: 'TEMP_NOT_FOUND',
+      cause: error
+    });
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new MvxError('Audit snapshot temporary directory must be a real directory', {
+      code: 'UNSAFE_TEMP'
+    });
+  }
+  return realpath(absolute);
+}
+
+async function copyAuditTree(sourceRoot, destinationRoot, requestedLimits) {
+  const limits = normalizeScanLimits(requestedLimits ?? {});
+  const state = { entries: 0, files: 0, bytes: 0 };
+  async function visit(source, destination, depth) {
+    if (depth > limits.maxDepth) {
+      throw new MvxError(`Extension directory depth exceeds ${limits.maxDepth}`, {
+        code: 'SCAN_LIMIT'
+      });
+    }
+    await mkdir(destination, { mode: 0o700 });
+    const entries = await readdir(source, { withFileTypes: true });
+    entries.sort((left, right) => compareText(left.name, right.name));
+    for (const entry of entries) {
+      state.entries += 1;
+      if (state.entries > limits.maxEntries) {
+        throw new MvxError(`Extension contains more than ${limits.maxEntries} entries`, {
+          code: 'SCAN_LIMIT'
+        });
+      }
+      const sourcePath = path.join(source, entry.name);
+      const destinationPath = path.join(destination, entry.name);
+      const stat = await lstat(sourcePath);
+      if (stat.isSymbolicLink()) {
+        const target = await readlink(sourcePath, { encoding: 'buffer' });
+        await symlink(target, destinationPath);
+      } else if (stat.isDirectory()) {
+        await visit(sourcePath, destinationPath, depth + 1);
+      } else if (stat.isFile()) {
+        state.files += 1;
+        if (state.files > limits.maxFiles) {
+          throw new MvxError(`Extension contains more than ${limits.maxFiles} files`, {
+            code: 'SCAN_LIMIT'
+          });
+        }
+        const bytes = await readBoundedRegularFile(sourcePath, {
+          maxBytes: limits.maxPackageFileBytes,
+          label: 'Audit snapshot file',
+          limitCode: 'SCAN_LIMIT',
+          missingCode: 'INVALID_INPUT',
+          unsafeCode: 'UNSAFE_INPUT'
+        });
+        state.bytes += bytes.length;
+        if (state.bytes > limits.maxPackageBytes) {
+          throw new MvxError(`Package content exceeds ${limits.maxPackageBytes} bytes`, {
+            code: 'SCAN_LIMIT'
+          });
+        }
+        await writeFile(destinationPath, bytes, { flag: 'wx', mode: 0o400 });
+      } else {
+        throw new MvxError(
+          'Audit verification cannot snapshot special filesystem entries safely',
+          { code: 'UNSAFE_INPUT' }
+        );
+      }
+    }
+  }
+  await visit(sourceRoot, destinationRoot, 0);
+}
+
+async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
+  const absolute = path.resolve(inputPath);
+  let stat;
+  try {
+    stat = await lstat(absolute);
+  } catch (error) {
+    throw new MvxError(`Input does not exist: ${absolute}`, {
+      code: 'INPUT_NOT_FOUND',
+      cause: error
+    });
+  }
+  if (stat.isSymbolicLink()) {
+    throw new MvxError('The extension root may not be a symbolic link', {
+      code: 'UNSAFE_INPUT'
+    });
+  }
+  let root;
+  if (stat.isFile()) {
+    if (path.basename(absolute) !== 'manifest.json') {
+      throw new MvxError('A file input must be named manifest.json', {
+        code: 'INVALID_INPUT'
+      });
+    }
+    root = path.dirname(absolute);
+    const rootStat = await lstat(root);
+    if (rootStat.isSymbolicLink()) {
+      throw new MvxError('The extension root may not be a symbolic link', {
+        code: 'UNSAFE_INPUT'
+      });
+    }
+  } else if (stat.isDirectory()) {
+    root = absolute;
+  } else {
+    throw new MvxError('Input must be an extension directory or manifest.json', {
+      code: 'INVALID_INPUT'
+    });
+  }
+  const [sourceRoot, temporaryParent] = await Promise.all([
+    realpath(root),
+    realTemporaryParent(temporaryDirectory)
+  ]);
+  const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-audit-input-'));
+  try {
+    await chmod(workspace, 0o700);
+    const snapshot = path.join(workspace, 'extension');
+    await copyAuditTree(sourceRoot, snapshot, limits);
+    return { input: snapshot, location: sourceRoot, workspace };
+  } catch (error) {
+    const failure = sanitizeSnapshotError(error, workspace);
+    try {
+      await rm(workspace, { recursive: true, force: true });
+    } catch (cleanupError) {
+      const cleanup = sanitizeSnapshotError(cleanupError, workspace);
+      throw new MvxError(
+        `Private audit snapshot cleanup failed after ${failure.code ?? 'copy failure'}: ${cleanup.message}`,
+        { code: 'AUDIT_SNAPSHOT_CLEANUP_FAILED' }
+      );
+    }
+    throw failure;
+  }
+}
+
+async function auditDirectorySnapshot(inputPath, auditOptions, temporaryDirectory) {
+  const snapshot = await prepareDirectorySnapshot(
+    inputPath,
+    temporaryDirectory,
+    auditOptions.limits
+  );
+  let actual;
+  let failure;
+  try {
+    actual = await auditExtension(snapshot.input, auditOptions);
+  } catch (error) {
+    failure = sanitizeSnapshotError(error, snapshot.workspace);
+  }
+  try {
+    await rm(snapshot.workspace, { recursive: true, force: true });
+  } catch (error) {
+    const cleanup = sanitizeSnapshotError(error, snapshot.workspace);
+    throw new MvxError(
+      `Private audit snapshot cleanup failed${failure ? ` after ${failure.code ?? 'analysis failure'}` : ''}: ${cleanup.message}`,
+      { code: 'AUDIT_SNAPSHOT_CLEANUP_FAILED' }
+    );
+  }
+  if (failure) throw failure;
+  return { actual, location: snapshot.location };
+}
+
+function mapVerificationPreconditionError(error, stable) {
+  if (error?.code === 'ARCHIVE_IDENTITY_MISMATCH'
+    && (stable.expectedArchiveSha256 !== undefined
+      || stable.expectedExtensionId !== undefined)) {
+    return new MvxError('Packed input does not match an independently expected identity', {
+      code: 'AUDIT_IDENTITY_MISMATCH'
+    });
+  }
+  if ((error?.code === 'ARCHIVE_IDENTITY_UNVERIFIABLE'
+      && stable.expectedExtensionId !== undefined)
+    || (error?.code === 'CRX_SIGNATURE_REQUIRED'
+      && stable.requireValidSignature === true)) {
+    return new MvxError('Packed input does not have the independently required authenticity', {
+      code: 'AUDIT_IDENTITY_UNVERIFIABLE'
+    });
+  }
+  return error;
+}
+
 export async function verifyAuditReport(reportPath, inputPath, options = {}) {
   for (const [label, value] of [['reportPath', reportPath], ['inputPath', inputPath]]) {
     if (typeof value !== 'string' || value.length === 0) {
@@ -352,6 +592,7 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
   const reportSha256 = sha256(reportBytes);
   assertExpected(reportSha256, stable.expectedReportSha256, 'Audit report SHA-256');
   const report = parseReport(reportBytes);
+  const packed = report.artifact !== undefined;
   const dispositionAt = report.dispositionEvaluation?.evaluatedAt;
   const auditOptions = Object.assign(Object.create(null), {
     archiveLimits: stable.archiveLimits,
@@ -363,29 +604,44 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
     ...(dispositionAt !== undefined ? { dispositionAt } : {})
   });
   let actual;
-  if (report.artifact) {
-    actual = await auditExtensionArchive(inputPath, Object.assign(Object.create(null), {
-      ...auditOptions,
-      temporaryDirectory: stable.temporaryDirectory,
-      requireValidSignature:
-        report.artifact.identityPolicy?.requireValidSignature ?? undefined,
-      expectedArchiveSha256:
-        report.artifact.identityPolicy?.expectedArchiveSha256 ?? undefined,
-      expectedExtensionId:
-        report.artifact.identityPolicy?.expectedExtensionId ?? undefined
-    }));
+  let inputLocation;
+  if (packed) {
+    try {
+      actual = await auditExtensionArchive(inputPath, Object.assign(Object.create(null), {
+        ...auditOptions,
+        temporaryDirectory: stable.temporaryDirectory,
+        requireValidSignature:
+          report.artifact.identityPolicy?.requireValidSignature ?? false,
+        expectedArchiveSha256:
+          report.artifact.identityPolicy?.expectedArchiveSha256 ?? undefined,
+        expectedExtensionId:
+          report.artifact.identityPolicy?.expectedExtensionId ?? undefined,
+        _verificationExpectedArchiveSha256: stable.expectedArchiveSha256,
+        _verificationExpectedExtensionId: stable.expectedExtensionId,
+        _verificationRequireValidSignature: stable.requireValidSignature
+      }));
+    } catch (error) {
+      throw mapVerificationPreconditionError(error, stable);
+    }
+    inputLocation = actual.target.root;
   } else {
     if (stable.expectedArchiveSha256 !== undefined
       || stable.expectedExtensionId !== undefined
       || stable.requireValidSignature !== undefined
-      || stable.archiveLimits !== undefined
-      || stable.temporaryDirectory !== undefined) {
+      || stable.archiveLimits !== undefined) {
       throw new MvxError('Archive verification options require a packed audit report', {
         code: 'INVALID_ARGUMENT'
       });
     }
-    actual = await auditExtension(inputPath, auditOptions);
+    const snapshotAudit = await auditDirectorySnapshot(
+      inputPath,
+      auditOptions,
+      stable.temporaryDirectory
+    );
+    actual = snapshotAudit.actual;
+    inputLocation = snapshotAudit.location;
   }
+  actual = normalizeData(actual);
   assertIndependentIdentities(actual, stable);
   if (!isDeepStrictEqual(portableReport(report), portableReport(actual))) {
     throw new MvxError(
@@ -393,8 +649,9 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
       { code: 'AUDIT_REPORT_MISMATCH' }
     );
   }
-  const locationMetadataMatchesInput = report.target.root === actual.target.root
-    && (report.artifact?.path ?? null) === (actual.artifact?.path ?? null);
+  const locationMetadataMatchesInput = report.target.root === inputLocation
+    && (report.artifact?.path ?? null) === (packed ? inputLocation : null);
+  const verifiedAuthenticity = actual.artifact?.authenticity?.status === 'verified';
   const independentChecks = {
     reportSha256: stable.expectedReportSha256 === undefined ? null : true,
     packageSha256: stable.expectedPackageSha256 === undefined ? null : true,
@@ -407,15 +664,19 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
     schemaVersion: 1,
     profile: AUDIT_VERIFICATION_PROFILE,
     valid: true,
-    inputType: report.artifact ? 'archive' : 'directory',
+    inputType: packed ? 'archive' : 'directory',
     report: { bytes: reportBytes.length, sha256: reportSha256 },
     identities: {
       packageSha256: actual.package.sha256,
       analysisSha256: actual.analysis.sha256,
       artifactSha256: actual.artifact?.sha256 ?? null,
-      extensionId: actual.artifact?.authenticity?.extensionId ?? null,
-      developerKeySha256:
-        actual.artifact?.authenticity?.developerKeySha256 ?? null
+      authenticityStatus: actual.artifact?.authenticity?.status ?? null,
+      extensionId: verifiedAuthenticity
+        ? actual.artifact.authenticity.extensionId
+        : null,
+      developerKeySha256: verifiedAuthenticity
+        ? actual.artifact.authenticity.developerKeySha256
+        : null
     },
     checks: {
       deterministicReport: true,
@@ -443,8 +704,11 @@ export function auditVerificationToText(result) {
     `Analysis SHA-256: ${result.identities.analysisSha256}`,
     ...(result.identities.artifactSha256 ? [
       `Archive SHA-256: ${result.identities.artifactSha256}`,
-      `Verified extension ID: ${result.identities.extensionId ?? 'unverifiable'}`,
-      `Developer key SHA-256: ${result.identities.developerKeySha256 ?? 'unverifiable'}`
+      `CRX authenticity: ${result.identities.authenticityStatus}`,
+      ...(result.identities.authenticityStatus === 'verified' ? [
+        `Verified extension ID: ${result.identities.extensionId}`,
+        `Verified developer key SHA-256: ${result.identities.developerKeySha256}`
+      ] : [])
     ] : []),
     ...result.caveats.map((caveat) => `Caveat: ${caveat}`)
   ].join('\n') + '\n';

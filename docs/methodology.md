@@ -147,6 +147,15 @@ checked before report equality so a trusted input mismatch remains explicit.
 Reproducibility alone authenticates neither the report author nor the input
 source. See [offline static-audit verification](audit-verification.md).
 
+Directory verification first copies regular files through the normalized scan
+limits into a private workspace, retains symlinks without following them,
+rejects special filesystem entries, audits only the captured bytes, and
+cleanup-enforces the workspace. This prevents later source changes from
+altering the in-progress analysis. Packed archive SHA-256, verified extension
+ID, and valid-signature requirements are internal preconditions on the same
+bounded archive buffer used for extraction, but do not alter the report policy
+being reproduced. They fail before ZIP entry parsing or extraction.
+
 ## CRX authenticity semantics
 
 For CRX2, MVX verifies the legacy RSA PKCS#1 v1.5 SHA-1 signature over the ZIP
@@ -184,8 +193,9 @@ verified CRX developer-key proof; invalid CRX and ZIP input fail as
 first.
 
 Successful results include the `mvx-archive-identity-v1` policy record with the
-exact expected values and match state. JSON retains it directly, text renders a
-matched summary, and SARIF carries it under the packed artifact properties.
+effective `requireValidSignature` setting, exact expected values, and match
+state. JSON retains it directly, text renders a matched summary, and SARIF
+carries it under the packed artifact properties.
 The policy makes an external assertion reproducible; it cannot make an
 untrusted, stale, or incorrectly attributed assertion trustworthy.
 

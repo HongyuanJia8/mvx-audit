@@ -73,6 +73,7 @@ test('CLI packed audit requires acknowledgement and preserves fail-on semantics'
   ], identity.streams), 0);
   assert.deepEqual(JSON.parse(identity.output().stdout).artifact.identityPolicy, {
     profile: 'mvx-archive-identity-v1',
+    requireValidSignature: true,
     expectedArchiveSha256: signedSha256,
     expectedExtensionId: signed.extensionId,
     archiveSha256Match: true,

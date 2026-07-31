@@ -27,9 +27,15 @@ from `report.dispositionEvaluation.evaluatedAt`. Missing, changed, or additional
 review data makes verification fail.
 
 The CLI requires `--acknowledge-risk` for every verification. An untrusted
-report selects the directory or packed verification path; packed verification
-may defensively extract live extension content into a private temporary
-workspace. Library callers make the same acknowledgement operationally.
+report selects the directory or packed verification path. Directory input is
+copied through the analyzer's file, entry, depth, per-file, and total-byte
+limits into a private snapshot before analysis. Links are copied as links and
+never followed; special filesystem entries fail closed. Packed verification
+may defensively extract live extension content into a separate private
+temporary workspace. Both workspaces are cleanup-enforced. Library callers
+make the same acknowledgement operationally.
+The literal `audit verify` token is reserved for this subcommand. Use
+`mvx audit ./verify` to audit an extension directory named `verify`.
 
 ## What is checked
 
@@ -42,13 +48,19 @@ matches the retained report:
 - exact raw-byte provenance, fixed evaluation time, matches, and annotations
   for all disposition policies;
 - exact packed archive metadata, signature record, extraction statistics, and
-  recorded archive identity policy; and
+  recorded archive identity policy, including whether a valid signature was
+  required; and
 - all caller-supplied independent identities.
 
 The report file is read as a bounded, non-symlinked regular file. The default
-limit is 25,000,000 bytes. Invalid UTF-8, invalid JSON, duplicate object keys,
-more than 128 JSON nesting levels, missing schema-v1 fields, and unsafe control
-or bidirectional characters in location fields are rejected.
+limit is 25,000,000 bytes. A string-level nesting scan runs before
+`JSON.parse`, so excessive depth cannot first consume an unbounded parser
+stack or heap. Invalid UTF-8, invalid JSON, duplicate object keys, more than
+128 JSON nesting levels, missing schema-v1 fields, and unsafe control or
+bidirectional characters in location fields are rejected. Parsed records are
+converted to own-data, null-prototype objects before any schema or dispatch
+read, preventing ambient prototype pollution from selecting a verification
+path or executing an inherited getter.
 
 Only `target.root` and, for packed input, `artifact.path` are normalized to
 `<verified input>` during semantic comparison. They are local transport
@@ -75,10 +87,15 @@ Use identities obtained through an independent trusted channel:
 | `expectedExtensionId` | ID derived from a verified CRX developer key |
 | `requireValidSignature` | A cryptographically verified CRX signature |
 
-Independent input identities are checked before semantic report equality once
-the fresh audit exists. A trusted identity mismatch therefore cannot be hidden
-behind a report mismatch. An expected extension ID is never compared with an
-unverified self-declaration.
+Independent archive SHA-256, extension ID, and signature requirements are
+non-report-mutating preconditions on the exact bounded archive buffer. They
+fail before ZIP entry parsing, extraction, or static analysis. Package and
+analysis identities are checked as soon as the private snapshot or packed
+audit exists and before semantic report equality. A trusted identity mismatch
+therefore cannot be hidden behind a report mismatch. An expected extension ID
+is never compared with an unverified self-declaration. Verification results
+expose an extension ID and developer-key digest only when authenticity status
+is `verified`; invalid CRX header declarations are not trusted identities.
 
 CRX verification proves archive integrity under the embedded developer key. It
 does not authenticate a publisher, establish Chrome Web Store authorization,

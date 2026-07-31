@@ -201,6 +201,7 @@ test('archive identity policy binds external SHA-256 and verified extension ID b
   });
   assert.deepEqual(matched.identityPolicy, {
     profile: 'mvx-archive-identity-v1',
+    requireValidSignature: false,
     expectedArchiveSha256: expectedSha256,
     expectedExtensionId: fixture.extensionId,
     archiveSha256Match: true,
@@ -264,6 +265,7 @@ test('archive identity policy rejects non-canonical values and supports SHA-boun
   assert.equal(result.authenticity.status, 'not-applicable');
   assert.deepEqual(result.identityPolicy, {
     profile: 'mvx-archive-identity-v1',
+    requireValidSignature: false,
     expectedArchiveSha256,
     expectedExtensionId: null,
     archiveSha256Match: true,

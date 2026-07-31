@@ -78,6 +78,12 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     Object.getOwnPropertyDescriptor(options, '_expectedExtensionIdIfVerified')?.value;
   const expectedDeveloperKeySha256IfVerified =
     Object.getOwnPropertyDescriptor(options, '_expectedDeveloperKeySha256IfVerified')?.value;
+  const verificationExpectedArchiveSha256 =
+    Object.getOwnPropertyDescriptor(options, '_verificationExpectedArchiveSha256')?.value;
+  const verificationExpectedExtensionId =
+    Object.getOwnPropertyDescriptor(options, '_verificationExpectedExtensionId')?.value;
+  const verificationRequireValidSignature =
+    Object.getOwnPropertyDescriptor(options, '_verificationRequireValidSignature')?.value;
   const preparedRulePacks = await resolveRulePacks(options);
   const preparedDispositionPolicies = await resolveDispositionPolicies(options);
   const emptyDispositionPolicies = await loadDispositionPolicies([], {
@@ -102,7 +108,10 @@ export async function auditExtensionArchive(inputPath, options = {}) {
       expectedArchiveSha256: options.expectedArchiveSha256,
       expectedExtensionId: options.expectedExtensionId,
       _expectedExtensionIdIfVerified: expectedExtensionIdIfVerified,
-      _expectedDeveloperKeySha256IfVerified: expectedDeveloperKeySha256IfVerified
+      _expectedDeveloperKeySha256IfVerified: expectedDeveloperKeySha256IfVerified,
+      _verificationExpectedArchiveSha256: verificationExpectedArchiveSha256,
+      _verificationExpectedExtensionId: verificationExpectedExtensionId,
+      _verificationRequireValidSignature: verificationRequireValidSignature
     });
     const audit = await auditExtension(extracted, {
       limits: options.limits,
