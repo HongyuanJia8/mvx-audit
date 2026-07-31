@@ -7,6 +7,11 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Bounded offline verification for directory and packed comparison reports,
+  with isolated replay of both complete audits, deterministic finding/evidence
+  and capability deltas, packed signature continuity and package-entry delta
+  recomputation, independent report and side identities, strict untrusted JSON
+  parsing, and CLI/API support.
 - Bounded offline verification for schema-v1 directory and packed static audit
   reports, with deterministic tool/result replay, exact rule/disposition
   provenance, optional independent report/package/analysis/archive/extension

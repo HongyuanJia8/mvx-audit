@@ -7,6 +7,9 @@ import { unpackExtensionArchive } from './archive.js';
 import { runStaticBenchmark, staticBenchmarkToText } from './benchmark.js';
 import { loadCatalog, validateCatalog, catalogToText } from './catalog.js';
 import { compareExtensionArchives, compareExtensions } from './compare.js';
+import {
+  comparisonVerificationToText, verifyComparisonReport
+} from './comparison-verification.js';
 import { dispositionPoliciesToText, loadDispositionPolicies } from './disposition-policy.js';
 import { MvxError } from './errors.js';
 import { auditExtensionArchive } from './packed-audit.js';
@@ -38,6 +41,14 @@ Usage:
   mvx compare <before> <after> [--format markdown|json] [--output file]
               [--rule-pack file ...] [--disposition-policy file ...]
               [--disposition-at timestamp]
+  mvx compare verify <report.json> <before> <after> --acknowledge-risk
+              [--format text|json] [--rule-pack file ...]
+              [--disposition-policy file ...]
+              [--expected-report-sha256 digest]
+              [--before-package-sha256 digest] [--after-package-sha256 digest]
+              [--before-analysis-sha256 digest] [--after-analysis-sha256 digest]
+              [--before-archive-sha256 digest] [--after-archive-sha256 digest]
+              [--expected-extension-id id] [--require-valid-signature]
   mvx compare packed <before.crx|zip> <after.crx|zip> --acknowledge-risk
               [--format markdown|json] [--output file]
               [--rule-pack file ...] [--disposition-policy file ...]
@@ -77,7 +88,7 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = Object.create(null);
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256', '--expected-report-sha256', '--expected-package-sha256', '--expected-analysis-sha256']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256', '--before-package-sha256', '--after-package-sha256', '--before-analysis-sha256', '--after-analysis-sha256', '--expected-report-sha256', '--expected-package-sha256', '--expected-analysis-sha256']);
   const setSingleton = (key, value, token) => {
     if (Object.hasOwn(options, key)) {
       throw new MvxError(`Duplicate option: ${token}`, { code: 'INVALID_ARGUMENT' });
@@ -161,6 +172,7 @@ export async function runCli(argv, streams = process) {
     }
     const [command, ...args] = positionals;
     const auditVerificationRequested = command === 'audit' && args[0] === 'verify';
+    const comparisonVerificationRequested = command === 'compare' && args[0] === 'verify';
     const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
       || options.expectedExtensionId !== undefined;
     const sideArchiveIdentityRequested = options.beforeArchiveSha256 !== undefined
@@ -178,24 +190,47 @@ export async function runCli(argv, streams = process) {
     const labImageIdentityRequested = options.expectedImageId !== undefined;
     const dispositionPolicyOptionsRequested = options.dispositionPolicies !== undefined
       || options.dispositionAt !== undefined;
-    const auditVerificationIdentityRequested = options.expectedReportSha256 !== undefined
-      || options.expectedPackageSha256 !== undefined
+    const auditVerificationIdentityRequested = options.expectedPackageSha256 !== undefined
       || options.expectedAnalysisSha256 !== undefined;
     if (auditVerificationIdentityRequested && !auditVerificationRequested) {
       throw new MvxError('Audit report identity options apply only to audit verify', {
         code: 'INVALID_ARGUMENT'
       });
     }
-    if (archiveIdentityRequested && !['audit', 'sample'].includes(command) && !packedComparisonRequested) {
+    const comparisonVerificationIdentityRequested =
+      options.beforePackageSha256 !== undefined
+      || options.afterPackageSha256 !== undefined
+      || options.beforeAnalysisSha256 !== undefined
+      || options.afterAnalysisSha256 !== undefined;
+    if (comparisonVerificationIdentityRequested && !comparisonVerificationRequested) {
+      throw new MvxError('Side-specific package and analysis identities apply only to compare verify', {
+        code: 'INVALID_ARGUMENT'
+      });
+    }
+    if (options.expectedReportSha256 !== undefined
+      && !auditVerificationRequested
+      && !comparisonVerificationRequested) {
+      throw new MvxError('--expected-report-sha256 applies only to audit or compare verify', {
+        code: 'INVALID_ARGUMENT'
+      });
+    }
+    if (archiveIdentityRequested && !['audit', 'sample'].includes(command)
+      && !packedComparisonRequested
+      && !comparisonVerificationRequested) {
       throw new MvxError('Archive identity options apply only to audit, sample unpack, or packed comparison', { code: 'INVALID_ARGUMENT' });
     }
-    if (sideArchiveIdentityRequested && !packedComparisonRequested) {
-      throw new MvxError('Side-specific archive SHA-256 options apply only to packed comparison', { code: 'INVALID_ARGUMENT' });
+    if (sideArchiveIdentityRequested
+      && !packedComparisonRequested
+      && !comparisonVerificationRequested) {
+      throw new MvxError('Side-specific archive SHA-256 options apply only to packed comparison or compare verify', { code: 'INVALID_ARGUMENT' });
     }
     if (options.expectedArchiveSha256 !== undefined && packedComparisonRequested) {
       throw new MvxError('Packed comparison requires --before-archive-sha256 and/or --after-archive-sha256', { code: 'INVALID_ARGUMENT' });
     }
-    if (signatureVerificationRequested && !['audit', 'sample', 'benchmark'].includes(command) && !packedComparisonRequested) {
+    if (signatureVerificationRequested
+      && !['audit', 'sample', 'benchmark'].includes(command)
+      && !packedComparisonRequested
+      && !comparisonVerificationRequested) {
       throw new MvxError('Archive signature verification applies only to packed audit, sample unpack, static benchmark, or packed comparison', { code: 'INVALID_ARGUMENT' });
     }
     if (options.requireSameExtensionId !== undefined && !packedComparisonRequested) {
@@ -315,6 +350,80 @@ export async function runCli(argv, streams = process) {
     }
 
     if (command === 'compare') {
+      if (comparisonVerificationRequested) {
+        const allowedVerificationOptions = new Set([
+          'acknowledgeRisk',
+          'afterAnalysisSha256',
+          'afterArchiveSha256',
+          'afterPackageSha256',
+          'beforeAnalysisSha256',
+          'beforeArchiveSha256',
+          'beforePackageSha256',
+          'dispositionAt',
+          'dispositionPolicies',
+          'expectedExtensionId',
+          'expectedReportSha256',
+          'format',
+          'output',
+          'requireValidSignature',
+          'rulePacks'
+        ]);
+        const unsupported = Object.keys(options)
+          .filter((key) => !allowedVerificationOptions.has(key))
+          .sort();
+        if (unsupported.length > 0) {
+          throw new MvxError(
+            `Unsupported compare verify option(s): ${unsupported.join(', ')}`,
+            { code: 'INVALID_ARGUMENT' }
+          );
+        }
+        if (args.length !== 4) {
+          throw new MvxError(
+            'compare verify requires report, before, and after paths',
+            { code: 'INVALID_ARGUMENT' }
+          );
+        }
+        if (!options.acknowledgeRisk) {
+          throw new MvxError('compare verify requires --acknowledge-risk', {
+            code: 'RISK_ACK_REQUIRED'
+          });
+        }
+        if (options.dispositionAt !== undefined) {
+          throw new MvxError('compare verify derives disposition time from the report', {
+            code: 'INVALID_ARGUMENT'
+          });
+        }
+        const format = options.format ?? 'text';
+        if (!['text', 'json'].includes(format)) {
+          throw new MvxError(`Unsupported comparison verification format: ${format}`, {
+            code: 'INVALID_ARGUMENT'
+          });
+        }
+        const verification = await verifyComparisonReport(
+          args[1],
+          args[2],
+          args[3],
+          {
+            rulePacks: options.rulePacks,
+            dispositionPolicies: options.dispositionPolicies,
+            requireValidSignature: options.requireValidSignature,
+            expectedReportSha256: options.expectedReportSha256,
+            expectedBeforePackageSha256: options.beforePackageSha256,
+            expectedAfterPackageSha256: options.afterPackageSha256,
+            expectedBeforeAnalysisSha256: options.beforeAnalysisSha256,
+            expectedAfterAnalysisSha256: options.afterAnalysisSha256,
+            expectedBeforeArchiveSha256: options.beforeArchiveSha256,
+            expectedAfterArchiveSha256: options.afterArchiveSha256,
+            expectedExtensionId: options.expectedExtensionId
+          }
+        );
+        await emit(
+          format === 'json' ? json(verification) : comparisonVerificationToText(verification),
+          options.output,
+          streams.stdout
+        );
+        return 0;
+      }
       if (options.dispositionAt !== undefined && options.dispositionPolicies === undefined) {
         throw new MvxError('--disposition-at requires at least one --disposition-policy', { code: 'INVALID_ARGUMENT' });
       }

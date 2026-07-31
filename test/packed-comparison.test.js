@@ -308,6 +308,16 @@ test('packed comparison cleans both sides on failure and rejects ambiguous API o
   await assert.rejects(() => compareExtensionArchives(fixture.before, fixture.after, {
     rulePacks: new Proxy([], {})
   }), (error) => error.code === 'INVALID_ARGUMENT' && /non-proxy array/.test(error.message));
+  const revokedRulePacks = Proxy.revocable([], {});
+  revokedRulePacks.revoke();
+  await assert.rejects(() => compareExtensionArchives(fixture.before, fixture.after, {
+    rulePacks: revokedRulePacks.proxy
+  }), (error) => error.code === 'INVALID_ARGUMENT' && /non-proxy array/.test(error.message));
+  const sparseRulePacks = [];
+  sparseRulePacks.length = 1;
+  await assert.rejects(() => compareExtensionArchives(fixture.before, fixture.after, {
+    rulePacks: sparseRulePacks
+  }), (error) => error.code === 'INVALID_ARGUMENT' && /dense array/.test(error.message));
 
   const nonEnumerableArchiveLimits = {};
   Object.defineProperty(nonEnumerableArchiveLimits, 'maxArchiveBytes', {

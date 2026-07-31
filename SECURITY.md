@@ -112,6 +112,18 @@ Legacy packed schema-v1 reports that predate the recorded
 an explicit unknown check plus caveat rather than silently claiming that the
 requirement was recorded.
 
+Retained comparison reports can be replayed with `mvx compare verify`. The
+verifier applies the same bounded, strict report-reader and private snapshot or
+extraction boundaries to both sides, waits for both cleanup paths before
+returning a failure, and recomputes the complete comparison delta, packed
+continuity, and package-entry changes with the same implementation used for
+generation. Use independently obtained report and side package/analysis/archive
+hashes whenever provenance matters. A shared expected extension ID or valid
+signature must verify on both exact CRX buffers before extraction. Matching
+developer keys establish only embedded-key continuity; successful replay is
+not report authorship, acquisition trust, release-history completeness,
+publisher identity, Web Store authorization, or a benign verdict.
+
 Live browser analysis is accepted only through the documented container lab:
 no public network, no host browser profile, no real user data, no writable
 sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium
