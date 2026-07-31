@@ -699,7 +699,7 @@ async function auditDirectorySnapshot(inputPath, auditOptions, temporaryDirector
   return { actual, location: snapshot.location };
 }
 
-async function replayAuditReport(report, inputPath, stable) {
+async function replayAuditReport(report, inputPath, stable, preparedReviewData) {
   const packed = report.artifact !== undefined;
   const legacySignaturePolicy = packed
     && report.artifact.identityPolicy
@@ -712,11 +712,16 @@ async function replayAuditReport(report, inputPath, stable) {
   const auditOptions = Object.assign(Object.create(null), {
     archiveLimits: stable.archiveLimits,
     limits: stable.limits,
-    rulePacks: stable.rulePacks,
-    rulePackLimits: stable.rulePackLimits,
-    dispositionPolicies: stable.dispositionPolicies,
-    dispositionPolicyLimits: stable.dispositionPolicyLimits,
-    ...(dispositionAt !== undefined ? { dispositionAt } : {})
+    ...(preparedReviewData ? {
+      _preparedRulePacks: preparedReviewData.rulePacks,
+      _preparedDispositionPolicies: preparedReviewData.dispositionPolicies
+    } : {
+      rulePacks: stable.rulePacks,
+      rulePackLimits: stable.rulePackLimits,
+      dispositionPolicies: stable.dispositionPolicies,
+      dispositionPolicyLimits: stable.dispositionPolicyLimits,
+      ...(dispositionAt !== undefined ? { dispositionAt } : {})
+    })
   });
   let actual;
   let inputLocation;
@@ -779,6 +784,23 @@ export async function replayAuditReportData(report, inputPath, options = {}) {
   const stable = snapshotOptions(options);
   const normalized = validateAuditReportData(normalizeVerificationData(report));
   return replayAuditReport(normalized, inputPath, stable);
+}
+
+export async function replayAuditReportDataWithPreparedReview(
+  report,
+  inputPath,
+  options,
+  preparedReviewData
+) {
+  if (typeof inputPath !== 'string' || inputPath.length === 0) {
+    throw new MvxError('inputPath must be a non-empty string', { code: 'INVALID_ARGUMENT' });
+  }
+  if (!preparedReviewData || typeof preparedReviewData !== 'object') {
+    throw new MvxError('Prepared review data is required', { code: 'INVALID_ARGUMENT' });
+  }
+  const stable = snapshotOptions(options);
+  const normalized = validateAuditReportData(normalizeVerificationData(report));
+  return replayAuditReport(normalized, inputPath, stable, preparedReviewData);
 }
 
 export async function verifyAuditReport(reportPath, inputPath, options = {}) {

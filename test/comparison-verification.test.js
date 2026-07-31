@@ -11,7 +11,10 @@ import {
   comparisonVerificationToText,
   verifyComparisonReport
 } from '../src/comparison-verification.js';
-import { compareExtensionArchives, compareExtensions } from '../src/compare.js';
+import { auditExtension } from '../src/analyzer.js';
+import {
+  compareAuditResults, compareExtensionArchives, compareExtensions
+} from '../src/compare.js';
 import { runCli } from '../src/cli.js';
 import { makeSignedCrx3, makeZip } from '../support/archive-fixture.js';
 import { captureStreams, writeExtension } from '../support/helpers.js';
@@ -191,6 +194,20 @@ test('comparison verification replays rule packs and rejects delta tampering', a
       temporaryDirectory: fixture.temporaryDirectory
     }),
     (error) => error.code === 'COMPARISON_REPORT_MISMATCH'
+  );
+  const afterWithDifferentPack = await auditExtension(fixture.after, {
+    rulePacks: [rulePack]
+  });
+  const impossible = compareAuditResults(comparison.before, afterWithDifferentPack);
+  const impossiblePath = path.join(fixture.root, 'cross-side-provenance.json');
+  await writeFile(impossiblePath, `${JSON.stringify(impossible)}\n`);
+  await assert.rejects(
+    () => verifyComparisonReport(impossiblePath, fixture.before, fixture.after, {
+      rulePacks: [rulePack],
+      temporaryDirectory: fixture.temporaryDirectory
+    }),
+    (error) => error.code === 'INVALID_COMPARISON_REPORT'
+      && /different rule-pack or disposition-policy provenance/.test(error.message)
   );
 
   const tampered = structuredClone(comparison);
@@ -379,6 +396,21 @@ test('comparison verification binds packed bytes, signatures, continuity, and pa
     }),
     (error) => error.code === 'COMPARISON_REPORT_MISMATCH'
   );
+  const recordedHashTamper = structuredClone(comparison);
+  recordedHashTamper.before.artifact.identityPolicy.expectedArchiveSha256 =
+    '0'.repeat(64);
+  const recordedHashTamperPath = path.join(fixture.root, 'recorded-hash-tamper.json');
+  await writeFile(recordedHashTamperPath, `${JSON.stringify(recordedHashTamper)}\n`);
+  await assert.rejects(
+    () => verifyComparisonReport(
+      recordedHashTamperPath,
+      relocatedBefore,
+      relocatedAfter,
+      { temporaryDirectory: fixture.temporaryDirectory }
+    ),
+    (error) => error.code === 'COMPARISON_REPORT_MISMATCH'
+      && error.cause?.code === 'ARCHIVE_IDENTITY_MISMATCH'
+  );
 });
 
 test('comparison verification rejects hostile reports and options with typed errors', async (t) => {
@@ -538,6 +570,18 @@ test('comparison verification rejects hostile reports and options with typed err
   });
   const packedPath = path.join(fixture.root, 'unsigned-comparison.json');
   await writeFile(packedPath, `${JSON.stringify(packed)}\n`);
+  const recordedStrict = structuredClone(packed);
+  recordedStrict.before.artifact.identityPolicy.requireValidSignature = true;
+  recordedStrict.after.artifact.identityPolicy.requireValidSignature = true;
+  const recordedStrictPath = path.join(fixture.root, 'unsigned-recorded-strict.json');
+  await writeFile(recordedStrictPath, `${JSON.stringify(recordedStrict)}\n`);
+  await assert.rejects(
+    () => verifyComparisonReport(recordedStrictPath, unsignedBefore, unsignedAfter, {
+      temporaryDirectory: fixture.temporaryDirectory
+    }),
+    (error) => error.code === 'COMPARISON_REPORT_MISMATCH'
+      && error.cause?.code === 'CRX_SIGNATURE_REQUIRED'
+  );
   await assert.rejects(
     () => verifyComparisonReport(packedPath, unsignedBefore, unsignedAfter, {
       requireValidSignature: true,

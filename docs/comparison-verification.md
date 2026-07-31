@@ -25,6 +25,11 @@ Repeat every `--rule-pack` and `--disposition-policy` used to create the
 comparison. The verifier derives the shared disposition evaluation instant
 from the nested audit reports. It rejects `--disposition-at`, because allowing
 the verifier to select a new instant would not reproduce expiry decisions.
+Both nested reports must record identical pack and policy provenance. The
+verifier reads each supplied review file exactly once, freezes the prepared
+data, and shares that same instance across both replays so a concurrent path
+replacement cannot create a cross-side configuration the generator could not
+produce.
 
 The CLI always requires `--acknowledge-risk`. Either side may be a live packed
 extension selected by an untrusted report. Library callers are responsible for

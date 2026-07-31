@@ -229,6 +229,10 @@ static-report verification boundary, and then calls the same comparison
 functions used by report generation. Deep equality covers every
 finding/evidence, risk, permission, and host delta. Packed verification also
 recomputes `mvx-archive-continuity-v1` and `mvx-package-delta-v1`.
+The nested reports must carry equal rule-pack and disposition-policy
+provenance. Each supplied review file is loaded once into the same validated,
+immutable prepared object used by both replay sides, preventing cross-side
+path-replacement races.
 
 Only the two nested local root/archive path fields are portable. Exact report
 bytes and each side's package, analysis, or archive identity can be pinned

@@ -6,12 +6,14 @@ import {
   normalizeVerificationData,
   parseBoundedJsonReport,
   portableAuditReport,
-  replayAuditReportData,
+  replayAuditReportDataWithPreparedReview,
   validateAuditReportData
 } from './audit-verification.js';
 import { compareAuditResults, comparePackedAuditResults } from './compare.js';
+import { resolveDispositionPolicies } from './disposition-policy.js';
 import { MvxError } from './errors.js';
 import { assertOptionsObject } from './options.js';
+import { resolveRulePacks } from './rule-packs.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
 export const COMPARISON_VERIFICATION_PROFILE = 'mvx-comparison-verification-v1';
@@ -233,6 +235,16 @@ function validateComparisonReportData(report) {
       code: 'INVALID_COMPARISON_REPORT'
     });
   }
+  if (!isDeepStrictEqual(report.before.rulePacks, report.after.rulePacks)
+    || !isDeepStrictEqual(
+      report.before.dispositionPolicies ?? null,
+      report.after.dispositionPolicies ?? null
+    )) {
+    throw new MvxError(
+      'Comparison report sides use different rule-pack or disposition-policy provenance',
+      { code: 'INVALID_COMPARISON_REPORT' }
+    );
+  }
   if (beforePacked) {
     if (!isVerificationDataRecord(report.archiveContinuity)
       || typeof report.archiveContinuity.required !== 'boolean'
@@ -285,15 +297,23 @@ function canonicalizeLegacySignaturePolicies(report) {
   return legacy;
 }
 
-async function replaySide(side, report, inputPath, options) {
+async function replaySide(side, report, inputPath, options, preparedReviewData) {
   try {
-    return await replayAuditReportData(report, inputPath, options);
+    return await replayAuditReportDataWithPreparedReview(
+      report,
+      inputPath,
+      options,
+      preparedReviewData
+    );
   } catch (error) {
     const mappings = new Map([
       ['AUDIT_IDENTITY_MISMATCH', 'COMPARISON_IDENTITY_MISMATCH'],
       ['AUDIT_IDENTITY_UNVERIFIABLE', 'COMPARISON_IDENTITY_UNVERIFIABLE'],
       ['AUDIT_REPORT_MISMATCH', 'COMPARISON_REPORT_MISMATCH'],
-      ['INVALID_AUDIT_REPORT', 'INVALID_COMPARISON_REPORT']
+      ['INVALID_AUDIT_REPORT', 'INVALID_COMPARISON_REPORT'],
+      ['ARCHIVE_IDENTITY_MISMATCH', 'COMPARISON_REPORT_MISMATCH'],
+      ['ARCHIVE_IDENTITY_UNVERIFIABLE', 'COMPARISON_REPORT_MISMATCH'],
+      ['CRX_SIGNATURE_REQUIRED', 'COMPARISON_REPORT_MISMATCH']
     ]);
     const code = mappings.get(error?.code);
     if (!code) throw error;
@@ -386,13 +406,30 @@ export async function verifyComparisonReport(
       { code: 'INVALID_COMPARISON_REPORT' }
     );
   }
+  const preparedRulePacks = await resolveRulePacks(Object.assign(
+    Object.create(null),
+    {
+      rulePacks: stable.rulePacks,
+      rulePackLimits: stable.rulePackLimits
+    }
+  ));
+  const preparedDispositionPolicies = await resolveDispositionPolicies(Object.assign(
+    Object.create(null),
+    {
+      dispositionPolicies: stable.dispositionPolicies,
+      dispositionPolicyLimits: stable.dispositionPolicyLimits,
+      ...(dispositionTime(report.before) !== undefined ? {
+        dispositionAt: dispositionTime(report.before)
+      } : {})
+    }
+  ));
+  const preparedReviewData = Object.freeze({
+    rulePacks: preparedRulePacks,
+    dispositionPolicies: preparedDispositionPolicies
+  });
   const shared = {
     archiveLimits: stable.archiveLimits,
-    dispositionPolicies: stable.dispositionPolicies,
-    dispositionPolicyLimits: stable.dispositionPolicyLimits,
     limits: stable.limits,
-    rulePackLimits: stable.rulePackLimits,
-    rulePacks: stable.rulePacks,
     temporaryDirectory: stable.temporaryDirectory
   };
   const sideOptions = {
@@ -414,20 +451,44 @@ export async function verifyComparisonReport(
     }
   };
   const replays = await Promise.allSettled([
-    replaySide('Before', report.before, beforePath, sideOptions.before),
-    replaySide('After', report.after, afterPath, sideOptions.after)
+    replaySide(
+      'Before',
+      report.before,
+      beforePath,
+      sideOptions.before,
+      preparedReviewData
+    ),
+    replaySide(
+      'After',
+      report.after,
+      afterPath,
+      sideOptions.after,
+      preparedReviewData
+    )
   ]);
   const failed = replays.find((result) => result.status === 'rejected');
   if (failed) throw failed.reason;
   const before = replays[0].value;
   const after = replays[1].value;
-  const actual = normalizeVerificationData(packed
-    ? comparePackedAuditResults(
-      before.actual,
-      after.actual,
-      report.archiveContinuity.required
-    )
-    : compareAuditResults(before.actual, after.actual));
+  let actual;
+  try {
+    actual = normalizeVerificationData(packed
+      ? comparePackedAuditResults(
+        before.actual,
+        after.actual,
+        report.archiveContinuity.required
+      )
+      : compareAuditResults(before.actual, after.actual));
+  } catch (error) {
+    if (['ARCHIVE_IDENTITY_MISMATCH', 'ARCHIVE_IDENTITY_UNVERIFIABLE']
+      .includes(error?.code)) {
+      throw new MvxError(
+        `Packed comparison continuity does not match the supplied inputs: ${error.message}`,
+        { code: 'COMPARISON_REPORT_MISMATCH', cause: error }
+      );
+    }
+    throw error;
+  }
   if (!isDeepStrictEqual(
     portableComparisonReport(report),
     portableComparisonReport(actual)
