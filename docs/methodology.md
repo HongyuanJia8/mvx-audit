@@ -221,6 +221,26 @@ before second-side entry parsing or extraction. Each packed audit and cleanup
 finishes before the next begins, avoiding background extraction after a
 returned failure.
 
+## Comparison report verification
+
+The `mvx-comparison-verification-v1` profile treats a retained schema-v1
+comparison as bounded untrusted JSON, replays both nested audits through the
+static-report verification boundary, and then calls the same comparison
+functions used by report generation. Deep equality covers every
+finding/evidence, risk, permission, and host delta. Packed verification also
+recomputes `mvx-archive-continuity-v1` and `mvx-package-delta-v1`.
+
+Only the two nested local root/archive path fields are portable. Exact report
+bytes and each side's package, analysis, or archive identity can be pinned
+independently. A shared expected extension ID and valid-signature requirement
+must be established on both bounded CRX buffers before ZIP parsing or
+extraction. Directory sides are independently snapshotted. Both replay
+operations settle and enforce cleanup before a failure returns, so one rejected
+side cannot leave the other running in the background. Reproduction proves
+consistency with supplied inputs, not report authorship, acquisition
+provenance, publisher identity, lineage completeness, or benign behavior. See
+[offline comparison-report verification](comparison-verification.md).
+
 Static benchmark discovery treats the quarantine directory ID and the CRX
 filename digest as expected identities, not trusted labels. Before extraction
 the actual archive SHA-256 must match its filename. A verified CRX extension ID

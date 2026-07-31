@@ -11,6 +11,10 @@ export {
   compareExtensionArchives, compareExtensions
 } from './compare.js';
 export {
+  COMPARISON_VERIFICATION_PROFILE, DEFAULT_COMPARISON_VERIFICATION_LIMITS,
+  comparisonVerificationToText, verifyComparisonReport
+} from './comparison-verification.js';
+export {
   DEFAULT_DISPOSITION_POLICY_LIMITS, applyDispositionPolicies, dispositionPoliciesToText,
   loadDispositionPolicies
 } from './disposition-policy.js';

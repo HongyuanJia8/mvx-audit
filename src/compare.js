@@ -33,24 +33,31 @@ function evidenceKey(finding, evidence) {
 }
 
 function flattenEvidence(findings) {
-  return findings.flatMap((finding) => finding.evidence.map((evidence) => ({
+  return Array.prototype.flatMap.call(findings, (finding) =>
+    Array.prototype.map.call(finding.evidence, (evidence) => ({
     key: evidenceKey(finding, evidence),
     findingId: finding.id,
     fingerprint: findingKey(finding),
     title: finding.title,
     severity: finding.severity,
     evidence
-  })));
+    })));
 }
 
 function difference(left, right) {
-  const rightSet = new Set(right);
-  return left.filter((item) => !rightSet.has(item));
+  const rightSet = new Set(Array.prototype.slice.call(right));
+  return Array.prototype.filter.call(left, (item) => !rightSet.has(item));
 }
 
-function compareAuditResults(before, after) {
-  const beforeMap = new Map(before.findings.map((finding) => [findingKey(finding), finding]));
-  const afterMap = new Map(after.findings.map((finding) => [findingKey(finding), finding]));
+export function compareAuditResults(before, after) {
+  const beforeMap = new Map(Array.prototype.map.call(
+    before.findings,
+    (finding) => [findingKey(finding), finding]
+  ));
+  const afterMap = new Map(Array.prototype.map.call(
+    after.findings,
+    (finding) => [findingKey(finding), finding]
+  ));
   const beforeEvidence = flattenEvidence(before.findings);
   const afterEvidence = flattenEvidence(after.findings);
   const beforeEvidenceKeys = new Set(beforeEvidence.map((item) => item.key));
@@ -71,8 +78,14 @@ function compareAuditResults(before, after) {
       } : {}),
       resolvedFindings: resolved,
       introducedFindings: introduced,
-      evidenceAdded: afterEvidence.filter((item) => !beforeEvidenceKeys.has(item.key)).map(({ key, ...item }) => item),
-      evidenceRemoved: beforeEvidence.filter((item) => !afterEvidenceKeys.has(item.key)).map(({ key, ...item }) => item),
+      evidenceAdded: Array.prototype.map.call(
+        afterEvidence.filter((item) => !beforeEvidenceKeys.has(item.key)),
+        ({ key, ...item }) => item
+      ),
+      evidenceRemoved: Array.prototype.map.call(
+        beforeEvidence.filter((item) => !afterEvidenceKeys.has(item.key)),
+        ({ key, ...item }) => item
+      ),
       evidenceCount: { before: beforeEvidence.length, after: afterEvidence.length, delta: afterEvidence.length - beforeEvidence.length },
       permissionsAdded: difference(afterPermissions, beforePermissions),
       permissionsRemoved: difference(beforePermissions, afterPermissions),
@@ -94,9 +107,15 @@ function ownOption(options, key) {
   return Object.getOwnPropertyDescriptor(options, key)?.value;
 }
 
-function packageDelta(before, after) {
-  const beforeEntries = new Map(before.entries.map((entry) => [entry.path, entry]));
-  const afterEntries = new Map(after.entries.map((entry) => [entry.path, entry]));
+export function packageDelta(before, after) {
+  const beforeEntries = new Map(Array.prototype.map.call(
+    before.entries,
+    (entry) => [entry.path, entry]
+  ));
+  const afterEntries = new Map(Array.prototype.map.call(
+    after.entries,
+    (entry) => [entry.path, entry]
+  ));
   const paths = [...new Set([...beforeEntries.keys(), ...afterEntries.keys()])].sort(compareText);
   const added = [];
   const removed = [];
@@ -128,10 +147,18 @@ function packageDelta(before, after) {
       after: afterEntry
     });
   }
-  const addedFiles = added.filter((entry) => entry.type === 'file').length;
-  const removedFiles = removed.filter((entry) => entry.type === 'file').length;
-  const modifiedFiles = modified.filter((entry) =>
-    entry.before.type === 'file' || entry.after.type === 'file').length;
+  const addedFiles = Array.prototype.filter.call(
+    added,
+    (entry) => entry.type === 'file'
+  ).length;
+  const removedFiles = Array.prototype.filter.call(
+    removed,
+    (entry) => entry.type === 'file'
+  ).length;
+  const modifiedFiles = Array.prototype.filter.call(
+    modified,
+    (entry) => entry.before.type === 'file' || entry.after.type === 'file'
+  ).length;
   return {
     profile: PACKAGE_DELTA_PROFILE,
     summary: {
@@ -173,7 +200,7 @@ function authenticityIdentity(result) {
   };
 }
 
-function archiveContinuity(before, after, required) {
+export function archiveContinuity(before, after, required) {
   const beforeIdentity = authenticityIdentity(before);
   const afterIdentity = authenticityIdentity(after);
   const verifiable = beforeIdentity.authenticityStatus === 'verified'
@@ -196,6 +223,31 @@ function archiveContinuity(before, after, required) {
     samePackage: before.package.sha256 === after.package.sha256,
     before: beforeIdentity,
     after: afterIdentity
+  };
+}
+
+export function comparePackedAuditResults(before, after, strictContinuity) {
+  const continuity = archiveContinuity(before, after, strictContinuity);
+  if (continuity.required && continuity.status === 'unverifiable') {
+    throw new MvxError('Same-extension comparison requires two cryptographically verified CRX identities', {
+      code: 'ARCHIVE_IDENTITY_UNVERIFIABLE'
+    });
+  }
+  if (continuity.required && continuity.status === 'verified-different') {
+    throw new MvxError('Verified CRX extension or developer-key identities differ across the comparison', {
+      code: 'ARCHIVE_IDENTITY_MISMATCH'
+    });
+  }
+  const comparison = compareAuditResults(before, after);
+  return {
+    ...comparison,
+    archiveContinuity: continuity,
+    packageDelta: packageDelta(before.package, after.package),
+    interpretation: [
+      ...comparison.interpretation,
+      'Verified matching CRX extension IDs and full developer-key hashes establish key continuity, not publisher identity, Web Store authorization, or benign behavior.',
+      'ZIP or invalid-signature comparisons remain useful for forensic byte differences but cannot establish extension identity continuity.'
+    ]
   };
 }
 
@@ -235,17 +287,26 @@ function snapshotRecord(value, label) {
 
 function snapshotPaths(value, label) {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || utilTypes.isProxy(value)
+  if (utilTypes.isProxy(value) || !Array.isArray(value)
     || Object.getPrototypeOf(value) !== Array.prototype
     || Object.getOwnPropertySymbols(value).length > 0) {
     throw new MvxError(`${label} must be a non-proxy array of file paths`, { code: 'INVALID_ARGUMENT' });
   }
-  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
-    if (key !== 'length' && !Object.hasOwn(descriptor, 'value')) {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const length = descriptors.length.value;
+  const keys = Object.keys(descriptors).filter((key) => key !== 'length');
+  if (keys.length !== length || keys.some((key) => {
+    const index = Number(key);
+    return !Number.isSafeInteger(index) || index < 0 || index >= length || String(index) !== key;
+  })) {
+    throw new MvxError(`${label} must be a dense array without extra properties`, { code: 'INVALID_ARGUMENT' });
+  }
+  for (const key of keys) {
+    if (!Object.hasOwn(descriptors[key], 'value')) {
       throw new MvxError(`${label} may not contain accessor property: ${key}`, { code: 'INVALID_ARGUMENT' });
     }
   }
-  const snapshot = [...value];
+  const snapshot = keys.map((key) => descriptors[key].value);
   if (snapshot.some((item) => typeof item !== 'string' || item.length === 0)) {
     throw new MvxError(`${label} must contain only non-empty file paths`, { code: 'INVALID_ARGUMENT' });
   }
@@ -357,26 +418,5 @@ export async function compareExtensionArchives(beforePath, afterPath, options = 
       _expectedDeveloperKeySha256IfVerified: before.artifact.authenticity.developerKeySha256
     } : {})
   }, implicitSignatureRequirement);
-  const continuity = archiveContinuity(before, after, strictContinuity);
-  if (continuity.required && continuity.status === 'unverifiable') {
-    throw new MvxError('Same-extension comparison requires two cryptographically verified CRX identities', {
-      code: 'ARCHIVE_IDENTITY_UNVERIFIABLE'
-    });
-  }
-  if (continuity.required && continuity.status === 'verified-different') {
-    throw new MvxError('Verified CRX extension or developer-key identities differ across the comparison', {
-      code: 'ARCHIVE_IDENTITY_MISMATCH'
-    });
-  }
-  const comparison = compareAuditResults(before, after);
-  return {
-    ...comparison,
-    archiveContinuity: continuity,
-    packageDelta: packageDelta(before.package, after.package),
-    interpretation: [
-      ...comparison.interpretation,
-      'Verified matching CRX extension IDs and full developer-key hashes establish key continuity, not publisher identity, Web Store authorization, or benign behavior.',
-      'ZIP or invalid-signature comparisons remain useful for forensic byte differences but cannot establish extension identity continuity.'
-    ]
-  };
+  return comparePackedAuditResults(before, after, strictContinuity);
 }

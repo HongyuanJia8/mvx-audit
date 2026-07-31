@@ -186,7 +186,7 @@ function snapshotOptions(options) {
   return Object.freeze(values);
 }
 
-function rejectDuplicateKeys(source) {
+function rejectDuplicateKeys(source, { label, invalidCode }) {
   let cursor = 0;
   const whitespace = () => {
     while (/\s/.test(source[cursor] ?? '')) cursor += 1;
@@ -208,8 +208,8 @@ function rejectDuplicateKeys(source) {
       while (source[cursor] !== '}') {
         const key = jsonString();
         if (keys.has(key)) {
-          throw new MvxError('Audit report contains duplicate JSON fields', {
-            code: 'INVALID_AUDIT_REPORT'
+          throw new MvxError(`${label} contains duplicate JSON fields`, {
+            code: invalidCode
           });
         }
         keys.add(key);
@@ -248,7 +248,7 @@ function rejectDuplicateKeys(source) {
   value();
 }
 
-function assertJsonStructure(source, limits) {
+function assertJsonStructure(source, limits, { label, limitCode }) {
   let depth = 0;
   let inString = false;
   let escaped = false;
@@ -258,8 +258,8 @@ function assertJsonStructure(source, limits) {
     values += 1;
     if (values > limits.maxReportValues) {
       throw new MvxError(
-        `Audit report exceeds ${limits.maxReportValues} JSON values`,
-        { code: 'AUDIT_REPORT_LIMIT' }
+        `${label} exceeds ${limits.maxReportValues} JSON values`,
+        { code: limitCode }
       );
     }
   };
@@ -281,8 +281,8 @@ function assertJsonStructure(source, limits) {
       primitive = false;
       depth += 1;
       if (depth > 128) {
-        throw new MvxError('Audit report exceeds 128 JSON nesting levels', {
-          code: 'AUDIT_REPORT_LIMIT'
+        throw new MvxError(`${label} exceeds 128 JSON nesting levels`, {
+          code: limitCode
         });
       }
     } else if (character === '}' || character === ']') {
@@ -297,7 +297,7 @@ function assertJsonStructure(source, limits) {
   }
 }
 
-function normalizeData(value) {
+export function normalizeVerificationData(value) {
   if (Array.isArray(value)) {
     const descriptors = Object.getOwnPropertyDescriptors(value);
     const length = descriptors.length.value;
@@ -311,7 +311,7 @@ function normalizeData(value) {
         });
       }
       Object.defineProperty(result, String(index), {
-        value: normalizeData(descriptor.value),
+        value: normalizeVerificationData(descriptor.value),
         configurable: true,
         enumerable: true,
         writable: true
@@ -322,44 +322,51 @@ function normalizeData(value) {
   if (!value || typeof value !== 'object') return value;
   const result = Object.create(null);
   for (const key of Object.getOwnPropertyNames(value)) {
-    result[key] = normalizeData(Object.getOwnPropertyDescriptor(value, key).value);
+    result[key] = normalizeVerificationData(Object.getOwnPropertyDescriptor(value, key).value);
   }
   return result;
 }
 
-function isDataRecord(value) {
+export function isVerificationDataRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function parseReport(bytes, limits) {
+export function parseBoundedJsonReport(bytes, limits, {
+  label,
+  invalidCode,
+  limitCode
+}) {
   let source;
   try {
     source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch (error) {
-    throw new MvxError('Audit report is not valid UTF-8', {
-      code: 'INVALID_AUDIT_REPORT',
+    throw new MvxError(`${label} is not valid UTF-8`, {
+      code: invalidCode,
       cause: error
     });
   }
-  assertJsonStructure(source, limits);
+  assertJsonStructure(source, limits, { label, limitCode });
   let report;
   try {
     report = JSON.parse(source);
   } catch (error) {
-    throw new MvxError('Audit report is not valid JSON', {
-      code: 'INVALID_AUDIT_REPORT',
+    throw new MvxError(`${label} is not valid JSON`, {
+      code: invalidCode,
       cause: error
     });
   }
-  rejectDuplicateKeys(source);
-  report = normalizeData(report);
-  if (!isDataRecord(report)
+  rejectDuplicateKeys(source, { label, invalidCode });
+  return normalizeVerificationData(report);
+}
+
+export function validateAuditReportData(report) {
+  if (!isVerificationDataRecord(report)
     || report.schemaVersion !== 1
-    || !isDataRecord(report.target)
+    || !isVerificationDataRecord(report.target)
     || typeof report.target.root !== 'string' || report.target.root.length === 0
     || report.target.root.length > 4_096
-    || !isDataRecord(report.package) || typeof report.package.sha256 !== 'string'
-    || !isDataRecord(report.analysis) || typeof report.analysis.sha256 !== 'string'
+    || !isVerificationDataRecord(report.package) || typeof report.package.sha256 !== 'string'
+    || !isVerificationDataRecord(report.analysis) || typeof report.analysis.sha256 !== 'string'
     || !Array.isArray(report.rulePacks)
     || !Array.isArray(report.findings)) {
     throw new MvxError('Audit report does not have the required schema-v1 audit structure', {
@@ -367,11 +374,11 @@ function parseReport(bytes, limits) {
     });
   }
   if (report.artifact !== undefined
-    && (!isDataRecord(report.artifact)
+    && (!isVerificationDataRecord(report.artifact)
       || typeof report.artifact.path !== 'string'
       || report.artifact.path.length === 0
       || report.artifact.path.length > 4_096
-      || !isDataRecord(report.artifact.identityPolicy))) {
+      || !isVerificationDataRecord(report.artifact.identityPolicy))) {
     throw new MvxError('Packed audit report has an invalid artifact path', {
       code: 'INVALID_AUDIT_REPORT'
     });
@@ -393,7 +400,7 @@ function parseReport(bytes, limits) {
     });
   }
   if (report.dispositionEvaluation !== undefined
-    && !isDataRecord(report.dispositionEvaluation)) {
+    && !isVerificationDataRecord(report.dispositionEvaluation)) {
     throw new MvxError('Audit report has an invalid disposition evaluation record', {
       code: 'INVALID_AUDIT_REPORT'
     });
@@ -422,7 +429,15 @@ function parseReport(bytes, limits) {
   return report;
 }
 
-function portableReport(report) {
+function parseReport(bytes, limits) {
+  return validateAuditReportData(parseBoundedJsonReport(bytes, limits, {
+    label: 'Audit report',
+    invalidCode: 'INVALID_AUDIT_REPORT',
+    limitCode: 'AUDIT_REPORT_LIMIT'
+  }));
+}
+
+export function portableAuditReport(report) {
   const result = Object.assign(Object.create(null), report);
   result.target = Object.assign(Object.create(null), report.target, {
     root: '<verified input>'
@@ -684,23 +699,7 @@ async function auditDirectorySnapshot(inputPath, auditOptions, temporaryDirector
   return { actual, location: snapshot.location };
 }
 
-export async function verifyAuditReport(reportPath, inputPath, options = {}) {
-  for (const [label, value] of [['reportPath', reportPath], ['inputPath', inputPath]]) {
-    if (typeof value !== 'string' || value.length === 0) {
-      throw new MvxError(`${label} must be a non-empty string`, { code: 'INVALID_ARGUMENT' });
-    }
-  }
-  const stable = snapshotOptions(options);
-  const reportBytes = await readBoundedRegularFile(path.resolve(reportPath), {
-    maxBytes: stable.reportLimits.maxReportBytes,
-    label: 'audit report',
-    limitCode: 'AUDIT_REPORT_LIMIT',
-    missingCode: 'AUDIT_REPORT_NOT_FOUND',
-    unsafeCode: 'UNSAFE_AUDIT_REPORT'
-  });
-  const reportSha256 = sha256(reportBytes);
-  assertExpected(reportSha256, stable.expectedReportSha256, 'Audit report SHA-256');
-  const report = parseReport(reportBytes, stable.reportLimits);
+async function replayAuditReport(report, inputPath, stable) {
   const packed = report.artifact !== undefined;
   const legacySignaturePolicy = packed
     && report.artifact.identityPolicy
@@ -753,9 +752,9 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
     actual = snapshotAudit.actual;
     inputLocation = snapshotAudit.location;
   }
-  actual = normalizeData(actual);
+  actual = normalizeVerificationData(actual);
   assertIndependentIdentities(actual, stable);
-  if (!isDeepStrictEqual(portableReport(report), portableReport(actual))) {
+  if (!isDeepStrictEqual(portableAuditReport(report), portableAuditReport(actual))) {
     throw new MvxError(
       'Audit report does not match deterministic analysis of the supplied input and review data',
       { code: 'AUDIT_REPORT_MISMATCH' }
@@ -763,6 +762,46 @@ export async function verifyAuditReport(reportPath, inputPath, options = {}) {
   }
   const locationMetadataMatchesInput = report.target.root === inputLocation
     && (report.artifact?.path ?? null) === (packed ? inputLocation : null);
+  return {
+    actual,
+    inputLocation,
+    legacySignaturePolicy,
+    locationMetadataMatchesInput,
+    packed,
+    report
+  };
+}
+
+export async function replayAuditReportData(report, inputPath, options = {}) {
+  if (typeof inputPath !== 'string' || inputPath.length === 0) {
+    throw new MvxError('inputPath must be a non-empty string', { code: 'INVALID_ARGUMENT' });
+  }
+  const stable = snapshotOptions(options);
+  const normalized = validateAuditReportData(normalizeVerificationData(report));
+  return replayAuditReport(normalized, inputPath, stable);
+}
+
+export async function verifyAuditReport(reportPath, inputPath, options = {}) {
+  for (const [label, value] of [['reportPath', reportPath], ['inputPath', inputPath]]) {
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new MvxError(`${label} must be a non-empty string`, { code: 'INVALID_ARGUMENT' });
+    }
+  }
+  const stable = snapshotOptions(options);
+  const reportBytes = await readBoundedRegularFile(path.resolve(reportPath), {
+    maxBytes: stable.reportLimits.maxReportBytes,
+    label: 'audit report',
+    limitCode: 'AUDIT_REPORT_LIMIT',
+    missingCode: 'AUDIT_REPORT_NOT_FOUND',
+    unsafeCode: 'UNSAFE_AUDIT_REPORT'
+  });
+  const reportSha256 = sha256(reportBytes);
+  assertExpected(reportSha256, stable.expectedReportSha256, 'Audit report SHA-256');
+  const report = parseReport(reportBytes, stable.reportLimits);
+  const replay = await replayAuditReport(report, inputPath, stable);
+  const {
+    actual, legacySignaturePolicy, locationMetadataMatchesInput, packed
+  } = replay;
   const verifiedAuthenticity = actual.artifact?.authenticity?.status === 'verified';
   const independentChecks = {
     reportSha256: stable.expectedReportSha256 === undefined ? null : true,

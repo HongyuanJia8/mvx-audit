@@ -76,6 +76,12 @@ node bin/mvx.js compare packed before.crx after.crx --acknowledge-risk \
   --require-valid-signature --require-same-extension-id \
   --before-archive-sha256 <sha256> --after-archive-sha256 <sha256>
 
+# Reproduce a retained comparison and every derived delta
+node bin/mvx.js compare verify comparison.json before.crx after.crx \
+  --acknowledge-risk --require-valid-signature \
+  --expected-report-sha256 <sha256> \
+  --before-archive-sha256 <sha256> --after-archive-sha256 <sha256>
+
 # Validate and apply local declarative campaign indicators
 node bin/mvx.js rules validate examples/campaign-rule-pack.json
 node bin/mvx.js audit /path/to/extension \
@@ -169,10 +175,15 @@ development.
   package/analysis identities, rule packs, disposition policies, packed
   authenticity policy, and optional independently trusted identities, using
   private directory snapshots and pre-extraction packed identity gates.
+- Bounded offline comparison-report verification that independently snapshots
+  or extracts both sides, replays both complete audits, recomputes every
+  finding/evidence/capability delta plus packed continuity and package changes,
+  and supports independently trusted report and side identities.
 
 See the complete [rule reference](docs/rule-reference.md), [declarative rule
 pack guide](docs/rule-packs.md), [disposition-policy guide](docs/disposition-policies.md),
 [audit-verification guide](docs/audit-verification.md),
+[comparison-verification guide](docs/comparison-verification.md),
 [packed comparison guide](docs/packed-comparison.md), and
 [methodology](docs/methodology.md).
 
@@ -265,7 +276,7 @@ Public API:
 import {
   auditExtension, auditExtensionArchive, compareExtensionArchives, compareExtensions,
   evaluateLabFiles, loadDispositionPolicies, loadRulePacks, verifyAuditReport,
-  verifyLabReport
+  verifyComparisonReport, verifyLabReport
 } from 'mvx-audit';
 
 const rulePacks = ['./team-iocs.json'];
@@ -296,6 +307,14 @@ const auditVerification = await verifyAuditReport(
     dispositionPolicies,
     expectedReportSha256: '<lowercase-sha256>',
     expectedPackageSha256: '<lowercase-sha256>'
+  }
+);
+const comparisonVerification = await verifyComparisonReport(
+  './comparison.json', '/path/to/before', '/path/to/after',
+  {
+    expectedReportSha256: '<lowercase-sha256>',
+    expectedBeforePackageSha256: '<lowercase-sha256>',
+    expectedAfterPackageSha256: '<lowercase-sha256>'
   }
 );
 const labReport = await evaluateLabFiles('./scenario.json', './events.jsonl');
