@@ -92,7 +92,12 @@ try {
   );
   process.send?.({ ok: true });
 } catch (error) {
-  const code = typeof error?.code === 'string' ? error.code : 'AUDIT_SNAPSHOT_FAILED';
+  const concurrentChangeCodes = new Set(['ELOOP', 'ENOENT', 'ENOTDIR', 'ESTALE']);
+  const originalCode = typeof error?.code === 'string' ? error.code : undefined;
+  const mvxError = error instanceof MvxError;
+  const code = mvxError
+    ? originalCode
+    : (concurrentChangeCodes.has(originalCode) ? 'UNSAFE_INPUT' : 'AUDIT_SNAPSHOT_FAILED');
   const safeMessages = new Set([
     'SCAN_LIMIT',
     'UNSAFE_INPUT'

@@ -392,6 +392,33 @@ test('audit verification rejects ambiguous reports and hostile options before an
   }
   assert.equal(boxedPrototypeTrapExecuted, false);
 
+  for (const [label, mutate] of [
+    ['invalid-signature-policy', (value) => {
+      value.artifact = {
+        path: '/tmp/archive.crx',
+        identityPolicy: { requireValidSignature: 'yes' }
+      };
+    }],
+    ['invalid-archive-policy', (value) => {
+      value.artifact = {
+        path: '/tmp/archive.crx',
+        identityPolicy: { expectedArchiveSha256: 1 }
+      };
+    }],
+    ['invalid-disposition-time', (value) => {
+      value.dispositionEvaluation = { evaluatedAt: 1 };
+    }]
+  ]) {
+    const malformedNested = structuredClone(report);
+    mutate(malformedNested);
+    const malformedNestedPath = path.join(root, `${label}.json`);
+    await writeFile(malformedNestedPath, `${JSON.stringify(malformedNested)}\n`);
+    await assert.rejects(
+      () => verifyAuditReport(malformedNestedPath, extension),
+      (error) => error.code === 'INVALID_AUDIT_REPORT'
+    );
+  }
+
   const realReport = path.join(root, 'real-report.json');
   await writeFile(realReport, `${JSON.stringify(report)}\n`);
   assert.equal((await verifyAuditReport(
@@ -611,16 +638,46 @@ test('directory snapshot cannot be redirected by a root symlink race', async (t)
     }
   })();
   try {
+    const typedRaceError = (error) => [
+      'AUDIT_REPORT_MISMATCH',
+      'AUDIT_SNAPSHOT_FAILED',
+      'INPUT_NOT_FOUND',
+      'UNSAFE_INPUT'
+    ].includes(error.code);
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      await assert.rejects(() => verifyAuditReport(reportPath, input));
       await assert.rejects(
-        () => verifyAuditReport(reportPath, path.join(input, 'manifest.json'))
+        () => verifyAuditReport(reportPath, input),
+        typedRaceError
+      );
+      await assert.rejects(
+        () => verifyAuditReport(reportPath, path.join(input, 'manifest.json')),
+        typedRaceError
       );
     }
   } finally {
     racing = false;
     await race;
   }
+});
+
+test('directory snapshot rejects a temporary parent inside the extension', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-contained-temp-verification-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const extension = await writeExtension(path.join(root, 'extension'), {
+    manifest_version: 3, name: 'Contained temporary parent', version: '1.0.0'
+  });
+  const audit = await auditExtension(extension);
+  const reportPath = path.join(root, 'report.json');
+  await writeFile(reportPath, `${JSON.stringify(audit)}\n`);
+  const containedTemporary = path.join(extension, 'temporary');
+  await mkdir(containedTemporary);
+  await assert.rejects(
+    () => verifyAuditReport(reportPath, extension, {
+      temporaryDirectory: containedTemporary
+    }),
+    (error) => error.code === 'UNSAFE_TEMP'
+  );
+  assert.deepEqual(await readdir(containedTemporary), []);
 });
 
 test('audit verification replays exact rule-pack and disposition-policy provenance', async (t) => {

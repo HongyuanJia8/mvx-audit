@@ -135,4 +135,6 @@ Optional resource controls are `reportLimits`, `limits`, `rulePackLimits`,
 Report-reader controls are `reportLimits.maxReportBytes` and
 `reportLimits.maxReportValues`. Options are strict plain data: unknown fields,
 proxies, accessors, symbols, malformed digests, and malformed nested limit
-records are rejected.
+records are rejected. A custom `temporaryDirectory` must be outside the
+directory extension being verified so the private snapshot cannot contain
+itself.

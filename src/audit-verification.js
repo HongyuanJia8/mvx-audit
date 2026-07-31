@@ -49,6 +49,14 @@ function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function isWithin(parent, candidate) {
+  const relative = path.relative(parent, candidate);
+  return relative === ''
+    || (relative !== '..'
+      && !relative.startsWith(`..${path.sep}`)
+      && !path.isAbsolute(relative));
+}
+
 function ownValue(object, key) {
   return Object.getOwnPropertyDescriptor(object, key)?.value;
 }
@@ -372,9 +380,36 @@ function parseReport(bytes, limits) {
       code: 'INVALID_AUDIT_REPORT'
     });
   }
+  const identityPolicy = report.artifact?.identityPolicy;
+  if (identityPolicy !== undefined
+    && ((identityPolicy.requireValidSignature !== undefined
+        && typeof identityPolicy.requireValidSignature !== 'boolean')
+      || (identityPolicy.expectedArchiveSha256 !== undefined
+        && identityPolicy.expectedArchiveSha256 !== null
+        && (typeof identityPolicy.expectedArchiveSha256 !== 'string'
+          || !SHA256.test(identityPolicy.expectedArchiveSha256)))
+      || (identityPolicy.expectedExtensionId !== undefined
+        && identityPolicy.expectedExtensionId !== null
+        && (typeof identityPolicy.expectedExtensionId !== 'string'
+          || !EXTENSION_ID.test(identityPolicy.expectedExtensionId))))) {
+    throw new MvxError('Packed audit report has an invalid identity policy', {
+      code: 'INVALID_AUDIT_REPORT'
+    });
+  }
   if (report.dispositionEvaluation !== undefined
     && !isDataRecord(report.dispositionEvaluation)) {
     throw new MvxError('Audit report has an invalid disposition evaluation record', {
+      code: 'INVALID_AUDIT_REPORT'
+    });
+  }
+  const evaluatedAt = report.dispositionEvaluation?.evaluatedAt;
+  if (evaluatedAt !== undefined
+    && (typeof evaluatedAt !== 'string'
+      || evaluatedAt.length === 0
+      || evaluatedAt.length > 24
+      || Number.isNaN(new Date(evaluatedAt).getTime())
+      || new Date(evaluatedAt).toISOString() !== evaluatedAt)) {
+    throw new MvxError('Audit report has an invalid disposition evaluation time', {
       code: 'INVALID_AUDIT_REPORT'
     });
   }
@@ -463,7 +498,14 @@ async function realTemporaryParent(input) {
       code: 'UNSAFE_TEMP'
     });
   }
-  return realpath(absolute);
+  try {
+    return await realpath(absolute);
+  } catch (error) {
+    throw new MvxError('Audit snapshot temporary directory changed during resolution', {
+      code: 'UNSAFE_TEMP',
+      cause: error
+    });
+  }
 }
 
 const SNAPSHOT_WORKER = fileURLToPath(
@@ -560,17 +602,37 @@ async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
       code: 'INVALID_INPUT'
     });
   }
-  const [sourceRoot, temporaryParent] = await Promise.all([
-    realpath(root),
-    realTemporaryParent(temporaryDirectory)
-  ]);
-  const rootStat = await lstat(sourceRoot, { bigint: true });
+  let sourceRoot;
+  try {
+    sourceRoot = await realpath(root);
+  } catch (error) {
+    throw new MvxError('The extension root changed before it could be snapshotted', {
+      code: 'UNSAFE_INPUT',
+      cause: error
+    });
+  }
+  const temporaryParent = await realTemporaryParent(temporaryDirectory);
+  let rootStat;
+  try {
+    rootStat = await lstat(sourceRoot, { bigint: true });
+  } catch (error) {
+    throw new MvxError('The extension root changed before it could be snapshotted', {
+      code: 'UNSAFE_INPUT',
+      cause: error
+    });
+  }
   if (!rootStat.isDirectory()
     || rootStat.dev !== expectedRootStat.dev
     || rootStat.ino !== expectedRootStat.ino) {
     throw new MvxError('The extension root changed before it could be snapshotted', {
       code: 'UNSAFE_INPUT'
     });
+  }
+  if (isWithin(sourceRoot, temporaryParent)) {
+    throw new MvxError(
+      'Audit snapshot temporary directory may not be inside the extension root',
+      { code: 'UNSAFE_TEMP' }
+    );
   }
   const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-audit-input-'));
   try {
