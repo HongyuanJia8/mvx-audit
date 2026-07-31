@@ -543,7 +543,7 @@ async function copyAuditTree(
   });
 }
 
-async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
+export async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
   const absolute = path.resolve(inputPath);
   const possibleManifestRoot = path.basename(absolute) === 'manifest.json'
     ? path.dirname(absolute)
@@ -666,7 +666,7 @@ async function prepareDirectorySnapshot(inputPath, temporaryDirectory, limits) {
   }
 }
 
-async function auditDirectorySnapshot(inputPath, auditOptions, temporaryDirectory) {
+export async function auditDirectorySnapshot(inputPath, auditOptions, temporaryDirectory) {
   const snapshot = await prepareDirectorySnapshot(
     inputPath,
     temporaryDirectory,

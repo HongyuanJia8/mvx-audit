@@ -73,6 +73,10 @@ Usage:
                     [--expected-archive-sha256 digest] [--expected-extension-id id]
   mvx lab evaluate <scenario.json> <events.jsonl> [--format text|json]
   mvx lab verify <report.json> <extension> <scenario.json> <events.jsonl>
+                 [--expected-report-sha256 digest]
+                 [--expected-package-sha256 digest] [--expected-analysis-sha256 digest]
+                 [--expected-scenario-sha256 digest] [--expected-events-sha256 digest]
+                 [--expected-evaluation-sha256 digest] [--expected-seccomp-sha256 digest]
                  [--expected-image-id sha256:digest] [--format text|json]
   mvx benchmark static <quarantine> --acknowledge-risk [--label label]
                        [--limit number] [--threshold severity] [--format text|json]
@@ -88,7 +92,7 @@ Exit codes:
 function parseArgs(argv) {
   const positionals = [];
   const options = Object.create(null);
-  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256', '--before-package-sha256', '--after-package-sha256', '--before-analysis-sha256', '--after-analysis-sha256', '--expected-report-sha256', '--expected-package-sha256', '--expected-analysis-sha256']);
+  const valueOptions = new Set(['--format', '--output', '--fail-on', '--fail-on-unreviewed', '--disposition-at', '--catalog', '--artifact', '--quarantine', '--max-bytes', '--max-total-bytes', '--limit', '--label', '--threshold', '--destination', '--expected-archive-sha256', '--expected-extension-id', '--expected-image-id', '--before-archive-sha256', '--after-archive-sha256', '--before-package-sha256', '--after-package-sha256', '--before-analysis-sha256', '--after-analysis-sha256', '--expected-report-sha256', '--expected-package-sha256', '--expected-analysis-sha256', '--expected-scenario-sha256', '--expected-events-sha256', '--expected-evaluation-sha256', '--expected-seccomp-sha256']);
   const setSingleton = (key, value, token) => {
     if (Object.hasOwn(options, key)) {
       throw new MvxError(`Duplicate option: ${token}`, { code: 'INVALID_ARGUMENT' });
@@ -173,6 +177,7 @@ export async function runCli(argv, streams = process) {
     const [command, ...args] = positionals;
     const auditVerificationRequested = command === 'audit' && args[0] === 'verify';
     const comparisonVerificationRequested = command === 'compare' && args[0] === 'verify';
+    const labVerificationRequested = command === 'lab' && args[0] === 'verify';
     const archiveIdentityRequested = options.expectedArchiveSha256 !== undefined
       || options.expectedExtensionId !== undefined;
     const sideArchiveIdentityRequested = options.beforeArchiveSha256 !== undefined
@@ -190,10 +195,12 @@ export async function runCli(argv, streams = process) {
     const labImageIdentityRequested = options.expectedImageId !== undefined;
     const dispositionPolicyOptionsRequested = options.dispositionPolicies !== undefined
       || options.dispositionAt !== undefined;
-    const auditVerificationIdentityRequested = options.expectedPackageSha256 !== undefined
+    const commonVerificationIdentityRequested = options.expectedPackageSha256 !== undefined
       || options.expectedAnalysisSha256 !== undefined;
-    if (auditVerificationIdentityRequested && !auditVerificationRequested) {
-      throw new MvxError('Audit report identity options apply only to audit verify', {
+    if (commonVerificationIdentityRequested
+      && !auditVerificationRequested
+      && !labVerificationRequested) {
+      throw new MvxError('Package and analysis report identity options apply only to audit or lab verify', {
         code: 'INVALID_ARGUMENT'
       });
     }
@@ -209,8 +216,19 @@ export async function runCli(argv, streams = process) {
     }
     if (options.expectedReportSha256 !== undefined
       && !auditVerificationRequested
-      && !comparisonVerificationRequested) {
-      throw new MvxError('--expected-report-sha256 applies only to audit or compare verify', {
+      && !comparisonVerificationRequested
+      && !labVerificationRequested) {
+      throw new MvxError('--expected-report-sha256 applies only to audit, compare, or lab verify', {
+        code: 'INVALID_ARGUMENT'
+      });
+    }
+    const labEvidenceIdentityRequested =
+      options.expectedScenarioSha256 !== undefined
+      || options.expectedEventsSha256 !== undefined
+      || options.expectedEvaluationSha256 !== undefined
+      || options.expectedSeccompSha256 !== undefined;
+    if (labEvidenceIdentityRequested && !labVerificationRequested) {
+      throw new MvxError('Lab evidence identity options apply only to lab verify', {
         code: 'INVALID_ARGUMENT'
       });
     }
@@ -236,7 +254,7 @@ export async function runCli(argv, streams = process) {
     if (options.requireSameExtensionId !== undefined && !packedComparisonRequested) {
       throw new MvxError('--require-same-extension-id applies only to packed comparison', { code: 'INVALID_ARGUMENT' });
     }
-    if (labImageIdentityRequested && command !== 'lab') {
+    if (labImageIdentityRequested && !labVerificationRequested) {
       throw new MvxError('--expected-image-id applies only to lab verify', { code: 'INVALID_ARGUMENT' });
     }
     if (dispositionPolicyOptionsRequested && !['audit', 'compare', 'dispositions'].includes(command)) {
@@ -649,17 +667,45 @@ export async function runCli(argv, streams = process) {
     }
 
     if (command === 'lab') {
+      const verificationOptions = new Set([
+        'expectedAnalysisSha256',
+        'expectedEvaluationSha256',
+        'expectedEventsSha256',
+        'expectedImageId',
+        'expectedPackageSha256',
+        'expectedReportSha256',
+        'expectedScenarioSha256',
+        'expectedSeccompSha256'
+      ]);
+      const allowed = args[0] === 'verify'
+        ? new Set(['format', 'output', ...verificationOptions])
+        : new Set(['format', 'output']);
+      const unsupported = Object.keys(options)
+        .filter((key) => !allowed.has(key))
+        .sort();
+      if (unsupported.length > 0) {
+        throw new MvxError(
+          `Unsupported lab ${args[0] ?? 'command'} option(s): ${unsupported.join(', ')}`,
+          { code: 'INVALID_ARGUMENT' }
+        );
+      }
       const format = options.format ?? 'text';
       if (!['text', 'json'].includes(format)) throw new MvxError(`Unsupported lab format: ${format}`, { code: 'INVALID_ARGUMENT' });
       if (args[0] === 'evaluate' && args.length === 3) {
-        if (options.expectedImageId !== undefined) throw new MvxError('--expected-image-id applies only to lab verify', { code: 'INVALID_ARGUMENT' });
         const report = await evaluateLabFiles(args[1], args[2]);
         await emit(format === 'json' ? json(report) : labReportToText(report), options.output, streams.stdout);
         return report.contained ? 0 : 1;
       }
       if (args[0] === 'verify' && args.length === 5) {
         const verification = await verifyLabReport(args[1], args[2], args[3], args[4], {
-          ...(options.expectedImageId !== undefined ? { expectedImageId: options.expectedImageId } : {})
+          expectedReportSha256: options.expectedReportSha256,
+          expectedPackageSha256: options.expectedPackageSha256,
+          expectedAnalysisSha256: options.expectedAnalysisSha256,
+          expectedScenarioSha256: options.expectedScenarioSha256,
+          expectedEventsSha256: options.expectedEventsSha256,
+          expectedEvaluationSha256: options.expectedEvaluationSha256,
+          expectedSeccompSha256: options.expectedSeccompSha256,
+          expectedImageId: options.expectedImageId
         });
         await emit(format === 'json' ? json(verification) : labVerificationToText(verification), options.output, streams.stdout);
         return 0;

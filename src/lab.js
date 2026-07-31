@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditExtension } from './analyzer.js';
+import { auditDirectorySnapshot } from './audit-verification.js';
 import { MvxError } from './errors.js';
 import { assertOptionsObject } from './options.js';
 import { readBoundedRegularFile } from './safe-file.js';
@@ -38,9 +39,106 @@ const IMAGE_ID = /^sha256:[a-f0-9]{64}$/;
 const IMAGE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/;
 const TOOL_VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 const UNSAFE_DISPLAY = /[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u2028-\u202e\u2066-\u2069]/;
+const LAB_VERIFICATION_OPTIONS = new Set([
+  'expectedAnalysisSha256',
+  'expectedEvaluationSha256',
+  'expectedEventsSha256',
+  'expectedImageId',
+  'expectedPackageSha256',
+  'expectedReportSha256',
+  'expectedScenarioSha256',
+  'expectedSeccompSha256',
+  'seccompProfile',
+  'temporaryDirectory'
+]);
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function ownValue(object, key) {
+  return Object.getOwnPropertyDescriptor(object, key)?.value;
+}
+
+function snapshotLabVerificationOptions(options) {
+  assertOptionsObject(options, 'Lab verification');
+  const unknown = Object.getOwnPropertyNames(options)
+    .filter((key) => !LAB_VERIFICATION_OPTIONS.has(key))
+    .sort(compareText);
+  if (unknown.length > 0) {
+    throw new MvxError(`Unknown lab verification option(s): ${unknown.join(', ')}`, {
+      code: 'INVALID_ARGUMENT'
+    });
+  }
+  const stable = Object.assign(Object.create(null), Object.fromEntries(
+    [...LAB_VERIFICATION_OPTIONS].map((key) => [key, ownValue(options, key)])
+  ));
+  for (const key of [
+    'expectedAnalysisSha256',
+    'expectedEvaluationSha256',
+    'expectedEventsSha256',
+    'expectedPackageSha256',
+    'expectedReportSha256',
+    'expectedScenarioSha256',
+    'expectedSeccompSha256'
+  ]) {
+    if (stable[key] !== undefined
+      && (typeof stable[key] !== 'string' || !SHA256.test(stable[key]))) {
+      throw new MvxError(`${key} must be a lowercase SHA-256 digest`, {
+        code: 'INVALID_ARGUMENT'
+      });
+    }
+  }
+  if (stable.expectedImageId !== undefined
+    && (typeof stable.expectedImageId !== 'string'
+      || !IMAGE_ID.test(stable.expectedImageId))) {
+    throw new MvxError('expectedImageId must be a canonical sha256 Docker image ID', {
+      code: 'INVALID_ARGUMENT'
+    });
+  }
+  for (const key of ['seccompProfile', 'temporaryDirectory']) {
+    if (stable[key] !== undefined
+      && (typeof stable[key] !== 'string' || stable[key].length === 0)) {
+      throw new MvxError(`${key} must be a non-empty string`, {
+        code: 'INVALID_ARGUMENT'
+      });
+    }
+  }
+  return Object.freeze(stable);
+}
+
+function assertExpected(actual, expected, label) {
+  if (expected !== undefined && actual !== expected) {
+    throw new MvxError(
+      `${label} does not match its independently expected identity`,
+      { code: 'LAB_IDENTITY_MISMATCH' }
+    );
+  }
+}
+
+function mapLabSnapshotError(error) {
+  if (!(error instanceof MvxError)) return error;
+  const mapped = {
+    AUDIT_SNAPSHOT_CLEANUP_FAILED: 'LAB_SNAPSHOT_CLEANUP_FAILED',
+    AUDIT_SNAPSHOT_FAILED: 'LAB_SNAPSHOT_FAILED',
+    INPUT_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
+    INVALID_INPUT: 'UNSAFE_LAB_INPUT',
+    SCAN_LIMIT: 'LAB_LIMIT',
+    TEMP_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
+    UNSAFE_INPUT: 'UNSAFE_LAB_INPUT',
+    UNSAFE_TEMP: 'UNSAFE_LAB_INPUT'
+  }[error.code];
+  if (!mapped) return error;
+  const message = error.message
+    .replaceAll('Audit verification', 'Lab verification')
+    .replaceAll('Audit snapshot', 'Lab snapshot')
+    .replaceAll('audit snapshot', 'lab snapshot')
+    .replaceAll('Private audit', 'Private lab');
+  return new MvxError(message, { code: mapped, cause: error });
 }
 
 function profileDigest(profile, value) {
@@ -472,67 +570,122 @@ export async function evaluateLabFiles(scenarioPath, eventsPath) {
 }
 
 export async function verifyLabReport(reportPath, extensionPath, scenarioPath, eventsPath, options = {}) {
-  assertOptionsObject(options, 'Lab verification');
   for (const [label, value] of Object.entries({ reportPath, extensionPath, scenarioPath, eventsPath })) {
     if (typeof value !== 'string' || value.length === 0) {
       throw new MvxError(`${label} must be a non-empty string`, { code: 'INVALID_ARGUMENT' });
     }
   }
-  exactKeys(options, new Set(['expectedImageId', 'seccompProfile']), 'Lab verification options', 'INVALID_ARGUMENT');
-  if (options.expectedImageId !== undefined && !IMAGE_ID.test(options.expectedImageId)) {
-    throw new MvxError('expectedImageId must be a canonical sha256 Docker image ID', { code: 'INVALID_ARGUMENT' });
-  }
+  const stable = snapshotLabVerificationOptions(options);
   const reportBytes = await readLabFile(reportPath, {
     maxBytes: DEFAULT_LAB_EVIDENCE_LIMITS.maxReportBytes,
     label: 'Lab report', limitCode: 'LAB_REPORT_LIMIT', missingCode: 'LAB_REPORT_NOT_FOUND', unsafeCode: 'UNSAFE_LAB_REPORT'
   });
+  const reportSha256 = sha256(reportBytes);
+  assertExpected(reportSha256, stable.expectedReportSha256, 'Lab report SHA-256');
   const reportSource = decodeUtf8(reportBytes, 'Lab report', 'INVALID_LAB_REPORT');
   const report = parseJson(reportSource, 'lab report', 'INVALID_LAB_REPORT', 'LAB_REPORT_LIMIT');
   const expected = await evaluateLabFiles(scenarioPath, eventsPath);
+  assertExpected(
+    expected.evidenceProvenance.scenario.sha256,
+    stable.expectedScenarioSha256,
+    'Lab scenario SHA-256'
+  );
+  assertExpected(
+    expected.evidenceProvenance.events.sha256,
+    stable.expectedEventsSha256,
+    'Lab events SHA-256'
+  );
+  assertExpected(
+    expected.evidenceProvenance.evaluation.sha256,
+    stable.expectedEvaluationSha256,
+    'Lab evaluation SHA-256'
+  );
+  if (!expected.execution) {
+    throw new MvxError('Lab report has no verifiable execution provenance', { code: 'LAB_PROVENANCE_MISSING' });
+  }
+  assertExpected(
+    expected.execution.container.imageId,
+    stable.expectedImageId,
+    'Lab container image ID'
+  );
+  const [auditOutcome, seccompOutcome] = await Promise.allSettled([
+    auditDirectorySnapshot(extensionPath, Object.create(null), stable.temporaryDirectory),
+    readLabFile(stable.seccompProfile ?? DEFAULT_SECCOMP_PROFILE, {
+      maxBytes: 1_000_000,
+      label: 'Lab seccomp profile', limitCode: 'LAB_LIMIT', missingCode: 'LAB_INPUT_NOT_FOUND', unsafeCode: 'UNSAFE_LAB_INPUT'
+    })
+  ]);
+  if (auditOutcome.status === 'rejected') throw mapLabSnapshotError(auditOutcome.reason);
+  if (seccompOutcome.status === 'rejected') throw seccompOutcome.reason;
+  const audit = auditOutcome.value.actual;
+  const seccompBytes = seccompOutcome.value;
+  assertExpected(audit.package.sha256, stable.expectedPackageSha256, 'Lab package SHA-256');
+  assertExpected(audit.analysis.sha256, stable.expectedAnalysisSha256, 'Lab analysis SHA-256');
+  const seccompSha256 = sha256(seccompBytes);
+  assertExpected(seccompSha256, stable.expectedSeccompSha256, 'Lab seccomp SHA-256');
+  if (audit.package.sha256 !== expected.execution.extension.packageSha256
+    || audit.analysis.sha256 !== expected.execution.extension.analysisSha256) {
+    throw new MvxError('Lab report extension identity does not match the supplied extension', { code: 'LAB_IDENTITY_MISMATCH' });
+  }
+  if (seccompSha256 !== expected.execution.isolation.seccompSha256) {
+    throw new MvxError('Lab report seccomp identity does not match the supplied verifier profile', { code: 'LAB_IDENTITY_MISMATCH' });
+  }
+  if (expected.execution.tool.version !== VERSION) {
+    throw new MvxError('Lab report tool version does not match this verifier', { code: 'LAB_IDENTITY_MISMATCH' });
+  }
   if (!isDeepStrictEqual(report, expected)) {
     throw new MvxError('Lab report does not match deterministic evaluation of the supplied scenario and events', { code: 'LAB_REPORT_MISMATCH' });
   }
-  if (!report.execution) {
-    throw new MvxError('Lab report has no verifiable execution provenance', { code: 'LAB_PROVENANCE_MISSING' });
-  }
-  const audit = await auditExtension(extensionPath);
-  if (audit.package.sha256 !== report.execution.extension.packageSha256
-    || audit.analysis.sha256 !== report.execution.extension.analysisSha256) {
-    throw new MvxError('Lab report extension identity does not match the supplied extension', { code: 'LAB_IDENTITY_MISMATCH' });
-  }
-  const seccompBytes = await readLabFile(options.seccompProfile ?? DEFAULT_SECCOMP_PROFILE, {
-    maxBytes: 1_000_000,
-    label: 'Lab seccomp profile', limitCode: 'LAB_LIMIT', missingCode: 'LAB_INPUT_NOT_FOUND', unsafeCode: 'UNSAFE_LAB_INPUT'
-  });
-  if (sha256(seccompBytes) !== report.execution.isolation.seccompSha256) {
-    throw new MvxError('Lab report seccomp identity does not match the supplied verifier profile', { code: 'LAB_IDENTITY_MISMATCH' });
-  }
-  if (report.execution.tool.version !== VERSION) {
-    throw new MvxError('Lab report tool version does not match this verifier', { code: 'LAB_IDENTITY_MISMATCH' });
-  }
-  if (options.expectedImageId !== undefined && report.execution.container.imageId !== options.expectedImageId) {
-    throw new MvxError('Lab report container image does not match the expected image ID', { code: 'LAB_IDENTITY_MISMATCH' });
-  }
+  const independent = {
+    reportSha256: stable.expectedReportSha256 === undefined ? null : true,
+    packageSha256: stable.expectedPackageSha256 === undefined ? null : true,
+    analysisSha256: stable.expectedAnalysisSha256 === undefined ? null : true,
+    scenarioSha256: stable.expectedScenarioSha256 === undefined ? null : true,
+    eventsSha256: stable.expectedEventsSha256 === undefined ? null : true,
+    evaluationSha256: stable.expectedEvaluationSha256 === undefined ? null : true,
+    seccompSha256: stable.expectedSeccompSha256 === undefined ? null : true,
+    imageId: stable.expectedImageId === undefined ? null : true
+  };
+  const noIndependentIdentity = Object.values(independent)
+    .every((value) => value === null);
+  const imageCaveat = stable.expectedImageId === undefined
+    ? 'The recorded container image ID is content-addressed but was not compared with an independently supplied expected image ID.'
+    : null;
   return {
     schemaVersion: 1,
     profile: LAB_VERIFICATION_PROFILE,
     valid: true,
-    verdict: report.verdict,
-    report: { bytes: reportBytes.length, sha256: sha256(reportBytes) },
-    evidence: report.evidenceProvenance,
-    execution: report.execution,
+    verdict: expected.verdict,
+    report: { bytes: reportBytes.length, sha256: reportSha256 },
+    evidence: expected.evidenceProvenance,
+    execution: expected.execution,
+    identities: {
+      packageSha256: audit.package.sha256,
+      analysisSha256: audit.analysis.sha256,
+      scenarioSha256: expected.evidenceProvenance.scenario.sha256,
+      eventsSha256: expected.evidenceProvenance.events.sha256,
+      evaluationSha256: expected.evidenceProvenance.evaluation.sha256,
+      seccompSha256,
+      imageId: expected.execution.container.imageId
+    },
     checks: {
       deterministicEvaluation: true,
+      privateExtensionSnapshot: true,
       extensionIdentity: true,
       scenarioIdentity: true,
       eventStreamIdentity: true,
       seccompIdentity: true,
       toolVersion: true,
-      expectedImageIdentity: options.expectedImageId === undefined ? null : true
+      expectedImageIdentity: independent.imageId,
+      independent
     },
-    caveat: options.expectedImageId === undefined
-      ? 'The recorded container image ID is content-addressed but was not compared with an independently supplied expected image ID.'
-      : null
+    caveat: imageCaveat,
+    caveats: [
+      ...(imageCaveat ? [imageCaveat] : []),
+      ...(noIndependentIdentity ? [
+        'The report is reproducible from the supplied bundle, but no independently trusted identity was supplied.'
+      ] : [])
+    ]
   };
 }
 
@@ -566,6 +719,9 @@ export function labReportToText(report) {
 }
 
 export function labVerificationToText(result) {
+  const independentCount = Object.values(result.checks.independent ?? {})
+    .filter((value) => value === true).length;
+  const independentTotal = Object.keys(result.checks.independent ?? {}).length;
   return [
     `Lab report valid: ${result.valid ? 'yes' : 'NO'}`,
     `Verdict: ${result.verdict}`,
@@ -576,8 +732,11 @@ export function labVerificationToText(result) {
     `Events SHA-256: ${result.evidence.events.sha256}`,
     `Evaluation SHA-256: ${result.evidence.evaluation.sha256}`,
     `Container image ID: ${result.execution.container.imageId}`,
+    `Private extension snapshot: ${result.checks.privateExtensionSnapshot === true ? 'yes' : 'no'}`,
+    `Independent identities checked: ${independentCount}/${independentTotal}`,
     `Expected image checked: ${result.checks.expectedImageIdentity === true ? 'yes' : 'no'}`,
-    ...(result.caveat ? [`Caveat: ${result.caveat}`] : [])
+    ...(result.caveats ?? (result.caveat ? [result.caveat] : []))
+      .map((caveat) => `Caveat: ${caveat}`)
   ].join('\n') + '\n';
 }
 

@@ -1,12 +1,15 @@
-import { cp, lstat, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { chmod, lstat, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { auditExtension } from './analyzer.js';
+import { prepareDirectorySnapshot } from './audit-verification.js';
 import { MvxError } from './errors.js';
 import { loadLabScenario } from './lab.js';
 import { assertOptionsObject } from './options.js';
+import {
+  assertPrivateWorkspace, removePrivateWorkspace
+} from './private-workspace.js';
 
-const SNAPSHOTS = new WeakSet();
+const SNAPSHOTS = new WeakMap();
 
 function sanitizeSnapshotError(error, workspace) {
   if (!workspace || typeof error?.message !== 'string' || !error.message.includes(workspace)) return error;
@@ -18,34 +21,46 @@ function sanitizeSnapshotError(error, workspace) {
   return sanitized;
 }
 
-async function realDirectory(input, label) {
+async function assertExtensionDirectoryInput(input) {
   if (typeof input !== 'string' || input.length === 0) {
-    throw new MvxError(`${label} path must be a non-empty string`, { code: 'INVALID_ARGUMENT' });
+    throw new MvxError('Lab extension path must be a non-empty string', {
+      code: 'INVALID_ARGUMENT'
+    });
   }
   const absolute = path.resolve(input);
   let stat;
   try { stat = await lstat(absolute); } catch (error) {
-    throw new MvxError(`${label} does not exist`, { code: 'LAB_INPUT_NOT_FOUND', cause: error });
+    throw new MvxError('Lab extension does not exist', {
+      code: 'LAB_INPUT_NOT_FOUND',
+      cause: error
+    });
   }
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new MvxError(`${label} must be a real directory`, { code: 'UNSAFE_LAB_INPUT' });
+    throw new MvxError('Lab extension must be a real directory', {
+      code: 'UNSAFE_LAB_INPUT'
+    });
   }
-  return realpath(absolute);
 }
 
-async function realFile(input, label) {
-  if (typeof input !== 'string' || input.length === 0) {
-    throw new MvxError(`${label} path must be a non-empty string`, { code: 'INVALID_ARGUMENT' });
-  }
-  const absolute = path.resolve(input);
-  let stat;
-  try { stat = await lstat(absolute); } catch (error) {
-    throw new MvxError(`${label} does not exist`, { code: 'LAB_INPUT_NOT_FOUND', cause: error });
-  }
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw new MvxError(`${label} must be a real regular file`, { code: 'UNSAFE_LAB_INPUT' });
-  }
-  return realpath(absolute);
+function mapLabSnapshotError(error) {
+  if (!(error instanceof MvxError)) return error;
+  const mapped = {
+    AUDIT_SNAPSHOT_CLEANUP_FAILED: 'LAB_SNAPSHOT_CLEANUP_FAILED',
+    AUDIT_SNAPSHOT_FAILED: 'LAB_SNAPSHOT_FAILED',
+    INPUT_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
+    INVALID_INPUT: 'UNSAFE_LAB_INPUT',
+    SCAN_LIMIT: 'LAB_LIMIT',
+    TEMP_NOT_FOUND: 'LAB_INPUT_NOT_FOUND',
+    UNSAFE_INPUT: 'UNSAFE_LAB_INPUT',
+    UNSAFE_TEMP: 'UNSAFE_LAB_INPUT'
+  }[error.code];
+  if (!mapped) return error;
+  const message = error.message
+    .replaceAll('Audit verification', 'Lab execution')
+    .replaceAll('Audit snapshot', 'Lab snapshot')
+    .replaceAll('audit snapshot', 'lab snapshot')
+    .replaceAll('Private audit', 'Private lab');
+  return new MvxError(message, { code: mapped, cause: error });
 }
 
 export async function assertLabTreeHasNoLinks(root) {
@@ -65,47 +80,101 @@ export async function assertLabTreeHasNoLinks(root) {
   await visit(root, 0);
 }
 
+async function makeLabTreeMountReadable(root) {
+  async function visit(directory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const child = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(child);
+      else await chmod(child, 0o444);
+    }
+    await chmod(directory, 0o755);
+  }
+  await visit(root);
+}
+
 export async function prepareLabInputSnapshot(extensionPath, scenarioPath, options = {}) {
   assertOptionsObject(options, 'Lab snapshot');
   const unknown = Object.getOwnPropertyNames(options).filter((key) => key !== 'temporaryDirectory');
   if (unknown.length > 0) throw new MvxError(`Unknown lab snapshot option: ${unknown.sort().join(', ')}`, { code: 'INVALID_ARGUMENT' });
-  const [extension, scenario, temporaryParent] = await Promise.all([
-    realDirectory(extensionPath, 'Lab extension'),
-    realFile(scenarioPath, 'Lab scenario'),
-    realDirectory(options.temporaryDirectory ?? os.tmpdir(), 'Lab temporary directory')
-  ]);
-  await assertLabTreeHasNoLinks(extension);
-  const { bytes: scenarioBytes } = await loadLabScenario(scenario);
-  const workspace = await mkdtemp(path.join(temporaryParent, 'mvx-lab-input-'));
+  const temporaryDirectory = Object.getOwnPropertyDescriptor(
+    options,
+    'temporaryDirectory'
+  )?.value;
+  if (temporaryDirectory !== undefined
+    && (typeof temporaryDirectory !== 'string' || temporaryDirectory.length === 0)) {
+    throw new MvxError('temporaryDirectory must be a non-empty string', {
+      code: 'INVALID_ARGUMENT'
+    });
+  }
+  await assertExtensionDirectoryInput(extensionPath);
+  const { bytes: scenarioBytes } = await loadLabScenario(scenarioPath);
+  let prepared;
   try {
-    const extensionSnapshot = path.join(workspace, 'extension');
+    prepared = await prepareDirectorySnapshot(
+      extensionPath,
+      temporaryDirectory,
+      undefined
+    );
+  } catch (error) {
+    throw mapLabSnapshotError(error);
+  }
+  const workspace = prepared.workspace.path;
+  try {
+    await assertPrivateWorkspace(prepared.workspace, {
+      changedMessage: 'Private lab snapshot workspace changed before analysis'
+    });
+    await assertLabTreeHasNoLinks(prepared.input);
+    await makeLabTreeMountReadable(prepared.input);
     const scenarioSnapshot = path.join(workspace, 'scenario.json');
-    await cp(extension, extensionSnapshot, { recursive: true, dereference: false, errorOnExist: true, force: false });
-    await assertLabTreeHasNoLinks(extensionSnapshot);
-    await writeFile(scenarioSnapshot, scenarioBytes, { flag: 'wx', mode: 0o400 });
-    const audit = await auditExtension(extensionSnapshot);
+    await writeFile(scenarioSnapshot, scenarioBytes, { flag: 'wx', mode: 0o444 });
+    const audit = await auditExtension(prepared.input);
     const snapshot = Object.freeze({
       workspace,
-      extension: extensionSnapshot,
+      extension: prepared.input,
       scenario: scenarioSnapshot,
       scenarioBytes: Buffer.from(scenarioBytes),
       package: audit.package,
       analysis: audit.analysis
     });
-    SNAPSHOTS.add(snapshot);
+    SNAPSHOTS.set(snapshot, prepared.workspace);
     return snapshot;
   } catch (error) {
-    try { await rm(workspace, { recursive: true, force: true }); } catch {}
-    throw sanitizeSnapshotError(error, workspace);
+    const failure = sanitizeSnapshotError(mapLabSnapshotError(error), workspace);
+    try {
+      await removePrivateWorkspace(prepared.workspace, {
+        changedMessage: 'Private lab snapshot workspace changed before cleanup',
+        cleanupMessage: 'Private lab snapshot workspace cleanup failed',
+        cleanupCode: 'LAB_SNAPSHOT_CLEANUP_FAILED'
+      });
+    } catch (cleanupError) {
+      const cleanup = sanitizeSnapshotError(cleanupError, workspace);
+      throw new MvxError(
+        `Private lab snapshot cleanup failed after ${failure.code ?? 'snapshot failure'}: ${cleanup.message}`,
+        { code: 'LAB_SNAPSHOT_CLEANUP_FAILED' }
+      );
+    }
+    throw failure;
   }
 }
 
 export async function removeLabInputSnapshot(snapshot) {
-  if (!snapshot || !SNAPSHOTS.has(snapshot)) {
+  const workspace = snapshot && SNAPSHOTS.get(snapshot);
+  if (!workspace) {
     throw new MvxError('Lab input snapshot is invalid', { code: 'INVALID_ARGUMENT' });
   }
-  SNAPSHOTS.delete(snapshot);
-  try { await rm(snapshot.workspace, { recursive: true, force: true }); } catch (error) {
-    throw sanitizeSnapshotError(error, snapshot.workspace);
+  try {
+    await removePrivateWorkspace(workspace, {
+      changedMessage: 'Private lab snapshot workspace changed before cleanup',
+      cleanupMessage: 'Private lab snapshot workspace cleanup failed',
+      cleanupCode: 'LAB_SNAPSHOT_CLEANUP_FAILED'
+    });
+  } catch (error) {
+    const failure = sanitizeSnapshotError(error, workspace.path);
+    throw new MvxError(
+      `Private lab snapshot cleanup failed; cleanup may be retried after the workspace is restored: ${failure.message}`,
+      { code: 'LAB_SNAPSHOT_CLEANUP_FAILED', cause: error }
+    );
   }
+  SNAPSHOTS.delete(snapshot);
 }

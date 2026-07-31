@@ -130,11 +130,22 @@ sample mount, and no sandbox-disabling Chromium flag. If Docker or the Chromium
 sandbox cannot start under those controls, report `inconclusive`; weakening a
 boundary to obtain a result is a security defect.
 
-The lab wrapper copies extension and scenario inputs into a private snapshot,
-audits that snapshot, and mounts only those stable bytes. Published evidence
-should retain `scenario.json`, `events.jsonl`, and `report.json` together. Use
-`mvx lab verify` with the exact extension and, when available, an independently
-pinned Docker image ID. Verification recomputes package, analysis, scenario,
-event-stream, evaluation, seccomp, and tool-version identities. It detects
-drift and tampering; it is not a digital signature and cannot make an
-attacker-chosen extension or image ID trustworthy.
+The lab wrapper copies the extension through an inode/device-anchored worker
+and captures the scenario with one bounded no-follow read into a private
+snapshot. It audits that snapshot and mounts only those stable bytes. Workspace
+identity is revalidated before cleanup. A failed removal retains its managed
+cleanup capability for a later retry. If workspace identity changed, the host
+wrapper labels its recorded path as potentially stale instead of claiming it
+locates the retained inode; investigate the private temporary parent before
+removal. Published evidence should retain `scenario.json`, `events.jsonl`, and
+`report.json` together. Use `mvx lab verify` with the exact extension and, when
+available, independently pinned
+report/package/evidence/seccomp hashes and Docker image ID. Verification
+recomputes package, analysis, scenario, event-stream, evaluation, seccomp, and
+tool-version identities. The extension is copied through an anchored private
+snapshot worker and cleanup finishes before a result is returned; a mutable
+source directory is never presented as one atomic analysis. Independent
+expectations are checked against the bytes and identities actually consumed,
+not against untrusted report fields. Verification detects drift and tampering;
+it is not a digital signature and cannot make an attacker-chosen extension,
+evidence bundle, or image ID trustworthy.
