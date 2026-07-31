@@ -446,7 +446,7 @@ test('host wrapper force-removes a container after event output overflow', async
   const dockerLog = path.join(temp, 'docker-log.jsonl');
   const containerId = '3'.repeat(64);
   await writeFile(docker, `#!/usr/bin/env node
-const { appendFileSync, writeFileSync } = require('node:fs');
+const { appendFileSync, chmodSync, writeFileSync } = require('node:fs');
 const args = process.argv.slice(2);
 appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(args) + '\\n');
 if (args[0] === 'image') {
@@ -457,6 +457,7 @@ if (args[0] === 'image') {
 } else {
   const cidIndex = args.indexOf('--cidfile');
   writeFileSync(args[cidIndex + 1], '${containerId}\\n');
+  if (process.env.FAKE_CID_UNREADABLE) chmodSync(args[cidIndex + 1], 0o000);
   process.on('SIGTERM', () => {});
   process.stdout.on('error', () => {});
   process.stdout.write(Buffer.alloc(20_000_001, 0x78));
@@ -505,4 +506,29 @@ if (args[0] === 'image') {
   await access(retainedSnapshot);
   assert.match(failedCleanup.stderr, new RegExp(retainedSnapshot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   await rm(retainedSnapshot, { recursive: true, force: true });
+
+  const unreadableOutput = path.join(temp, 'unreadable-cid-output');
+  const unreadableCid = await run(process.execPath, [
+    path.resolve('scripts/run-lab.mjs'),
+    '--extension', extension, '--scenario', scenario, '--output', unreadableOutput,
+    '--image', 'mvx-lab:test', '--acknowledge-risk'
+  ], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+      FAKE_DOCKER_LOG: dockerLog,
+      FAKE_CID_UNREADABLE: '1'
+    }
+  });
+  assert.equal(unreadableCid.code, 1);
+  assert.match(unreadableCid.stderr, /Lab container cleanup failed after LAB_LIMIT; private snapshot retained at/);
+  const finalInvocations = (await readFile(dockerLog, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(finalInvocations.length, 8);
+  assert.equal(finalInvocations[7][0], 'run');
+  const unreadableCidFile = finalInvocations[7][finalInvocations[7].indexOf('--cidfile') + 1];
+  const unreadableSnapshot = path.dirname(unreadableCidFile);
+  await access(unreadableSnapshot);
+  assert.match(unreadableCid.stderr, new RegExp(unreadableSnapshot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  await rm(unreadableSnapshot, { recursive: true, force: true });
 });

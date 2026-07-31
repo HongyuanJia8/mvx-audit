@@ -154,8 +154,11 @@ async function forceRemoveContainer(cidFile) {
       missingCode: 'LAB_CONTAINER_NOT_CREATED', unsafeCode: 'LAB_CONTAINER_CLEANUP_FAILED'
     });
   } catch (error) {
-    if (error.code === 'LAB_CONTAINER_NOT_CREATED') return;
-    throw error;
+    if (error.code === 'LAB_CONTAINER_NOT_CREATED' && error.cause?.code === 'ENOENT') return;
+    const cleanupError = new Error('Unable to read the lab container ID for cleanup');
+    cleanupError.code = 'LAB_CONTAINER_CLEANUP_FAILED';
+    cleanupError.cause = error;
+    throw cleanupError;
   }
   const containerId = cidBytes.toString('utf8').trim();
   if (!/^[a-f0-9]{64}$/.test(containerId)) {
