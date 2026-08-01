@@ -339,9 +339,12 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   automatic semicolon insertion, and delimiters follow its grammar.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
-  handlers, each using its declared classic, module, or handler grammar;
-  standalone JS with unknown loading mode may use strict script or module
-  grammar. Actual script end-tag boundaries and numeric or syntax-relevant
+  handlers, using classic, module, or actual function-body grammar as applicable.
+  Script selection follows the complete WHATWG
+  [JavaScript MIME type essence list](https://mimesniff.spec.whatwg.org/#javascript-mime-type),
+  legacy `language`, and modern-Chrome `nomodule` behavior. Standalone JS with
+  unknown loading mode may use strict script or module grammar. Actual script
+  end-tag boundaries and numeric or syntax-relevant
   named attribute character references preserve original source offsets. The
   scanner does not resolve runtime bindings, so this is a medium-confidence
   syntax signal. Only unescaped, canonical Base64 literals of at least 16
@@ -350,10 +353,12 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
   recursive layers. Parser work is capped at 1 million tokens and 2 million AST
-  nodes across original and decoded inputs. Limit breaches fail with
-  `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8 payloads are rescanned by built-in and
-  declarative source rules; binary payloads retain byte length and SHA-256 but
-  are not interpreted. Syntax-invalid source produces no decoded inventory; a
+  nodes across original and decoded inputs; these counters interrupt
+  tokenization and AST construction, while parser stack exhaustion independently
+  fails closed. Limit breaches fail with `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8
+  payloads are rescanned by built-in and declarative source rules; binary
+  payloads retain byte length and SHA-256 but are not interpreted. Syntax-
+  invalid source produces no decoded inventory; a
   single-pass fallback charges recognizable malformed attempts to the same
   bounded work budget.
   Built-in findings supported only by decoded text are capped at medium

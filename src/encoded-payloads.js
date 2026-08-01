@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { parse } from 'acorn';
+import { Parser } from 'acorn';
 import { MvxError } from './errors.js';
 import { createFinding, REFERENCES } from './model.js';
 import { assertOptionsObject } from './options.js';
@@ -20,10 +20,16 @@ export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
 });
 
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+// WHATWG MIME Sniffing §4.6: JavaScript MIME type essence strings.
 const JAVASCRIPT_TYPES = new Set([
-  'application/ecmascript', 'application/javascript',
-  'text/ecmascript', 'text/javascript'
+  'application/ecmascript', 'application/javascript', 'application/x-ecmascript',
+  'application/x-javascript', 'text/ecmascript', 'text/javascript',
+  'text/javascript1.0', 'text/javascript1.1', 'text/javascript1.2',
+  'text/javascript1.3', 'text/javascript1.4', 'text/javascript1.5',
+  'text/jscript', 'text/livescript', 'text/x-ecmascript', 'text/x-javascript'
 ]);
+const HANDLER_PREFIX = 'function __mvx_event_handler__(){';
+const HANDLER_SUFFIX = '\n}';
 const HTML_CHARACTER_REFERENCES = Object.freeze({
   AMP: '&', amp: '&', apos: "'", bsol: '\\', colon: ':', comma: ',', dollar: '$',
   equals: '=', excl: '!', grave: '`', GT: '>', gt: '>', lcub: '{', lpar: '(',
@@ -76,6 +82,12 @@ function isHtmlSpace(character) {
 
 function trimHtmlSpace(value) {
   return value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
+}
+
+function asciiLower(value) {
+  return value.replace(
+    /[A-Z]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 32)
+  );
 }
 
 function startAttempt(budget, limits) {
@@ -131,9 +143,29 @@ function chargeMalformedSource(segment, budget, limits) {
 }
 
 function parseJavaScriptGoal(segment, sourceType, parserBudget, limits, handler = false) {
+  const prefix = handler ? HANDLER_PREFIX : '';
+  const input = handler ? `${prefix}${segment}${HANDLER_SUFFIX}` : segment;
+  const chargeAstNode = () => {
+    parserBudget.astNodes += 1;
+    if (parserBudget.astNodes > limits.maxAstNodes) {
+      throw new MvxError(`ECMAScript AST nodes exceed ${limits.maxAstNodes}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
+  class BoundedParser extends Parser {
+    finishNode(node, type) {
+      chargeAstNode();
+      return super.finishNode(node, type);
+    }
+
+    finishNodeAt(node, type, position, location) {
+      chargeAstNode();
+      return super.finishNodeAt(node, type, position, location);
+    }
+  }
   const options = {
     allowHashBang: true,
-    allowReturnOutsideFunction: handler,
     ecmaVersion: 'latest',
     onToken: () => {
       parserBudget.parserTokens += 1;
@@ -146,9 +178,14 @@ function parseJavaScriptGoal(segment, sourceType, parserBudget, limits, handler 
     sourceType
   };
   try {
-    return parse(segment, options);
+    return { offset: prefix.length, program: BoundedParser.parse(input, options) };
   } catch (error) {
     if (error instanceof MvxError) throw error;
+    if (error instanceof SyntaxError && /^Not enough stack space to parse input\b/.test(error.message)) {
+      throw new MvxError('ECMAScript parser exhausted its stack safety bound', {
+        code: 'ENCODED_PAYLOAD_LIMIT', cause: error
+      });
+    }
     if (!(error instanceof SyntaxError)) {
       throw new MvxError('ECMAScript parser exceeded a safe runtime resource', {
         code: 'ENCODED_PAYLOAD_LIMIT', cause: error
@@ -187,26 +224,24 @@ function* javascriptAtobLiterals(
   content, start, end, starts, budget, limits, originalOffsets = null, mode = 'unknown'
 ) {
   const segment = content.slice(start, end);
-  const program = parseJavaScript(segment, mode, budget, limits);
-  if (!program) {
+  const parsed = parseJavaScript(segment, mode, budget, limits);
+  if (!parsed) {
     chargeMalformedSource(segment, budget, limits);
     return;
   }
+  const { offset, program } = parsed;
   const stack = [program];
   while (stack.length > 0) {
     const node = stack.pop();
-    budget.astNodes += 1;
-    if (budget.astNodes > limits.maxAstNodes) {
-      throw new MvxError(`ECMAScript AST nodes exceed ${limits.maxAstNodes}`, {
-        code: 'ENCODED_PAYLOAD_LIMIT'
-      });
-    }
     if (directAtobCall(node)) {
       const first = node.arguments[0];
       if (first?.type === 'Literal' && typeof first.value === 'string') {
-        const raw = segment.slice(first.start, first.end);
+        const literalStart = first.start - offset;
+        const literalEnd = first.end - offset;
+        const calleeStart = node.callee.start - offset;
+        const raw = segment.slice(literalStart, literalEnd);
         if (raw[0] === "'" || raw[0] === '"') {
-          const original = originalOffsets?.[node.callee.start] ?? start + node.callee.start;
+          const original = originalOffsets?.[calleeStart] ?? start + calleeStart;
           yield {
             ...chargeStringAttempt(raw, budget, limits),
             line: lineAt(starts, original)
@@ -232,7 +267,7 @@ function parseTag(content, start, end) {
   const nameStart = cursor;
   while (/[A-Za-z0-9:-]/.test(content[cursor] ?? '')) cursor += 1;
   if (cursor === nameStart) return null;
-  const name = content.slice(nameStart, cursor).toLowerCase();
+  const name = asciiLower(content.slice(nameStart, cursor));
   const attributes = [];
   while (cursor < end) {
     while (isHtmlSpace(content[cursor])) cursor += 1;
@@ -244,7 +279,7 @@ function parseTag(content, start, end) {
     while (cursor < end && !isHtmlSpace(content[cursor])
       && !['=', '>', '/'].includes(content[cursor])) cursor += 1;
     if (cursor === attributeStart) { cursor += 1; continue; }
-    const attribute = { name: content.slice(attributeStart, cursor).toLowerCase() };
+    const attribute = { name: asciiLower(content.slice(attributeStart, cursor)) };
     while (isHtmlSpace(content[cursor])) cursor += 1;
     if (content[cursor] === '=') {
       cursor += 1;
@@ -332,16 +367,41 @@ function findScriptEnd(content, start) {
 function scriptMode(content, tag) {
   if (tag.attributes.some((attribute) => attribute.name === 'src')) return null;
   const type = tag.attributes.find((attribute) => attribute.name === 'type');
-  if (!type || type.valueStart === undefined) return 'script';
-  const decoded = decodeHtmlAttribute(content, type.valueStart, type.valueEnd).content;
-  const trimmed = trimHtmlSpace(decoded);
-  if (trimmed === '') return 'script';
-  if (trimmed.toLowerCase() === 'module') return 'module';
-  const normalized = trimHtmlSpace(trimmed.split(';', 1)[0]).toLowerCase();
-  return JAVASCRIPT_TYPES.has(normalized)
-    || normalized.endsWith('+javascript') || normalized.endsWith('+ecmascript')
-    ? 'script'
-    : null;
+  let mode;
+  if (type) {
+    const decoded = type.valueStart === undefined ? ''
+      : decodeHtmlAttribute(content, type.valueStart, type.valueEnd).content;
+    const normalized = asciiLower(trimHtmlSpace(decoded));
+    mode = normalized === '' || JAVASCRIPT_TYPES.has(normalized) ? 'script'
+      : normalized === 'module' ? 'module' : null;
+  } else {
+    const language = tag.attributes.find((attribute) => attribute.name === 'language');
+    if (!language || language.valueStart === undefined) {
+      mode = 'script';
+    } else {
+      const decoded = decodeHtmlAttribute(
+        content, language.valueStart, language.valueEnd
+      ).content;
+      const normalized = asciiLower(decoded);
+      mode = normalized === '' || JAVASCRIPT_TYPES.has(`text/${normalized}`) ? 'script' : null;
+    }
+  }
+  if (mode === 'script' && tag.attributes.some((attribute) => attribute.name === 'nomodule')) {
+    return null;
+  }
+  const event = tag.attributes.find((attribute) => attribute.name === 'event');
+  const target = tag.attributes.find((attribute) => attribute.name === 'for');
+  if (mode === 'script' && event && target) {
+    const eventValue = event.valueStart === undefined ? '' : trimHtmlSpace(
+      decodeHtmlAttribute(content, event.valueStart, event.valueEnd).content
+    );
+    const targetValue = target.valueStart === undefined ? '' : trimHtmlSpace(
+      decodeHtmlAttribute(content, target.valueStart, target.valueEnd).content
+    );
+    if (asciiLower(targetValue) !== 'window'
+      || !['onload', 'onload()'].includes(asciiLower(eventValue))) return null;
+  }
+  return mode;
 }
 
 function* htmlAtobLiterals(content, starts, budget, limits) {

@@ -275,6 +275,54 @@ test('token-aware extraction excludes non-executable text and preserves syntacti
   ]);
 });
 
+test('HTML script selection and handlers follow browser execution contexts', () => {
+  const payload = base64('eval(browserContext);xxxx');
+  const javascriptTypes = [
+    'application/ecmascript', 'application/javascript', 'application/x-ecmascript',
+    'application/x-javascript', 'text/ecmascript', 'text/javascript',
+    'text/javascript1.0', 'text/javascript1.1', 'text/javascript1.2',
+    'text/javascript1.3', 'text/javascript1.4', 'text/javascript1.5',
+    'text/jscript', 'text/livescript', 'text/x-ecmascript', 'text/x-javascript'
+  ];
+  const accepted = [
+    ...javascriptTypes.map((type) => `<script type="${type}">atob('${payload}')</script>`),
+    `<script type="TEXT/JAVASCRIPT">atob('${payload}')</script>`,
+    `<script language="javascript">atob('${payload}')</script>`,
+    `<script language="JScript">atob('${payload}')</script>`,
+    `<script language="">atob('${payload}')</script>`,
+    `<script for=" window " event=" onload() ">atob('${payload}')</script>`,
+    `<script type="module" nomodule>atob('${payload}')</script>`
+  ];
+  const rejected = [
+    `<script type="text/javascript; charset=utf-8">atob('${payload}')</script>`,
+    `<script type="vendor/example+javascript">atob('${payload}')</script>`,
+    `<script language="json">atob('${payload}')</script>`,
+    `<script type="application/json" language="javascript">atob('${payload}')</script>`,
+    `<script nomodule>atob('${payload}')</script>`,
+    `<script type="text/javascripK">atob('${payload}')</script>`,
+    `<script language="javascripK">atob('${payload}')</script>`,
+    `<script for="document" event="onload">atob('${payload}')</script>`,
+    `<script for="window" event="onclick">atob('${payload}')</script>`
+  ];
+  const scripts = extractEncodedPayloads([
+    source([...accepted, ...rejected].join('\n'), 'contexts.html')
+  ]);
+  assert.equal(scripts.candidates, accepted.length);
+  assert.equal(scripts.decodedCount, accepted.length);
+  assert.deepEqual(
+    scripts.entries.map((entry) => entry.encodedLine),
+    accepted.map((_, index) => index + 1)
+  );
+
+  const handlers = extractEncodedPayloads([source([
+    `<button onclick="new.target; (() => new.target)(); atob('${payload}')">valid</button>`,
+    `<button onclick="#!comment&#10;return atob('${payload}')">invalid</button>`
+  ].join('\n'), 'handlers.html')]);
+  assert.equal(handlers.candidates, 2);
+  assert.equal(handlers.decodedCount, 1);
+  assert.equal(handlers.entries[0].encodedLine, 1);
+});
+
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
   const twoIncompleteLines = source("atob('unterminated\natob('unterminated");
   assert.throws(
@@ -288,9 +336,11 @@ test('malformed literal attempts consume fixed budgets without repeated rescans'
   );
   const manyMalformedTokens = source('atob('.repeat(100_000));
   const started = process.hrtime.bigint();
-  const result = extractEncodedPayloads([manyMalformedTokens]);
+  assert.throws(
+    () => extractEncodedPayloads([manyMalformedTokens]),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /stack safety/.test(error.message)
+  );
   const elapsedMilliseconds = Number(process.hrtime.bigint() - started) / 1e6;
-  assert.equal(result.candidates, 0);
   assert.ok(elapsedMilliseconds < 2_000, `single-pass scan took ${elapsedMilliseconds}ms`);
 
   const overlapping = source("atob('".repeat(20_000));
@@ -389,6 +439,13 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
       maxAstNodes: 500
     }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /AST nodes/.test(error.message)
+  );
+  const deeplyNested = source(
+    '['.repeat(800) + `atob('${base64('eval(deepPayload);xxxx')}')` + ']'.repeat(800)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([deeplyNested]),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /stack safety/.test(error.message)
   );
 
   const nested = source(`atob('${base64(`atob('${base64('eval(payload);xxxxx')}')`)}')`);
