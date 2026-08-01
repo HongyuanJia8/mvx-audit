@@ -44,13 +44,15 @@ source map, or other unparsed regular file changes. It deliberately describes
 the unpacked tree rather than ZIP metadata, compression, or a CRX signature.
 Use `artifact.sha256` for the exact packed bytes.
 
-The `mvx-static-v3` analysis profile includes:
+The `mvx-static-v4` analysis profile includes:
 
 - the byte length and SHA-256 of the raw `manifest.json` bytes;
 - the relative path, byte length, and raw-byte SHA-256 of every scanned source;
 - a SHA-256 over the sorted relative package layout and entry types;
 - the `mvx-package-v1` combined SHA-256;
 - the effective file, entry, depth, and byte limits;
+- the `mvx-encoded-payloads-v1` profile, normalized fixed limits, and combined
+  decoded-payload inventory SHA-256;
 - the sorted raw-byte provenance of every analyst-supplied declarative rule
   pack and its normalized effective limits; and
 - a combined SHA-256 over that canonical identity record.
@@ -318,7 +320,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - Binary files are hashed but not parsed. Magic bytes identify WebAssembly,
   PE/DOS, ELF, and Mach-O payloads for manual review; a filename extension alone
   never creates that finding. Supported text extensions are JS-family files,
-  HTML, and JSON.
+  HTML, SVG, and JSON.
 - CRX/ZIP input defaults to a 100 MB archive, 10,000 entries, 50 MB per entry,
   250 MB total expansion, ratio 200 after 5 MB, and 64 path segments. Archive
   limits also bound CRX3 headers to 256 KiB, signature proofs to 32, and each
@@ -329,11 +331,89 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
   rules, 5,000 indicators, 1 MB total literal bytes, and 10,000 matches. See
   [declarative rule packs](rule-packs.md) for the complete limits.
+- In executable JS/HTML/SVG contexts, a bounded ECMAScript parser finds syntax-
+  valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
+  or `globalThis.atob` without executing JavaScript. The exact parser version is
+  bundled in the published package. Exact bundled Parse5, Saxes, entities, and xmlchars
+  versions supply HTML5 tokenization and tree construction, namespace-aware XML
+  parsing, and character-reference decoding, while the published shrinkwrap records every parser's registry
+  integrity. Comments, literal text, regex lexical goals, templates, automatic
+  semicolon insertion, and delimiters follow the ECMAScript grammar.
+  Additional call arguments are allowed, but only the first literal is decoded.
+  HTML analysis is limited to inline executable script bodies and event
+  handlers, using classic, module, or actual function-body grammar as applicable.
+  Executable handlers and nested navigables in template contents are retained,
+  while template-owned scripts remain inert. Tree-builder attribute merges on
+  repeated explicit or implicit `html` and `body` roots retain their original
+  evidence locations. Unsandboxed `iframe[srcdoc]` and sandboxes with
+  `allow-scripts` are parsed as bounded nested HTML documents. SVG handlers use
+  their browser `evt` formal parameter; SMIL timing handlers are limited to the
+  pinned revision's animation elements, while SVG script `onerror` uses the
+  browser's special error-handler parameters. SVG scripts ignore HTML-only `src`,
+  `language`, `nomodule`, `for`, and `event` controls and decode SVG text
+  character references and CDATA sections before ECMAScript parsing; SVG `href` remains the
+  external-source control. Standalone `.svg` package files are parsed as XML,
+  preserving namespace resolution and case-sensitive element and attribute names,
+  and are discarded as executable evidence when the XML is not well formed.
+  Simple internal general entities are expanded with source mapping; recursive,
+  parameter, external, markup-bearing, or otherwise unsupported DTD constructs
+  fail the audit explicitly instead of producing a clean result.
+  Only names in a frozen, exported browser event-handler profile are
+  executable; arbitrary `on*` attributes remain data. The generated profile is
+  derived from a pinned Chromium revision's actual generic HTML, body, frameset,
+  MathML, and SVG content-attribute trigger implementations. Its profile ID contains a
+  canonical hash of the full revision, source list, and all generated handler
+  lists; that ID and exact parser versions participate in encoded-payload and
+  overall analysis identity.
+  Maintainers advance the checked-in snapshot explicitly with
+  `npm run handlers:update`; audits never fetch browser metadata at runtime.
+  Script selection follows the complete WHATWG
+  [JavaScript MIME type essence list](https://mimesniff.spec.whatwg.org/#javascript-mime-type),
+  legacy `language`, and modern-Chrome `nomodule` behavior. Standalone JS with
+  unknown loading mode may use strict script or module grammar. Actual script
+  tree construction, raw-text states, duplicate-attribute suppression and root
+  attribute merging,
+  HTML/MathML/SVG namespaces, end-tag boundaries, and all character references
+  preserve original source offsets. The
+  scanner does not resolve runtime bindings, so this is a medium-confidence
+  syntax signal. Only unescaped, canonical Base64 literals of at least 16
+  decoded bytes are inventoried; the Infra ASCII whitespace accepted by browser
+  `atob`, including form feed, is removed before canonical validation.
+  Defaults allow 4,096 candidate calls, 128 decoded payloads, 1.5 million
+  inspected literal characters per attempt, 8 million candidate characters in total,
+  1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
+  recursive layers. ECMAScript work is capped at 1 million tokens and 2 million
+  AST node allocations across original and decoded inputs. HTML and standalone
+  SVG XML work is separately capped at 1 million tokens, 16,384 attributes, 100,000 node
+  allocations, 2,048 open-element depth, 16 document levels, and 4 million
+  depth-weighted tree-construction work units. Nested HTML content is capped at
+  5 million characters in total. XML DTD processing is capped at 256 internal
+  entity declarations, 16 expansion levels, and 1 million expanded characters.
+  These content-deterministic counters interrupt tokenization, allocation, and
+  expensive tree construction before a complete DOM is required, while parser
+  stack exhaustion independently fails closed. The effective limits and work
+  counters participate in encoded-payload identity. The published `html*` work
+  fields are shared markup-parser budgets for both HTML and standalone SVG XML.
+  XML entity declaration and expanded-character counters are reported separately.
+  Limit breaches fail with
+  `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8
+  payloads are rescanned by built-in and declarative source rules; binary
+  payloads retain byte length and SHA-256 but are not interpreted. Syntax-
+  invalid source produces no decoded inventory; a
+  single-pass fallback charges recognizable malformed attempts to the same
+  bounded work budget.
+  Built-in findings supported only by decoded text are capped at medium
+  confidence because the scanner does not establish binding or reachability.
+  Decoded text and matching decoded line content are never persisted in the
+  report; evidence retains original/decoded line numbers and payload hashes.
 
 ## Known limitations
 
 - Pattern matching is intentionally explainable and can produce false positives
-  or miss obfuscated, bundled, aliased, or dynamically constructed behavior.
+  or miss bundled, aliased, dynamically constructed, encrypted, escaped,
+  concatenated, non-literal, non-Base64, or deeper-than-two-stage
+  obfuscation. It does not perform scope or binding resolution. Direct literal
+  `atob` coverage is not general JavaScript deobfuscation.
 - Permissions may be justified by product requirements that static input does
   not contain.
 - Data-flow, control-flow, publisher identity/authorization validation, and

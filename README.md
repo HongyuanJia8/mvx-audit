@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
 
-MVX Audit is a deterministic, dependency-free security research toolkit for
+MVX Audit is a deterministic, minimal-dependency security research toolkit for
 Chrome extensions. It combines static auditing, MV2/MV3 capability comparison,
 reproducible real-world threat intelligence, hash-verified quarantine,
 real-sample triage benchmarking, and an optional networkless dynamic canary lab.
@@ -31,8 +31,9 @@ and [MV3 overview](https://developer.chrome.com/docs/extensions/develop/migrate/
 
 ## Quick start
 
-Requirements: Node.js 20 or newer. There are no runtime dependencies and no
-browser download.
+Requirements: Node.js 20 or newer. The exact Acorn, Parse5, entities, Saxes, and
+xmlchars parser stack is bundled in the published package, and
+`npm-shrinkwrap.json` records registry integrity; no browser is downloaded.
 
 ```bash
 git clone https://github.com/hyj28/mvx-audit.git
@@ -136,6 +137,12 @@ development.
 - Source indicators for dynamic evaluation, HTML injection, wildcard
   messaging, keystroke observation, cookie enumeration, insecure transport,
   downloads, clipboard reads, and unvalidated privileged message bridges.
+- Bounded static extraction of direct literal Base64 `atob` payloads, with
+  syntax-valid ECMAScript/HTML/SVG and nested-`srcdoc` executable-context filtering,
+  including namespace- and case-correct XML parsing for standalone `.svg` files,
+  recursive UTF-8 rescanning by
+  built-in and analyst-supplied rules, exact decoded-byte hashes, hash-only
+  decoded evidence, original/decoded line provenance, and no code execution.
 - Remote iframe-based extension UI and sensitive capability delegation to
   framed origins.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
@@ -340,8 +347,9 @@ Every successful audit includes `package.sha256` and `analysis.sha256`.
 Matching package values mean the same `mvx-package-v1` profile inventoried the
 same extension-relative entries and regular-file bytes, even when directories
 differ. The analysis identity additionally binds the text-analysis profile,
-effective limits, and exact declarative rule-pack provenance. Neither value is
-a signature or a digest of the original CRX/ZIP container; retain
+effective limits, the content-addressed encoded-payload inventory, and exact
+declarative rule-pack provenance. Neither value is a signature or a digest of
+the original CRX/ZIP container; retain
 `artifact.sha256` or the quarantine SHA-256 for exact packed-artifact identity.
 Packed results also include `artifact.authenticity`; this cryptographic status
 has the narrower trust meaning described above. When supplied,

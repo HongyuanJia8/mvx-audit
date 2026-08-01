@@ -198,7 +198,7 @@ test('declarative rules match text, paths, file and package hashes with determin
   assert.equal(custom.find((finding) => finding.id.endsWith(':PACKAGE_HASH')).evidence[0].file, undefined);
   assert.equal(result.package.sha256, baseline.package.sha256);
   assert.notEqual(result.analysis.sha256, baseline.analysis.sha256);
-  assert.equal(result.analysis.profile, 'mvx-static-v3');
+  assert.equal(result.analysis.profile, 'mvx-static-v4');
   assert.deepEqual(result.analysis.rulePacks, result.rulePacks);
   assert.equal(result.rulePacks[0].sha256, createHash('sha256').update(raw).digest('hex'));
   assert.equal(JSON.stringify(result.rulePacks).includes(temp), false);

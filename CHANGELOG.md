@@ -7,6 +7,25 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Bounded, non-executing analysis of direct literal Base64 `atob` payloads,
+  including syntax-valid ECMAScript executable-context filtering with an exact
+  bundled parser and published registry-integrity shrinkwrap, recursive strict-UTF-8
+  rescanning by built-in and declarative rules, content-addressed inventory and
+  hash-only decoded evidence, fail-closed attempt/work limits, SARIF/text/
+  comparison reporting, offline-verification replay, and the `mvx-static-v4`
+  analysis identity. JavaScript lexical goals, ASI, templates, additional arguments,
+  HTML script end tags, and attribute character references retain bounded,
+  source-mapped handling. Complete WHATWG JavaScript MIME selection, legacy
+  `language`, modern `nomodule`, classic/module/function-body grammar, parser
+  stack exhaustion, exact bundled HTML5 and namespace-aware XML parsing, a content-hashed generated
+  Chromium-revision HTML/body/frameset/MathML/SVG event-handler profile with independent
+  golden tests, namespace-specific SVG script/handler/CDATA grammars, inert-template,
+  nested-`srcdoc`, standalone-SVG, bounded internal XML entities, and corrected-root handling, and construction-time
+  ECMAScript/HTML/XML token, attribute, node, document-depth, tree-depth, and tree-work
+  limits fail closed and participate in analysis identity.
+  Malformed HTML, raw-text elements, duplicate and merged attributes, handler
+  formal parameters, and tag-scoped SVG/SMIL handlers retain
+  browser-aligned executable-context handling.
 - Independent identity-bound isolated-lab verification for exact report,
   package, analysis, scenario, event-stream, deterministic evaluation, seccomp,
   and container-image identities, with private inode/device-anchored extension

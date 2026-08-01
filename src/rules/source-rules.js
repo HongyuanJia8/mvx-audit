@@ -1,4 +1,5 @@
 import { CONFIDENCE, REFERENCES, createFinding } from '../model.js';
+import { lineAt, lineSnippet, lineStarts } from '../text-locations.js';
 
 const RULES = [
   {
@@ -74,37 +75,50 @@ const RULES = [
 function locate(content, pattern) {
   const match = content.match(pattern);
   if (!match) return null;
-  const prefix = content.slice(0, match.index);
-  const line = prefix.split('\n').length;
-  const lineText = content.split('\n')[line - 1]?.trim() ?? match[0];
-  return { line, snippet: lineText.slice(0, 240) };
+  const starts = lineStarts(content);
+  const line = lineAt(starts, match.index);
+  return { line, snippet: lineSnippet(content, starts, line) || match[0] };
 }
 
 function locateAll(content, pattern) {
   const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
   const globalPattern = new RegExp(pattern.source, flags);
   const matches = [];
+  const starts = lineStarts(content);
   for (const match of content.matchAll(globalPattern)) {
-    const prefix = content.slice(0, match.index);
-    const line = prefix.split('\n').length;
-    const lineText = content.split('\n')[line - 1]?.trim() ?? match[0];
-    matches.push({ line, snippet: lineText.slice(0, 240) });
+    const line = lineAt(starts, match.index);
+    matches.push({ line, snippet: lineSnippet(content, starts, line) || match[0] });
     if (matches.length >= 20) break;
   }
   return matches;
 }
 
+function sourceEvidence(source, location) {
+  if (!source.decodedFrom) return { file: source.path, ...location };
+  return {
+    file: source.path,
+    line: source.decodedFrom.line,
+    decodedLine: location.line,
+    decodedFrom: source.decodedFrom,
+    snippet: `decoded match at line ${location.line}; SHA-256 ${source.decodedFrom.sha256}`
+  };
+}
+
 export function analyzeSources(sources) {
   const findings = [];
-  const executableSources = sources.filter((source) => !source.path.endsWith('.json'));
+  const executableSources = sources.filter((source) => !/\.json$/i.test(source.path));
   for (const rule of RULES) {
     const matches = [];
     for (const source of executableSources) {
       const locations = locateAll(source.content, rule.pattern);
-      matches.push(...locations.map((location) => ({ file: source.path, ...location })));
+      matches.push(...locations.map((location) => sourceEvidence(source, location)));
       if (matches.length >= 20) break;
     }
-    if (matches.length > 0) findings.push(createFinding(rule, matches.slice(0, 20)));
+    if (matches.length > 0) findings.push(createFinding(
+      rule,
+      matches.slice(0, 20),
+      matches.every((match) => match.decodedFrom) ? { confidence: CONFIDENCE.MEDIUM } : {}
+    ));
   }
 
   for (const source of executableSources) {
@@ -119,7 +133,7 @@ export function analyzeSources(sources) {
         description: 'A message handler invokes privileged Chrome APIs without an apparent sender check in the same file.',
         remediation: 'Allowlist senders, validate a strict message schema, and map messages to fixed least-privilege actions.',
         references: [REFERENCES.messaging, REFERENCES.security]
-      }, { file: source.path, ...location }));
+      }, sourceEvidence(source, location)));
     }
   }
   return findings;
