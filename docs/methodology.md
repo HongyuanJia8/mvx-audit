@@ -331,10 +331,11 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
   rules, 5,000 indicators, 1 MB total literal bytes, and 10,000 matches. See
   [declarative rule packs](rule-packs.md) for the complete limits.
-- In executable JS/HTML contexts, a token-aware scanner finds syntactic direct
-  literal Base64 calls to bare `atob`, `window.atob`, `self.atob`, or
-  `globalThis.atob` without executing JavaScript. Comments and literal text are
-  skipped and control delimiters distinguish common regex/division contexts.
+- In executable JS/HTML contexts, a bounded ECMAScript parser finds syntax-
+  valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
+  or `globalThis.atob` without executing JavaScript. The lockfile pins the exact
+  parser bytes; comments, literal text, regex lexical goals, templates,
+  automatic semicolon insertion, and delimiters follow its grammar.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
   handlers; actual script end-tag boundaries and numeric or syntax-relevant
@@ -348,7 +349,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   recursive layers. Limit breaches fail with
   `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8 payloads are rescanned by built-in and
   declarative source rules; binary payloads retain byte length and SHA-256 but
-  are not interpreted. Malformed attempts consume the same bounded work budget.
+  are not interpreted. Syntax-invalid source produces no decoded inventory; a
+  single-pass fallback charges recognizable malformed attempts to the same
+  bounded work budget.
   Built-in findings supported only by decoded text are capped at medium
   confidence because the scanner does not establish binding or reachability.
   Decoded text and matching decoded line content are never persisted in the
@@ -358,7 +361,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 
 - Pattern matching is intentionally explainable and can produce false positives
   or miss bundled, aliased, dynamically constructed, encrypted, escaped,
-  concatenated, template-expression, non-Base64, or deeper-than-two-stage
+  concatenated, non-literal, non-Base64, or deeper-than-two-stage
   obfuscation. It does not perform scope or binding resolution. Direct literal
   `atob` coverage is not general JavaScript deobfuscation.
 - Permissions may be justified by product requirements that static input does

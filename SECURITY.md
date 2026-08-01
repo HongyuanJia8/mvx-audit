@@ -36,12 +36,14 @@ trusted intelligence: operators remain responsible for its source, license,
 expiry, integrity, and conclusions.
 
 Encoded-payload analysis is static and never calls `eval`, `Function`, `atob`,
-or extension code. A token-aware scanner recognizes direct, unescaped Base64
-string literals in syntactic calls to bare `atob` or the `window`, `self`, and
-`globalThis` member forms. It skips JavaScript comments and literal text, and
-tracks control delimiters when separating regular-expression literals from
-division. Calls may have additional arguments, but only the first literal is
-decoded. In HTML it scans only inline executable script bodies and event-
+or extension code. A bounded ECMAScript parser recognizes direct, unescaped
+Base64 string literals in syntax-valid calls to bare `atob` or the `window`,
+`self`, and `globalThis` member forms. This delegates regex lexical goals,
+automatic semicolon insertion, templates, and delimiter validity to the exact
+Acorn version and integrity pinned by `package-lock.json`. Calls may have
+additional arguments, but only the first literal is decoded. Syntax-invalid
+source is never decoded; a linear fallback only charges recognizable malformed
+attempts against work budgets. In HTML it scans only inline executable script bodies and event-
 handler attributes, validates actual `script` end-tag boundaries, and decodes
 numeric plus syntax-relevant named attribute character references with original
 source-offset provenance.

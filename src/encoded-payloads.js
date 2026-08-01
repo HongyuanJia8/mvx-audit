@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { parse } from 'acorn';
 import { MvxError } from './errors.js';
 import { createFinding, REFERENCES } from './model.js';
 import { assertOptionsObject } from './options.js';
@@ -17,15 +18,8 @@ export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
 });
 
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
-const IDENTIFIER_START = /[$_\p{ID_Start}]/u;
-const IDENTIFIER_CONTINUE = /[$\u200c\u200d\p{ID_Continue}]/u;
-const REGEX_PREFIX_KEYWORDS = new Set([
-  'await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'return',
-  'throw', 'typeof', 'void', 'yield'
-]);
-const CONTROL_PAREN_KEYWORDS = new Set(['catch', 'for', 'if', 'switch', 'while', 'with']);
 const JAVASCRIPT_TYPES = new Set([
-  'application/ecmascript', 'application/javascript', 'module',
+  'application/ecmascript', 'application/javascript',
   'text/ecmascript', 'text/javascript'
 ]);
 const HTML_CHARACTER_REFERENCES = Object.freeze({
@@ -73,95 +67,13 @@ function isLineTerminator(character) {
     || character === '\u2028' || character === '\u2029';
 }
 
-function isSpace(character) {
-  return character === ' ' || character === '\t' || character === '\v'
-    || character === '\f' || character === '\u00a0' || isLineTerminator(character);
+function isHtmlSpace(character) {
+  return character === ' ' || character === '\t' || character === '\n'
+    || character === '\f' || character === '\r';
 }
 
-function codePoint(content, index) {
-  const point = content.codePointAt(index);
-  if (point === undefined) return null;
-  return { character: String.fromCodePoint(point), width: point > 0xffff ? 2 : 1 };
-}
-
-function identifierAt(content, index) {
-  const first = codePoint(content, index);
-  if (!first || !IDENTIFIER_START.test(first.character)) return null;
-  let cursor = index + first.width;
-  while (cursor < content.length) {
-    const next = codePoint(content, cursor);
-    if (!next || !IDENTIFIER_CONTINUE.test(next.character)) break;
-    cursor += next.width;
-  }
-  return { value: content.slice(index, cursor), end: cursor };
-}
-
-function skipLineRemainder(content, index) {
-  let cursor = index;
-  while (cursor < content.length && !isLineTerminator(content[cursor])) cursor += 1;
-  return cursor;
-}
-
-function skipLineComment(content, index) {
-  return skipLineRemainder(content, index + 2);
-}
-
-function skipBlockComment(content, index) {
-  const close = content.indexOf('*/', index + 2);
-  return close === -1 ? content.length : close + 2;
-}
-
-function skipTrivia(content, index, end) {
-  let cursor = index;
-  while (cursor < end) {
-    if (isSpace(content[cursor])) {
-      cursor += 1;
-    } else if (content.startsWith('//', cursor)) {
-      cursor = Math.min(skipLineComment(content, cursor), end);
-    } else if (content.startsWith('/*', cursor)) {
-      cursor = Math.min(skipBlockComment(content, cursor), end);
-    } else break;
-  }
-  return Math.min(cursor, end);
-}
-
-function skipQuoted(content, index, quote, end) {
-  let cursor = index + 1;
-  while (cursor < end) {
-    const character = content[cursor];
-    if (character === '\\') cursor = Math.min(cursor + 2, end);
-    else if (character === quote) return cursor + 1;
-    else if (isLineTerminator(character) && quote !== '`') return cursor;
-    else cursor += 1;
-  }
-  return cursor;
-}
-
-function skipRegex(content, index, end) {
-  let cursor = index + 1;
-  let inClass = false;
-  while (cursor < end) {
-    const character = content[cursor];
-    if (character === '\\') cursor = Math.min(cursor + 2, end);
-    else if (isLineTerminator(character)) return { end: cursor, closed: false };
-    else if (character === '[') { inClass = true; cursor += 1; }
-    else if (character === ']') { inClass = false; cursor += 1; }
-    else if (character === '/' && !inClass) {
-      cursor += 1;
-      while (cursor < end && identifierAt(content, cursor)) {
-        cursor = identifierAt(content, cursor).end;
-      }
-      return { end: cursor, closed: true };
-    } else cursor += 1;
-  }
-  return { end: cursor, closed: false };
-}
-
-function supportedReference(tokens) {
-  const previous = tokens.at(-1);
-  if (previous?.value === '#') return false;
-  if (previous?.value !== '.') return true;
-  return ['globalThis', 'self', 'window'].includes(tokens.at(-2)?.value);
+function trimHtmlSpace(value) {
+  return value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
 }
 
 function startAttempt(budget, limits) {
@@ -186,156 +98,107 @@ function checkAttemptCharacters(budget, limits, characters) {
   }
 }
 
-function parseAtobLiteral(content, tokenEnd, end, budget, limits) {
-  let cursor = skipTrivia(content, tokenEnd, end);
-  if (content[cursor] !== '(') return null;
-  cursor = skipTrivia(content, cursor + 1, end);
-  const quote = content[cursor];
-  if (quote !== "'" && quote !== '"') return null;
+function chargeStringAttempt(raw, budget, limits) {
+  const characters = Math.max(0, raw.length - 2);
   startAttempt(budget, limits);
-  const valueStart = cursor + 1;
-  cursor = valueStart;
-  let escaped = false;
-  while (cursor < end && content[cursor] !== quote && !isLineTerminator(content[cursor])) {
-    if (content[cursor] === '\\') {
-      escaped = true;
-      cursor += 1;
-      if (cursor < end) cursor += 1;
-    } else cursor += 1;
-    checkAttemptCharacters(budget, limits, cursor - valueStart);
-  }
-  const characters = cursor - valueStart;
   checkAttemptCharacters(budget, limits, characters);
   budget.candidateEncodedChars += characters;
-  if (cursor >= end || content[cursor] !== quote) return { end: cursor };
-  const valueEnd = cursor;
-  cursor = skipTrivia(content, cursor + 1, end);
-  if (content[cursor] !== ')' && content[cursor] !== ',') return { end: cursor };
   return {
-    end: cursor + 1,
-    candidate: { encoded: content.slice(valueStart, valueEnd), escaped }
+    encoded: raw.slice(1, -1),
+    escaped: raw.slice(1, -1).includes('\\')
   };
 }
 
-function statementBrace(tokens) {
-  const previous = tokens.at(-1);
-  if (!previous) return true;
-  if (previous.type === 'control-close' || previous.value === ')'
-    || previous.value === '=>' || ['else', 'try', 'finally', 'do'].includes(previous.value)) {
-    return true;
+function chargeMalformedSource(segment, budget, limits) {
+  const pattern = /(?<![$\u200c\u200d\p{ID_Continue}])atob\s*\(\s*(['"])/gu;
+  for (let match = pattern.exec(segment); match; match = pattern.exec(segment)) {
+    const quote = pattern.lastIndex - 1;
+    startAttempt(budget, limits);
+    let cursor = quote + 1;
+    while (cursor < segment.length && !isLineTerminator(segment[cursor])) {
+      const character = segment[cursor];
+      if (character === match[1]) { cursor += 1; break; }
+      cursor = Math.min(segment.length, cursor + (character === '\\' ? 2 : 1));
+      checkAttemptCharacters(budget, limits, cursor - quote - 1);
+    }
+    const characters = Math.max(0, cursor - quote - 1 - (segment[cursor - 1] === match[1] ? 1 : 0));
+    checkAttemptCharacters(budget, limits, characters);
+    budget.candidateEncodedChars += characters;
+    pattern.lastIndex = Math.max(pattern.lastIndex, cursor);
   }
-  return !['=', '(', '[', ',', ':', 'return'].includes(previous.value);
+}
+
+function parseJavaScript(segment) {
+  const options = {
+    allowAwaitOutsideFunction: true,
+    allowHashBang: true,
+    allowReturnOutsideFunction: true,
+    ecmaVersion: 'latest'
+  };
+  try {
+    return parse(segment, { ...options, sourceType: 'script' });
+  } catch (scriptError) {
+    if (!(scriptError instanceof SyntaxError)) {
+      throw new MvxError('ECMAScript parser exceeded a safe runtime resource', {
+        code: 'ENCODED_PAYLOAD_LIMIT', cause: scriptError
+      });
+    }
+    try {
+      return parse(segment, { ...options, sourceType: 'module' });
+    } catch (moduleError) {
+      if (!(moduleError instanceof SyntaxError)) {
+        throw new MvxError('ECMAScript parser exceeded a safe runtime resource', {
+          code: 'ENCODED_PAYLOAD_LIMIT', cause: moduleError
+        });
+      }
+      return null;
+    }
+  }
+}
+
+function directAtobCall(node) {
+  if (node.type !== 'CallExpression') return false;
+  if (node.callee.type === 'Identifier') return node.callee.name === 'atob';
+  return node.callee.type === 'MemberExpression'
+    && !node.callee.computed
+    && node.callee.object.type === 'Identifier'
+    && ['globalThis', 'self', 'window'].includes(node.callee.object.name)
+    && node.callee.property.type === 'Identifier'
+    && node.callee.property.name === 'atob';
 }
 
 function* javascriptAtobLiterals(
   content, start, end, starts, budget, limits, originalOffsets = null
 ) {
-  let cursor = start;
-  let canStartRegex = true;
-  const tokens = [];
-  const parentheses = [];
-  const braces = [];
-  const remember = (token) => {
-    tokens.push(token);
-    if (tokens.length > 3) tokens.shift();
-  };
-  while (cursor < end) {
-    const character = content[cursor];
-    if (isSpace(character)) { cursor += 1; continue; }
-    if (content.startsWith('<!--', cursor) || content.startsWith('-->', cursor)) {
-      cursor = Math.min(skipLineRemainder(content, cursor + 3), end);
-      continue;
-    }
-    if (content.startsWith('//', cursor)) {
-      cursor = Math.min(skipLineComment(content, cursor), end);
-      continue;
-    }
-    if (content.startsWith('/*', cursor)) {
-      cursor = Math.min(skipBlockComment(content, cursor), end);
-      continue;
-    }
-    if (character === "'" || character === '"' || character === '`') {
-      cursor = skipQuoted(content, cursor, character, end);
-      remember({ type: 'atom', value: character });
-      canStartRegex = false;
-      continue;
-    }
-    if (character === '/' && canStartRegex) {
-      const regex = skipRegex(content, cursor, end);
-      if (regex.closed) {
-        cursor = regex.end;
-        remember({ type: 'atom', value: 'regex' });
-        canStartRegex = false;
-        continue;
-      }
-    }
-    const identifier = identifierAt(content, cursor);
-    if (identifier) {
-      if (identifier.value === 'atob' && supportedReference(tokens)) {
-        const parsed = parseAtobLiteral(content, identifier.end, end, budget, limits);
-        if (parsed) {
-          if (parsed.candidate) yield {
-            ...parsed.candidate,
-            line: lineAt(starts, originalOffsets?.[cursor] ?? cursor)
+  const segment = content.slice(start, end);
+  const program = parseJavaScript(segment);
+  if (!program) {
+    chargeMalformedSource(segment, budget, limits);
+    return;
+  }
+  const stack = [program];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (directAtobCall(node)) {
+      const first = node.arguments[0];
+      if (first?.type === 'Literal' && typeof first.value === 'string') {
+        const raw = segment.slice(first.start, first.end);
+        if (raw[0] === "'" || raw[0] === '"') {
+          const original = originalOffsets?.[node.callee.start] ?? start + node.callee.start;
+          yield {
+            ...chargeStringAttempt(raw, budget, limits),
+            line: lineAt(starts, original)
           };
-          cursor = Math.max(parsed.end, identifier.end);
-          const separator = content[parsed.end - 1];
-          remember({
-            type: separator === ',' ? 'punctuator' : 'atom',
-            value: separator === ',' ? ',' : 'call'
-          });
-          canStartRegex = separator === ',';
-          continue;
         }
       }
-      remember({ type: 'identifier', value: identifier.value });
-      canStartRegex = REGEX_PREFIX_KEYWORDS.has(identifier.value);
-      cursor = identifier.end;
-      continue;
     }
-    if (/[0-9]/.test(character)) {
-      cursor += 1;
-      while (cursor < end && /[0-9A-Fa-f_xXobOBn.eE]/.test(content[cursor])) cursor += 1;
-      remember({ type: 'atom', value: 'number' });
-      canStartRegex = false;
-      continue;
+    const children = [];
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const child of value) if (child?.type) children.push(child);
+      } else if (value?.type) children.push(value);
     }
-    const pair = content.slice(cursor, cursor + 2);
-    if (pair === '++' || pair === '--') {
-      remember({ type: 'postfix', value: pair });
-      canStartRegex = false;
-      cursor += 2;
-      continue;
-    }
-    if (pair === '=>') {
-      remember({ type: 'punctuator', value: pair });
-      canStartRegex = true;
-      cursor += 2;
-      continue;
-    }
-    if (character === '(') {
-      const control = CONTROL_PAREN_KEYWORDS.has(tokens.at(-1)?.value);
-      parentheses.push({ control });
-      remember({ type: 'punctuator', value: character });
-      canStartRegex = true;
-    } else if (character === ')') {
-      const frame = parentheses.pop();
-      remember({ type: frame?.control ? 'control-close' : 'punctuator', value: character });
-      canStartRegex = frame?.control === true;
-    } else if (character === '{') {
-      const block = statementBrace(tokens);
-      braces.push({ block });
-      remember({ type: 'punctuator', value: character });
-      canStartRegex = true;
-    } else if (character === '}') {
-      const frame = braces.pop();
-      remember({ type: frame?.block ? 'block-close' : 'atom', value: character });
-      canStartRegex = frame?.block === true;
-    } else {
-      remember({ type: 'punctuator', value: character });
-      canStartRegex = ![']'].includes(character) && character !== '.' && character !== '#';
-    }
-    cursor += 1;
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
   }
 }
 
@@ -343,27 +206,27 @@ function parseTag(content, start, end) {
   let cursor = start + 1;
   let closing = false;
   if (content[cursor] === '/') { closing = true; cursor += 1; }
-  while (isSpace(content[cursor])) cursor += 1;
+  while (isHtmlSpace(content[cursor])) cursor += 1;
   const nameStart = cursor;
   while (/[A-Za-z0-9:-]/.test(content[cursor] ?? '')) cursor += 1;
   if (cursor === nameStart) return null;
   const name = content.slice(nameStart, cursor).toLowerCase();
   const attributes = [];
   while (cursor < end) {
-    while (isSpace(content[cursor])) cursor += 1;
+    while (isHtmlSpace(content[cursor])) cursor += 1;
     if (content[cursor] === '>') return { name, closing, attributes, end: cursor + 1 };
     if (content[cursor] === '/' && content[cursor + 1] === '>') {
       return { name, closing, attributes, end: cursor + 2 };
     }
     const attributeStart = cursor;
-    while (cursor < end && !isSpace(content[cursor])
+    while (cursor < end && !isHtmlSpace(content[cursor])
       && !['=', '>', '/'].includes(content[cursor])) cursor += 1;
     if (cursor === attributeStart) { cursor += 1; continue; }
     const attribute = { name: content.slice(attributeStart, cursor).toLowerCase() };
-    while (isSpace(content[cursor])) cursor += 1;
+    while (isHtmlSpace(content[cursor])) cursor += 1;
     if (content[cursor] === '=') {
       cursor += 1;
-      while (isSpace(content[cursor])) cursor += 1;
+      while (isHtmlSpace(content[cursor])) cursor += 1;
       const quote = content[cursor];
       if (quote === "'" || quote === '"') {
         attribute.valueStart = cursor + 1;
@@ -372,7 +235,7 @@ function parseTag(content, start, end) {
         cursor = close === -1 || close >= end ? end : close + 1;
       } else {
         attribute.valueStart = cursor;
-        while (cursor < end && !isSpace(content[cursor]) && content[cursor] !== '>') cursor += 1;
+        while (cursor < end && !isHtmlSpace(content[cursor]) && content[cursor] !== '>') cursor += 1;
         attribute.valueEnd = cursor;
       }
       attribute.value = content.slice(attribute.valueStart, attribute.valueEnd);
@@ -437,7 +300,7 @@ function findScriptEnd(content, start) {
     if (open === -1) return -1;
     if (asciiEqualAt(content, open, '</script')) {
       const boundary = content[open + 8];
-      if (boundary === '>' || boundary === '/' || isSpace(boundary)) return open;
+      if (boundary === '>' || boundary === '/' || isHtmlSpace(boundary)) return open;
     }
     cursor = open + 1;
   }
@@ -449,8 +312,10 @@ function executableScript(content, tag) {
   const type = tag.attributes.find((attribute) => attribute.name === 'type');
   if (!type || type.valueStart === undefined) return true;
   const decoded = decodeHtmlAttribute(content, type.valueStart, type.valueEnd).content;
-  if (decoded.trim() === '') return true;
-  const normalized = decoded.trim().toLowerCase().split(';', 1)[0];
+  const trimmed = trimHtmlSpace(decoded);
+  if (trimmed === '') return true;
+  if (trimmed.toLowerCase() === 'module') return true;
+  const normalized = trimHtmlSpace(trimmed.split(';', 1)[0]).toLowerCase();
   return JAVASCRIPT_TYPES.has(normalized)
     || normalized.endsWith('+javascript') || normalized.endsWith('+ecmascript');
 }

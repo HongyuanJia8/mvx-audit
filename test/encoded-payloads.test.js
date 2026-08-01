@@ -234,22 +234,35 @@ test('token-aware extraction excludes non-executable text and preserves syntacti
     `atob('${payload}', undefined);`,
     `atob('${payload}',);`,
     'let x = 2, y = 1; x++ / y;',
-    `atob('${payload}');`
+    `atob('${payload}');`,
+    `const divided = ready ? {} / atob('${payload}') / 2 : 0;`,
+    `if (atob('${payload}', true)) /atob\\('${payload}'\\)/.test(input);`,
+    `async function consume(xs) { for await (const x of xs) /atob\\('${payload}'\\)/.test(x); }`,
+    `while (true) { break\n/atob\\('${payload}'\\)/.test(input); }`,
+    `\\u0061tob('${payload}');`,
+    `const expression = \`\${atob('${payload}')}\`;`
   ].join('\n'))]);
-  assert.equal(syntaxVariants.candidates, 3);
-  assert.equal(syntaxVariants.decodedCount, 3);
+  assert.equal(syntaxVariants.candidates, 7);
+  assert.equal(syntaxVariants.decodedCount, 7);
+  const incompleteCall = extractEncodedPayloads([
+    source(`atob('${payload}',`)
+  ]);
+  assert.equal(incompleteCall.candidates, 1);
+  assert.equal(incompleteCall.decodedCount, 0);
 
   const browserHtml = [
     `<script>const marker = "</scripty>"; atob('${payload}')</script>`,
     `<button onclick="atob(&quot;${payload}&quot;)">quoted</button>`,
     `<button onclick="&#97;tob('${payload}')">numeric</button>`,
     `<script type="text&#x2f;javascript">atob('${payload}')</script>`,
-    `<script>${'İ'.repeat(80)}</script><script>atob('${payload}')</script>`
+    `<script>${'İ'.repeat(80)}</script><script>atob('${payload}')</script>`,
+    `<script>const marker = "</script\u00a0x>"; atob('${payload}')</script>`,
+    `<script type="module;garbage">atob('${payload}')</script>`
   ].join('\n');
   const browserHtmlResult = extractEncodedPayloads([source(browserHtml, 'browser.html')]);
-  assert.equal(browserHtmlResult.candidates, 5);
-  assert.equal(browserHtmlResult.decodedCount, 5);
-  assert.deepEqual(browserHtmlResult.entries.map((entry) => entry.encodedLine), [1, 2, 3, 4, 5]);
+  assert.equal(browserHtmlResult.candidates, 6);
+  assert.equal(browserHtmlResult.decodedCount, 6);
+  assert.deepEqual(browserHtmlResult.entries.map((entry) => entry.encodedLine), [1, 2, 3, 4, 5, 6]);
 });
 
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
@@ -280,6 +293,13 @@ test('malformed literal attempts consume fixed budgets without repeated rescans'
   const overlapMilliseconds = Number(process.hrtime.bigint() - overlapStarted) / 1e6;
   assert.equal(overlapResult.candidates, 10_000);
   assert.ok(overlapMilliseconds < 2_000, `overlap scan took ${overlapMilliseconds}ms`);
+
+  const unmatchedRegexes = source('/[ '.repeat(8_000));
+  const regexStarted = process.hrtime.bigint();
+  const regexResult = extractEncodedPayloads([unmatchedRegexes]);
+  const regexMilliseconds = Number(process.hrtime.bigint() - regexStarted) / 1e6;
+  assert.equal(regexResult.candidates, 0);
+  assert.ok(regexMilliseconds < 2_000, `unmatched regex scan took ${regexMilliseconds}ms`);
 });
 
 test('all ECMAScript line terminators preserve encoded and decoded provenance', async (t) => {

@@ -31,8 +31,8 @@ and [MV3 overview](https://developer.chrome.com/docs/extensions/develop/migrate/
 
 ## Quick start
 
-Requirements: Node.js 20 or newer. There are no runtime dependencies and no
-browser download.
+Requirements: Node.js 20 or newer. The single runtime dependency is the exact,
+lockfile-integrity-bound Acorn parser; no browser is downloaded.
 
 ```bash
 git clone https://github.com/hyj28/mvx-audit.git
@@ -137,7 +137,7 @@ development.
   messaging, keystroke observation, cookie enumeration, insecure transport,
   downloads, clipboard reads, and unvalidated privileged message bridges.
 - Bounded static extraction of direct literal Base64 `atob` payloads, with
-  token-aware executable-context filtering, recursive UTF-8 rescanning by
+  syntax-valid ECMAScript/HTML executable-context filtering, recursive UTF-8 rescanning by
   built-in and analyst-supplied rules, exact decoded-byte hashes, hash-only
   decoded evidence, original/decoded line provenance, and no code execution.
 - Remote iframe-based extension UI and sensitive capability delegation to
