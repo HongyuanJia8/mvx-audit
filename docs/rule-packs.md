@@ -67,7 +67,9 @@ JSON files as built-in source analysis, plus strict UTF-8 text recovered by the
 bounded direct-literal `atob` decoder. Decoded matches retain the packaged file
 and encoding line, decoded line, payload depth, parent/payload SHA-256, and
 decoder profile rather than inventing a virtual package path. Manifest scope is
-the raw decoded `manifest.json` text. One text evidence item is retained per
+the raw decoded `manifest.json` text. Decoded evidence snippets contain only a
+match label, decoded line, and payload SHA-256; decoded line content is not
+copied into reports. One text evidence item is retained per
 indicator, file, line, and decoded payload; path and hash evidence is retained
 per matching file. A package hash uses package-level evidence without inventing
 a filesystem location. Exceeding the global raw-match limit fails the audit

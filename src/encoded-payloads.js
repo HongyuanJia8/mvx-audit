@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { MvxError } from './errors.js';
 import { createFinding, REFERENCES } from './model.js';
 import { assertOptionsObject } from './options.js';
+import { lineAt, lineStarts } from './text-locations.js';
 
 export const ENCODED_PAYLOAD_PROFILE = 'mvx-encoded-payloads-v1';
 export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
@@ -16,8 +17,16 @@ export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
 });
 
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
-const ASCII_SPACE = /[\t\n\r ]/;
+const IDENTIFIER_START = /[$_\p{ID_Start}]/u;
 const IDENTIFIER_CONTINUE = /[$\u200c\u200d\p{ID_Continue}]/u;
+const REGEX_PREFIX_KEYWORDS = new Set([
+  'await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'return',
+  'throw', 'typeof', 'void', 'yield'
+]);
+const JAVASCRIPT_TYPES = new Set([
+  'application/ecmascript', 'application/javascript', 'module',
+  'text/ecmascript', 'text/javascript'
+]);
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -25,23 +34,6 @@ function sha256(value) {
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function supportedAtobReference(content, index) {
-  const previous = content[index - 1];
-  let dot = index - 1;
-  while (ASCII_SPACE.test(content[dot] ?? '')) dot -= 1;
-  if (content[dot] === '.') {
-    let cursor = dot - 1;
-    while (ASCII_SPACE.test(content[cursor] ?? '')) cursor -= 1;
-    const end = cursor + 1;
-    while (/[A-Za-z]/.test(content[cursor] ?? '')) cursor -= 1;
-    const qualifier = content.slice(cursor + 1, end);
-    return ['globalThis', 'self', 'window'].includes(qualifier)
-      && !IDENTIFIER_CONTINUE.test(content[cursor] ?? '');
-  }
-  if (ASCII_SPACE.test(previous ?? '')) return true;
-  return previous === undefined || !IDENTIFIER_CONTINUE.test(previous);
 }
 
 function normalizeLimits(options) {
@@ -68,53 +60,317 @@ function normalizeLimits(options) {
   return Object.freeze(limits);
 }
 
-function* directAtobLiterals(content) {
-  const pattern = /atob/g;
-  let line = 1;
-  let lineCursor = 0;
-  for (const match of content.matchAll(pattern)) {
-    if (!supportedAtobReference(content, match.index)
-      || IDENTIFIER_CONTINUE.test(content[match.index + match[0].length] ?? '')) continue;
-    for (let newline = content.indexOf('\n', lineCursor);
-      newline !== -1 && newline < match.index;
-      newline = content.indexOf('\n', lineCursor)) {
-      line += 1;
-      lineCursor = newline + 1;
-    }
-    let cursor = match.index + match[0].length;
-    while (ASCII_SPACE.test(content[cursor] ?? '')) cursor += 1;
-    if (content[cursor++] !== '(') continue;
-    while (ASCII_SPACE.test(content[cursor] ?? '')) cursor += 1;
-    const quote = content[cursor];
-    if (quote !== "'" && quote !== '"') continue;
-    const valueStart = ++cursor;
-    let escaped = false;
-    let closed = false;
-    while (cursor < content.length) {
-      const character = content[cursor];
-      if (character === '\n' || character === '\r'
-        || character === '\u2028' || character === '\u2029') break;
-      if (character === '\\') {
-        escaped = true;
-        cursor += 2;
-        continue;
-      }
-      if (character === quote) {
-        closed = true;
-        break;
-      }
-      cursor += 1;
-    }
-    if (!closed) continue;
-    const valueEnd = cursor++;
-    while (ASCII_SPACE.test(content[cursor] ?? '')) cursor += 1;
-    if (content[cursor] !== ')') continue;
-    yield {
-      encoded: content.slice(valueStart, valueEnd),
-      escaped,
-      line
-    };
+function isLineTerminator(character) {
+  return character === '\r' || character === '\n'
+    || character === '\u2028' || character === '\u2029';
+}
+
+function isSpace(character) {
+  return character === ' ' || character === '\t' || character === '\v'
+    || character === '\f' || character === '\u00a0' || isLineTerminator(character);
+}
+
+function codePoint(content, index) {
+  const point = content.codePointAt(index);
+  if (point === undefined) return null;
+  return { character: String.fromCodePoint(point), width: point > 0xffff ? 2 : 1 };
+}
+
+function identifierAt(content, index) {
+  const first = codePoint(content, index);
+  if (!first || !IDENTIFIER_START.test(first.character)) return null;
+  let cursor = index + first.width;
+  while (cursor < content.length) {
+    const next = codePoint(content, cursor);
+    if (!next || !IDENTIFIER_CONTINUE.test(next.character)) break;
+    cursor += next.width;
   }
+  return { value: content.slice(index, cursor), end: cursor };
+}
+
+function skipLineRemainder(content, index) {
+  let cursor = index;
+  while (cursor < content.length && !isLineTerminator(content[cursor])) cursor += 1;
+  return cursor;
+}
+
+function skipLineComment(content, index) {
+  return skipLineRemainder(content, index + 2);
+}
+
+function skipBlockComment(content, index) {
+  const close = content.indexOf('*/', index + 2);
+  return close === -1 ? content.length : close + 2;
+}
+
+function skipTrivia(content, index, end) {
+  let cursor = index;
+  while (cursor < end) {
+    if (isSpace(content[cursor])) {
+      cursor += 1;
+    } else if (content.startsWith('//', cursor)) {
+      cursor = Math.min(skipLineComment(content, cursor), end);
+    } else if (content.startsWith('/*', cursor)) {
+      cursor = Math.min(skipBlockComment(content, cursor), end);
+    } else break;
+  }
+  return Math.min(cursor, end);
+}
+
+function skipQuoted(content, index, quote, end) {
+  let cursor = index + 1;
+  while (cursor < end) {
+    const character = content[cursor];
+    if (character === '\\') cursor = Math.min(cursor + 2, end);
+    else if (character === quote) return cursor + 1;
+    else if (isLineTerminator(character) && quote !== '`') return cursor;
+    else cursor += 1;
+  }
+  return cursor;
+}
+
+function skipRegex(content, index, end) {
+  let cursor = index + 1;
+  let inClass = false;
+  while (cursor < end) {
+    const character = content[cursor];
+    if (character === '\\') cursor = Math.min(cursor + 2, end);
+    else if (isLineTerminator(character)) return cursor;
+    else if (character === '[') { inClass = true; cursor += 1; }
+    else if (character === ']') { inClass = false; cursor += 1; }
+    else if (character === '/' && !inClass) {
+      cursor += 1;
+      while (cursor < end && identifierAt(content, cursor)) {
+        cursor = identifierAt(content, cursor).end;
+      }
+      return cursor;
+    } else cursor += 1;
+  }
+  return cursor;
+}
+
+function supportedReference(tokens) {
+  const previous = tokens.at(-1);
+  if (previous?.value !== '.') return true;
+  return ['globalThis', 'self', 'window'].includes(tokens.at(-2)?.value);
+}
+
+function startAttempt(budget, limits) {
+  budget.candidates += 1;
+  if (budget.candidates > limits.maxCandidates) {
+    throw new MvxError(`Encoded-payload candidates exceed ${limits.maxCandidates}`, {
+      code: 'ENCODED_PAYLOAD_LIMIT'
+    });
+  }
+}
+
+function checkAttemptCharacters(budget, limits, characters) {
+  if (characters > limits.maxEncodedChars) {
+    throw new MvxError(`Encoded payload exceeds ${limits.maxEncodedChars} characters`, {
+      code: 'ENCODED_PAYLOAD_LIMIT'
+    });
+  }
+  if (budget.candidateEncodedChars + characters > limits.maxTotalEncodedChars) {
+    throw new MvxError(`Encoded-payload candidate characters exceed ${limits.maxTotalEncodedChars}`, {
+      code: 'ENCODED_PAYLOAD_LIMIT'
+    });
+  }
+}
+
+function parseAtobLiteral(content, tokenEnd, end, budget, limits) {
+  let cursor = skipTrivia(content, tokenEnd, end);
+  if (content[cursor] !== '(') return null;
+  cursor = skipTrivia(content, cursor + 1, end);
+  const quote = content[cursor];
+  if (quote !== "'" && quote !== '"') return null;
+  startAttempt(budget, limits);
+  const valueStart = cursor + 1;
+  cursor = valueStart;
+  let escaped = false;
+  while (cursor < end && content[cursor] !== quote && !isLineTerminator(content[cursor])) {
+    if (content[cursor] === '\\') {
+      escaped = true;
+      cursor += 1;
+      if (cursor < end) cursor += 1;
+    } else cursor += 1;
+    checkAttemptCharacters(budget, limits, cursor - valueStart);
+  }
+  const characters = cursor - valueStart;
+  checkAttemptCharacters(budget, limits, characters);
+  budget.candidateEncodedChars += characters;
+  if (cursor >= end || content[cursor] !== quote) return { end: cursor };
+  const valueEnd = cursor;
+  cursor = skipTrivia(content, cursor + 1, end);
+  if (content[cursor] !== ')') return { end: cursor };
+  return {
+    end: cursor + 1,
+    candidate: { encoded: content.slice(valueStart, valueEnd), escaped }
+  };
+}
+
+function* javascriptAtobLiterals(content, start, end, starts, budget, limits) {
+  let cursor = start;
+  let canStartRegex = true;
+  const tokens = [];
+  const remember = (token) => {
+    tokens.push(token);
+    if (tokens.length > 3) tokens.shift();
+  };
+  while (cursor < end) {
+    const character = content[cursor];
+    if (isSpace(character)) { cursor += 1; continue; }
+    if (content.startsWith('<!--', cursor) || content.startsWith('-->', cursor)) {
+      cursor = Math.min(skipLineRemainder(content, cursor + 3), end);
+      continue;
+    }
+    if (content.startsWith('//', cursor)) {
+      cursor = Math.min(skipLineComment(content, cursor), end);
+      continue;
+    }
+    if (content.startsWith('/*', cursor)) {
+      cursor = Math.min(skipBlockComment(content, cursor), end);
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      cursor = skipQuoted(content, cursor, character, end);
+      remember({ type: 'atom', value: character });
+      canStartRegex = false;
+      continue;
+    }
+    if (character === '/' && canStartRegex) {
+      cursor = skipRegex(content, cursor, end);
+      remember({ type: 'atom', value: 'regex' });
+      canStartRegex = false;
+      continue;
+    }
+    const identifier = identifierAt(content, cursor);
+    if (identifier) {
+      if (identifier.value === 'atob' && supportedReference(tokens)) {
+        const parsed = parseAtobLiteral(content, identifier.end, end, budget, limits);
+        if (parsed) {
+          if (parsed.candidate) yield {
+            ...parsed.candidate,
+            line: lineAt(starts, cursor)
+          };
+          cursor = Math.max(parsed.end, identifier.end);
+          remember({ type: 'atom', value: 'call' });
+          canStartRegex = false;
+          continue;
+        }
+      }
+      remember({ type: 'identifier', value: identifier.value });
+      canStartRegex = REGEX_PREFIX_KEYWORDS.has(identifier.value);
+      cursor = identifier.end;
+      continue;
+    }
+    if (/[0-9]/.test(character)) {
+      cursor += 1;
+      while (cursor < end && /[0-9A-Fa-f_xXobOBn.eE]/.test(content[cursor])) cursor += 1;
+      remember({ type: 'atom', value: 'number' });
+      canStartRegex = false;
+      continue;
+    }
+    remember({ type: 'punctuator', value: character });
+    canStartRegex = ![')', ']', '}'].includes(character) && character !== '.';
+    cursor += 1;
+  }
+}
+
+function parseTag(content, start, end) {
+  let cursor = start + 1;
+  let closing = false;
+  if (content[cursor] === '/') { closing = true; cursor += 1; }
+  while (isSpace(content[cursor])) cursor += 1;
+  const nameStart = cursor;
+  while (/[A-Za-z0-9:-]/.test(content[cursor] ?? '')) cursor += 1;
+  if (cursor === nameStart) return null;
+  const name = content.slice(nameStart, cursor).toLowerCase();
+  const attributes = [];
+  while (cursor < end) {
+    while (isSpace(content[cursor])) cursor += 1;
+    if (content[cursor] === '>') return { name, closing, attributes, end: cursor + 1 };
+    if (content[cursor] === '/' && content[cursor + 1] === '>') {
+      return { name, closing, attributes, end: cursor + 2 };
+    }
+    const attributeStart = cursor;
+    while (cursor < end && !isSpace(content[cursor])
+      && !['=', '>', '/'].includes(content[cursor])) cursor += 1;
+    if (cursor === attributeStart) { cursor += 1; continue; }
+    const attribute = { name: content.slice(attributeStart, cursor).toLowerCase() };
+    while (isSpace(content[cursor])) cursor += 1;
+    if (content[cursor] === '=') {
+      cursor += 1;
+      while (isSpace(content[cursor])) cursor += 1;
+      const quote = content[cursor];
+      if (quote === "'" || quote === '"') {
+        attribute.valueStart = cursor + 1;
+        const close = content.indexOf(quote, attribute.valueStart);
+        attribute.valueEnd = close === -1 || close >= end ? end : close;
+        cursor = close === -1 || close >= end ? end : close + 1;
+      } else {
+        attribute.valueStart = cursor;
+        while (cursor < end && !isSpace(content[cursor]) && content[cursor] !== '>') cursor += 1;
+        attribute.valueEnd = cursor;
+      }
+      attribute.value = content.slice(attribute.valueStart, attribute.valueEnd);
+    }
+    attributes.push(attribute);
+  }
+  return null;
+}
+
+function executableScript(tag) {
+  if (tag.attributes.some((attribute) => attribute.name === 'src')) return false;
+  const type = tag.attributes.find((attribute) => attribute.name === 'type')?.value;
+  if (type === undefined || type.trim() === '') return true;
+  const normalized = type.trim().toLowerCase().split(';', 1)[0];
+  return JAVASCRIPT_TYPES.has(normalized)
+    || normalized.endsWith('+javascript') || normalized.endsWith('+ecmascript');
+}
+
+function* htmlAtobLiterals(content, starts, budget, limits) {
+  const lower = content.toLowerCase();
+  let cursor = 0;
+  while (cursor < content.length) {
+    const open = content.indexOf('<', cursor);
+    if (open === -1) return;
+    if (content.startsWith('<!--', open)) {
+      const close = content.indexOf('-->', open + 4);
+      cursor = close === -1 ? content.length : close + 3;
+      continue;
+    }
+    const tag = parseTag(content, open, content.length);
+    if (!tag) { cursor = open + 1; continue; }
+    if (!tag.closing) {
+      for (const attribute of tag.attributes) {
+        if (/^on[a-z]/.test(attribute.name) && attribute.valueStart !== undefined) {
+          yield* javascriptAtobLiterals(
+            content, attribute.valueStart, attribute.valueEnd, starts, budget, limits
+          );
+        }
+      }
+    }
+    if (!tag.closing && tag.name === 'script') {
+      const close = lower.indexOf('</script', tag.end);
+      const bodyEnd = close === -1 ? content.length : close;
+      if (executableScript(tag)) {
+        yield* javascriptAtobLiterals(content, tag.end, bodyEnd, starts, budget, limits);
+      }
+      if (close === -1) return;
+      const closingTag = parseTag(content, close, content.length);
+      cursor = closingTag?.end ?? close + 2;
+    } else cursor = tag.end;
+  }
+}
+
+function directAtobLiterals(source, budget, limits) {
+  const starts = lineStarts(source.content);
+  if (/\.html?$/i.test(source.path) && source.depth === 0) {
+    return htmlAtobLiterals(source.content, starts, budget, limits);
+  }
+  return javascriptAtobLiterals(
+    source.content, 0, source.content.length, starts, budget, limits
+  );
 }
 
 function normalizeBase64(source) {
@@ -157,39 +413,16 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
   }));
   const decodedSources = [];
   const entries = [];
-  let candidates = 0;
-  let candidateEncodedChars = 0;
+  const candidateBudget = { candidates: 0, candidateEncodedChars: 0 };
   let totalDecodedBytes = 0;
 
   for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
     const source = queue[queueIndex];
     if (source.depth >= limits.maxDepth) continue;
-    for (const candidate of directAtobLiterals(source.content)) {
-      candidates += 1;
-      if (candidates > limits.maxCandidates) {
-        throw new MvxError(`Encoded-payload candidates exceed ${limits.maxCandidates}`, {
-          code: 'ENCODED_PAYLOAD_LIMIT'
-        });
-      }
+    for (const candidate of directAtobLiterals(source, candidateBudget, limits)) {
       if (candidate.escaped) continue;
-      if (candidate.encoded.length > limits.maxEncodedChars) {
-        throw new MvxError(`Encoded payload exceeds ${limits.maxEncodedChars} characters`, {
-          code: 'ENCODED_PAYLOAD_LIMIT'
-        });
-      }
       const compact = normalizeBase64(candidate.encoded);
       if (!compact) continue;
-      if (compact.length > limits.maxEncodedChars) {
-        throw new MvxError(`Encoded payload exceeds ${limits.maxEncodedChars} characters`, {
-          code: 'ENCODED_PAYLOAD_LIMIT'
-        });
-      }
-      if (candidateEncodedChars + compact.length > limits.maxTotalEncodedChars) {
-        throw new MvxError(`Encoded-payload candidate characters exceed ${limits.maxTotalEncodedChars}`, {
-          code: 'ENCODED_PAYLOAD_LIMIT'
-        });
-      }
-      candidateEncodedChars += compact.length;
       if (decodedLength(compact) > limits.maxDecodedBytes) {
         throw new MvxError(`Decoded payload exceeds ${limits.maxDecodedBytes} bytes`, {
           code: 'ENCODED_PAYLOAD_LIMIT'
@@ -260,8 +493,8 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
   const identity = Object.freeze({
     profile: ENCODED_PAYLOAD_PROFILE,
     limits,
-    candidates,
-    candidateEncodedChars,
+    candidates: candidateBudget.candidates,
+    candidateEncodedChars: candidateBudget.candidateEncodedChars,
     entries: frozenEntries
   });
   return Object.freeze({
@@ -280,9 +513,9 @@ export function analyzeEncodedPayloads(inventory) {
     id: 'MVX213',
     title: 'Direct literal Base64 decoding pattern',
     severity: 'medium',
-    confidence: 'high',
+    confidence: 'medium',
     category: 'obfuscation',
-    description: 'Source contains a direct atob-call pattern with a packaged Base64 literal. Encoded content increases review cost and can conceal executable behavior.',
+    description: 'An executable source context contains a syntactic atob-call pattern with a packaged Base64 literal. Static analysis does not prove which runtime binding receives the call. Encoded content increases review cost and can conceal executable behavior.',
     remediation: 'Store reviewable packaged source or data directly, document any required encoding, and avoid passing decoded text to executable sinks.',
     references: [REFERENCES.security, REFERENCES.remoteCode]
   }, inventory.entries.map((entry) => ({

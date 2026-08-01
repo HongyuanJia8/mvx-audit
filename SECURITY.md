@@ -36,17 +36,24 @@ trusted intelligence: operators remain responsible for its source, license,
 expiry, integrity, and conclusions.
 
 Encoded-payload analysis is static and never calls `eval`, `Function`, `atob`,
-or extension code. It recognizes only direct, unescaped Base64 string literals
-passed to the global `atob` function or its `window`, `self`, or `globalThis`
-forms in executable JS/HTML source, validates canonical decoded bytes, and
-rescans only strict UTF-8 text. JSON data is never treated as executable.
+or extension code. A token-aware scanner recognizes direct, unescaped Base64
+string literals in syntactic calls to bare `atob` or the `window`, `self`, and
+`globalThis` member forms. It skips JavaScript comments and literal text, and
+in HTML scans only executable script bodies and event-handler attributes.
+This syntax does not prove the runtime binding of a bare or member call, so the
+finding has medium confidence. Canonical decoded bytes are validated and only
+strict UTF-8 text is rescanned. JSON data is never treated as executable.
+Built-in findings supported only by decoded text are capped at medium
+confidence because binding and runtime reachability were not established.
 Binary payloads remain hash-only evidence. Candidate calls, payload count,
-per-payload and aggregate encoded characters, per-payload and aggregate decoded
+per-attempt and aggregate inspected literal characters, per-payload and aggregate decoded
 bytes, minimum payload size, and recursive depth are fixed, recorded limits;
-exceeding a safety bound fails closed. Decoded text is not written to disk or
-copied into the inventory.
+malformed and incomplete literal attempts consume the same work budgets, and
+exceeding a safety bound fails closed. Decoded text is not copied into reports
+or the inventory; decoded matches retain hash-only snippets.
 Findings map back to the packaged source line and retain decoded-line and
-content-hash provenance. This is review assistance, not a claim that encoded
+content-hash provenance. Line provenance recognizes CRLF, CR, LF, U+2028, and
+U+2029 terminators. This is review assistance, not a claim that encoded
 content is malicious or that other obfuscation was recovered.
 
 The optional sample fetcher writes live CRX files only after explicit risk

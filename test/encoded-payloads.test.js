@@ -9,7 +9,8 @@ import { runCli } from '../src/cli.js';
 import { compareExtensions } from '../src/compare.js';
 import { verifyComparisonReport } from '../src/comparison-verification.js';
 import {
-  ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PROFILE, extractEncodedPayloads
+  analyzeEncodedPayloads, ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PROFILE,
+  extractEncodedPayloads
 } from '../src/encoded-payloads.js';
 import {
   ENCODED_PAYLOAD_LIMITS as PUBLIC_ENCODED_PAYLOAD_LIMITS,
@@ -71,6 +72,7 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
   assert.deepEqual(result.findings.map((finding) => finding.id), ['MVX201', 'MVX213']);
 
   const decodedFinding = result.findings.find((finding) => finding.id === 'MVX201');
+  assert.equal(decodedFinding.confidence, 'medium');
   assert.deepEqual(decodedFinding.evidence[0], {
     file: 'worker.js',
     line: 1,
@@ -84,7 +86,7 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
       parentSha256: result.analysis.sources[0].sha256,
       sha256: result.encodedPayloads.entries[0].sha256
     },
-    snippet: 'eval(secretPayload);\\u001b[31m\\u202e'
+    snippet: `decoded match at line 1; SHA-256 ${result.encodedPayloads.entries[0].sha256}`
   });
   const text = auditToText(result);
   assert.match(text, /Encoded payloads \(mvx-encoded-payloads-v1\): 1 decoded/);
@@ -94,6 +96,7 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
   ));
   assert.equal(text.includes('\u001b'), false);
   assert.equal(JSON.stringify(result).includes('\u202e'), false);
+  assert.equal(JSON.stringify(result).includes('eval(secretPayload)'), false);
   const sarif = auditToSarif(result);
   assert.deepEqual(sarif.runs[0].properties.encodedPayloads, result.encodedPayloads);
   const decodedSarif = sarif.runs[0].results.find((item) => item.ruleId === 'MVX201');
@@ -187,6 +190,85 @@ test('binary payloads remain hashed evidence while malformed, dynamic, escaped, 
     `globalThis\n.\n atob('${base64('global payload data')}')`
   ].join(';\n'))]);
   assert.equal(globalForms.decodedCount, 3);
+});
+
+test('token-aware extraction excludes non-executable text and preserves syntactic confidence', () => {
+  const payload = base64('eval(hiddenPayload);');
+  const javascript = [
+    `// atob('${payload}')`,
+    `/* atob('${payload}') */`,
+    `const single = "atob('${payload}')";`,
+    `const template = \`atob('${payload}')\`;`,
+    `const pattern = /atob\\('${payload}'\\)/;`,
+    `<!-- atob('${payload}')`,
+    `--> atob('${payload}')`,
+    `const astral = 𐐀atob('${payload}');`,
+    `function shadowed(atob) { return atob('${payload}'); }`
+  ].join('\n');
+  const result = extractEncodedPayloads([source(javascript)]);
+  assert.equal(result.candidates, 1);
+  assert.equal(result.decodedCount, 1);
+  const finding = analyzeEncodedPayloads(result)[0];
+  assert.equal(finding.confidence, 'medium');
+  assert.match(finding.description, /does not prove which runtime binding/);
+
+  const html = [
+    '<!-- <script>atob(\'' + payload + '\')</script> -->',
+    '<div data-example="atob(\'' + payload + '\')"></div>',
+    '<script type="application/json">"atob(\'' + payload + '\')"</script>',
+    '<script src="packaged.js">atob(\'' + payload + '\')</script>',
+    '<script>const value = atob(\'' + payload + '\');</script>',
+    '<button onclick="atob(\'' + payload + '\')">run</button>'
+  ].join('\n');
+  const htmlResult = extractEncodedPayloads([source(html, 'page.html')]);
+  assert.equal(htmlResult.candidates, 2);
+  assert.equal(htmlResult.decodedCount, 2);
+  assert.deepEqual(htmlResult.entries.map((entry) => entry.encodedLine), [5, 6]);
+});
+
+test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
+  const twoIncompleteLines = source("atob('unterminated\natob('unterminated");
+  assert.throws(
+    () => extractEncodedPayloads([twoIncompleteLines], { maxCandidates: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /candidates/.test(error.message)
+  );
+  const oversizedIncomplete = source(`atob('${'x'.repeat(128)}`);
+  assert.throws(
+    () => extractEncodedPayloads([oversizedIncomplete], { maxTotalEncodedChars: 64 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /candidate characters/.test(error.message)
+  );
+  const manyMalformedTokens = source('atob('.repeat(100_000));
+  const started = process.hrtime.bigint();
+  const result = extractEncodedPayloads([manyMalformedTokens]);
+  const elapsedMilliseconds = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.equal(result.candidates, 0);
+  assert.ok(elapsedMilliseconds < 2_000, `single-pass scan took ${elapsedMilliseconds}ms`);
+
+  const overlapping = source("atob('".repeat(20_000));
+  assert.throws(
+    () => extractEncodedPayloads([overlapping], { maxCandidates: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /candidates/.test(error.message)
+  );
+  const overlapStarted = process.hrtime.bigint();
+  const overlapResult = extractEncodedPayloads([overlapping], { maxCandidates: 20_000 });
+  const overlapMilliseconds = Number(process.hrtime.bigint() - overlapStarted) / 1e6;
+  assert.equal(overlapResult.candidates, 10_000);
+  assert.ok(overlapMilliseconds < 2_000, `overlap scan took ${overlapMilliseconds}ms`);
+});
+
+test('all ECMAScript line terminators preserve encoded and decoded provenance', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-encoded-lines-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const hidden = ['first', 'eval(lineTwoPayload);'].join('\r');
+  const separators = ['\r\n', '\r', '\n', '\u2028', '\u2029'];
+  await writeExtension(temp, {
+    manifest_version: 3, name: 'Encoded line fixture', version: '1.0.0'
+  }, { 'worker.js': `${separators.map((separator) => `void 0;${separator}`).join('')}atob('${base64(hidden)}');` });
+  const result = await auditExtension(temp);
+  assert.equal(result.encodedPayloads.entries[0].encodedLine, 6);
+  const finding = result.findings.find((item) => item.id === 'MVX201');
+  assert.equal(finding.evidence[0].line, 6);
+  assert.equal(finding.evidence[0].decodedLine, 2);
 });
 
 test('JSON data is not misclassified as executable runtime decoding', async (t) => {

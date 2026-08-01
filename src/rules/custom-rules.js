@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { MvxError } from '../errors.js';
 import { createFinding } from '../model.js';
+import { lineAt, lineSnippet, lineStarts } from '../text-locations.js';
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -51,36 +52,6 @@ function buildAutomaton(patterns, foldAscii) {
 function characterAt(content, index, foldAscii) {
   const code = content.charCodeAt(index);
   return foldAscii && code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : content[index];
-}
-
-function lineStarts(content) {
-  const starts = [0];
-  for (let index = 0; index < content.length; index += 1) if (content[index] === '\n') starts.push(index + 1);
-  return starts;
-}
-
-function lineAt(starts, offset) {
-  let low = 0;
-  let high = starts.length;
-  while (low + 1 < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (starts[middle] <= offset) low = middle;
-    else high = middle;
-  }
-  return low + 1;
-}
-
-function lineSnippet(content, starts, line) {
-  const start = starts[line - 1];
-  const end = content.indexOf('\n', start);
-  return content.slice(start, end === -1 ? content.length : end).trim().slice(0, 240);
-}
-
-const UNSAFE_SNIPPET = /[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u2028-\u202e\u2066-\u2069]/g;
-
-function safeDecodedSnippet(value) {
-  return value.replace(UNSAFE_SNIPPET, (character) =>
-    `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 function textScopeMatches(scope, kind) {
@@ -142,7 +113,7 @@ export function analyzeCustomRules(snapshot, prepared) {
           if (textFile.decodedFrom) {
             evidence.decodedLine = decodedLine;
             evidence.decodedFrom = textFile.decodedFrom;
-            evidence.snippet = safeDecodedSnippet(evidence.snippet);
+            evidence.snippet = `decoded indicator match at line ${decodedLine}; SHA-256 ${textFile.decodedFrom.sha256}`;
           }
           record(output.stateIndex, output.indicatorIndex, evidence,
             `${textFile.file}\0${textFile.decodedFrom?.line ?? ''}`

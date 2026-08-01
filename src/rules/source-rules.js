@@ -1,4 +1,5 @@
 import { CONFIDENCE, REFERENCES, createFinding } from '../model.js';
+import { lineAt, lineSnippet, lineStarts } from '../text-locations.js';
 
 const RULES = [
   {
@@ -74,31 +75,22 @@ const RULES = [
 function locate(content, pattern) {
   const match = content.match(pattern);
   if (!match) return null;
-  const prefix = content.slice(0, match.index);
-  const line = prefix.split('\n').length;
-  const lineText = content.split('\n')[line - 1]?.trim() ?? match[0];
-  return { line, snippet: lineText.slice(0, 240) };
+  const starts = lineStarts(content);
+  const line = lineAt(starts, match.index);
+  return { line, snippet: lineSnippet(content, starts, line) || match[0] };
 }
 
 function locateAll(content, pattern) {
   const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
   const globalPattern = new RegExp(pattern.source, flags);
   const matches = [];
+  const starts = lineStarts(content);
   for (const match of content.matchAll(globalPattern)) {
-    const prefix = content.slice(0, match.index);
-    const line = prefix.split('\n').length;
-    const lineText = content.split('\n')[line - 1]?.trim() ?? match[0];
-    matches.push({ line, snippet: lineText.slice(0, 240) });
+    const line = lineAt(starts, match.index);
+    matches.push({ line, snippet: lineSnippet(content, starts, line) || match[0] });
     if (matches.length >= 20) break;
   }
   return matches;
-}
-
-const UNSAFE_SNIPPET = /[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u2028-\u202e\u2066-\u2069]/g;
-
-function safeDecodedSnippet(value) {
-  return value.replace(UNSAFE_SNIPPET, (character) =>
-    `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 function sourceEvidence(source, location) {
@@ -108,7 +100,7 @@ function sourceEvidence(source, location) {
     line: source.decodedFrom.line,
     decodedLine: location.line,
     decodedFrom: source.decodedFrom,
-    snippet: safeDecodedSnippet(location.snippet)
+    snippet: `decoded match at line ${location.line}; SHA-256 ${source.decodedFrom.sha256}`
   };
 }
 
@@ -122,7 +114,11 @@ export function analyzeSources(sources) {
       matches.push(...locations.map((location) => sourceEvidence(source, location)));
       if (matches.length >= 20) break;
     }
-    if (matches.length > 0) findings.push(createFinding(rule, matches.slice(0, 20)));
+    if (matches.length > 0) findings.push(createFinding(
+      rule,
+      matches.slice(0, 20),
+      matches.every((match) => match.decodedFrom) ? { confidence: CONFIDENCE.MEDIUM } : {}
+    ));
   }
 
   for (const source of executableSources) {

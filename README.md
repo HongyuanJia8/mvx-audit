@@ -137,8 +137,9 @@ development.
   messaging, keystroke observation, cookie enumeration, insecure transport,
   downloads, clipboard reads, and unvalidated privileged message bridges.
 - Bounded static extraction of direct literal Base64 `atob` payloads, with
-  recursive UTF-8 rescanning by built-in and analyst-supplied rules, exact
-  decoded-byte hashes, original/decoded line provenance, and no code execution.
+  token-aware executable-context filtering, recursive UTF-8 rescanning by
+  built-in and analyst-supplied rules, exact decoded-byte hashes, hash-only
+  decoded evidence, original/decoded line provenance, and no code execution.
 - Remote iframe-based extension UI and sensitive capability delegation to
   framed origins.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF

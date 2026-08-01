@@ -331,24 +331,32 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
   rules, 5,000 indicators, 1 MB total literal bytes, and 10,000 matches. See
   [declarative rule packs](rule-packs.md) for the complete limits.
-- In executable JS/HTML source, direct literal Base64 calls to global `atob`,
-  `window.atob`, `self.atob`, or `globalThis.atob` are decoded without
-  executing JavaScript. Only unescaped, canonical Base64 literals of at least
-  16 decoded bytes are inventoried.
+- In executable JS/HTML contexts, a token-aware scanner finds syntactic direct
+  literal Base64 calls to bare `atob`, `window.atob`, `self.atob`, or
+  `globalThis.atob` without executing JavaScript. Comments and literal text are
+  skipped; HTML analysis is limited to executable script bodies and event
+  handlers. The scanner does not resolve runtime bindings, so this is a medium-
+  confidence syntax signal. Only unescaped, canonical Base64 literals of at
+  least 16 decoded bytes are inventoried.
   Defaults allow 4,096 candidate calls, 128 decoded payloads, 1.5 million
-  encoded characters per payload, 8 million candidate characters in total,
+  inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
   recursive layers. Limit breaches fail with
   `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8 payloads are rescanned by built-in and
   declarative source rules; binary payloads retain byte length and SHA-256 but
-  are not interpreted. The decoded text is never persisted in the report.
+  are not interpreted. Malformed attempts consume the same bounded work budget.
+  Built-in findings supported only by decoded text are capped at medium
+  confidence because the scanner does not establish binding or reachability.
+  Decoded text and matching decoded line content are never persisted in the
+  report; evidence retains original/decoded line numbers and payload hashes.
 
 ## Known limitations
 
 - Pattern matching is intentionally explainable and can produce false positives
   or miss bundled, aliased, dynamically constructed, encrypted, escaped,
-  concatenated, non-Base64, or deeper-than-two-stage obfuscation. Direct
-  literal `atob` coverage is not general JavaScript deobfuscation.
+  concatenated, template-expression, non-Base64, or deeper-than-two-stage
+  obfuscation. It does not perform scope or binding resolution. Direct literal
+  `atob` coverage is not general JavaScript deobfuscation.
 - Permissions may be justified by product requirements that static input does
   not contain.
 - Data-flow, control-flow, publisher identity/authorization validation, and

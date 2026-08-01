@@ -8,10 +8,11 @@ versioning from the 2.0 reset onward.
 ### Added
 
 - Bounded, non-executing analysis of direct literal Base64 `atob` payloads,
-  including recursive strict-UTF-8 rescanning by built-in and declarative
-  rules, content-addressed inventory and evidence provenance, fail-closed
-  resource limits, SARIF/text/comparison reporting, offline-verification
-  replay, and the `mvx-static-v4` analysis identity.
+  including token-aware executable-context filtering, recursive strict-UTF-8
+  rescanning by built-in and declarative rules, content-addressed inventory and
+  hash-only decoded evidence, fail-closed attempt/work limits, SARIF/text/
+  comparison reporting, offline-verification replay, and the `mvx-static-v4`
+  analysis identity.
 - Independent identity-bound isolated-lab verification for exact report,
   package, analysis, scenario, event-stream, deterministic evaluation, seccomp,
   and container-image identities, with private inode/device-anchored extension
