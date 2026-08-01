@@ -941,6 +941,7 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
   );
   const unsupportedDtds = [
     ['parameter', '<!DOCTYPE svg [<!ENTITY % p "x">]><svg/>', /Parameter XML entities/],
+    ['raw-percent', '<!DOCTYPE svg [<!ENTITY a "safe % x; atob(&quot;payload&quot;)">]><svg onclick="&a;"/>', /Markup and parameter/],
     ['recursive', '<!DOCTYPE svg [<!ENTITY a "&a;">]><svg/>', /Recursive XML entity/],
     ['markup', '<!DOCTYPE svg [<!ENTITY a "<g/>">]><svg/>', /Markup and parameter/],
     ['default-attribute', '<!DOCTYPE svg [<!ATTLIST svg onclick CDATA #IMPLIED>]><svg/>', /Unsupported XML DTD/],
@@ -958,6 +959,11 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
       (error) => error.code === 'INVALID_INPUT' && message.test(error.message)
     );
   }
+  const numericPercent = extractEncodedPayloads([source(
+    '<!DOCTYPE svg [<!ENTITY percent "&#37;">]><svg><text>&percent;</text></svg>',
+    'numeric-percent.svg'
+  )]);
+  assert.equal(numericPercent.xmlEntityDeclarations, 1);
   const xml11 = extractEncodedPayloads([source(
     '<?xml version="1.1"?><!DOCTYPE svg [<!ENTITY a "&#1;">]>'
       + '<svg xmlns="http://www.w3.org/2000/svg"><text>&a;</text></svg>',

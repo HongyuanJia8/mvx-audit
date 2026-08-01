@@ -1051,7 +1051,7 @@ function parseXmlEntityDeclarations(doctype, remainingSource, version, budget, l
     const valueEnd = subset.indexOf(quote, valueStart);
     if (valueEnd < 0) throw invalidXmlDtd('Malformed XML entity declaration');
     const raw = subset.slice(valueStart, valueEnd);
-    if (raw.includes('<') || /%[A-Za-z_:][A-Za-z0-9_.:-]*;/.test(raw)) {
+    if (raw.includes('<') || raw.includes('%')) {
       throw invalidXmlDtd('Markup and parameter references in XML entities are unsupported');
     }
     cursor = valueEnd + 1;
