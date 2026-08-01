@@ -601,6 +601,15 @@ test('srcdoc and standalone SVG documents retain bounded executable contexts', a
   assert.equal(entities.xmlEntityDeclarations, 5);
   assert.equal(entities.xmlExpandedChars, 8 + `atob("${payload}")`.length * 5);
 
+  const xml11Newlines = extractEncodedPayloads([source(
+    '<?xml version="1.1"?>\n'
+      + '<svg xmlns="http://www.w3.org/2000/svg"><script>\u0085'
+      + `atob('${payload}')</script></svg>`,
+    'xml11-newlines.svg'
+  )]);
+  assert.equal(xml11Newlines.decodedCount, 1);
+  assert.equal(xml11Newlines.entries[0].encodedLine, 3);
+
   const malformed = extractEncodedPayloads([source(
     `<svg xmlns="http://www.w3.org/2000/svg"><script>atob('${payload}')</svg>`,
     'malformed.svg'

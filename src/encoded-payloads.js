@@ -741,7 +741,10 @@ const XML_ENTITIES = Object.freeze(Object.assign(Object.create(null), {
 
 function decodeXmlSourceRange(
   content, start, end,
-  { attribute = false, entities = true, entityValues = XML_ENTITIES } = {}
+  {
+    attribute = false, entities = true, entityValues = XML_ENTITIES,
+    version = '1.0'
+  } = {}
 ) {
   let decoded = '';
   const offsets = [];
@@ -751,7 +754,14 @@ function decodeXmlSourceRange(
     if (character === '\r') {
       decoded += attribute ? ' ' : '\n';
       offsets.push(cursor);
-      cursor += content[cursor + 1] === '\n' ? 2 : 1;
+      cursor += content[cursor + 1] === '\n'
+        || (version === '1.1' && content[cursor + 1] === '\u0085') ? 2 : 1;
+      continue;
+    }
+    if (version === '1.1' && (character === '\u0085' || character === '\u2028')) {
+      decoded += attribute ? ' ' : '\n';
+      offsets.push(cursor);
+      cursor += 1;
       continue;
     }
     if (attribute && (character === '\n' || character === '\t')) {
@@ -790,6 +800,22 @@ function decodeXmlSourceRange(
   }
   offsets.push(end);
   return { content: decoded, offsets };
+}
+
+function xmlLineStarts(content, version = '1.0') {
+  const starts = [0];
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index];
+    if (character === '\r') {
+      if (content[index + 1] === '\n'
+        || (version === '1.1' && content[index + 1] === '\u0085')) index += 1;
+      starts.push(index + 1);
+    } else if (character === '\n' || character === '\u2028' || character === '\u2029'
+      || (version === '1.1' && character === '\u0085')) {
+      starts.push(index + 1);
+    }
+  }
+  return starts;
 }
 
 function invalidXmlDtd(message) {
@@ -1003,7 +1029,7 @@ function joinDecodedParts(parts, fallbackOffset) {
   return { content, offsets };
 }
 
-function* svgDocumentAtobLiterals(content, starts, budget, limits) {
+function* svgDocumentAtobLiterals(content, budget, limits) {
   budget.htmlMaxDocumentDepth = Math.max(budget.htmlMaxDocumentDepth, 1);
   const chargeToken = () => {
     budget.htmlTokens += 1;
@@ -1039,6 +1065,7 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
   let syntaxError = false;
   let entityValues = XML_ENTITIES;
   let xmlVersion = '1.0';
+  let starts = xmlLineStarts(content);
   const chargeLeaf = () => {
     chargeToken();
     chargeNode();
@@ -1069,7 +1096,7 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
       });
     }
     const decoded = decodeXmlSourceRange(content, bounds.start, bounds.end, {
-      attribute: true, entityValues
+      attribute: true, entityValues, version: xmlVersion
     });
     if (decoded.content !== attribute.value) {
       throw new MvxError('XML attribute source mapping does not match the parser', {
@@ -1123,7 +1150,9 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
     const end = content[parser.position - 1] === '<'
       ? parser.position - 1 : parser.position;
     if (!syntaxError && elements.at(-1)?.script) {
-      const decoded = decodeXmlSourceRange(content, sourceCursor, end, { entityValues });
+      const decoded = decodeXmlSourceRange(content, sourceCursor, end, {
+        entityValues, version: xmlVersion
+      });
       if (decoded.content !== value) {
         throw new MvxError('XML text source mapping does not match the parser', {
           code: 'ENCODED_PAYLOAD_LIMIT'
@@ -1138,7 +1167,9 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
     const start = sourceCursor + 9;
     const end = parser.position - 3;
     if (!syntaxError && elements.at(-1)?.script) {
-      const decoded = decodeXmlSourceRange(content, start, end, { entities: false });
+      const decoded = decodeXmlSourceRange(content, start, end, {
+        entities: false, version: xmlVersion
+      });
       if (decoded.content !== value) {
         throw new MvxError('XML CDATA source mapping does not match the parser', {
           code: 'ENCODED_PAYLOAD_LIMIT'
@@ -1175,6 +1206,7 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
   parser.on('xmldecl', (declaration) => {
     chargeLeaf();
     xmlVersion = declaration.version ?? '1.0';
+    starts = xmlLineStarts(content, xmlVersion);
     sourceCursor = parser.position;
   });
   for (const event of ['comment', 'processinginstruction']) {
@@ -1202,7 +1234,7 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
 function directAtobLiterals(source, budget, limits) {
   const starts = lineStarts(source.content);
   if (/\.svg$/i.test(source.path) && source.depth === 0) {
-    return svgDocumentAtobLiterals(source.content, starts, budget, limits);
+    return svgDocumentAtobLiterals(source.content, budget, limits);
   }
   if (/\.html?$/i.test(source.path) && source.depth === 0) {
     return htmlAtobLiterals(source.content, starts, budget, limits);
