@@ -224,6 +224,11 @@ test('binary payloads remain hashed evidence while malformed, dynamic, escaped, 
     `globalThis\n.\n atob('${base64('global payload data')}')`
   ].join(';\n'))]);
   assert.equal(globalForms.decodedCount, 3);
+
+  const formFeed = extractEncodedPayloads([source(
+    `atob('${base64('form-feed payload!').replace(/^(.{5})/, '$1\f')}')`
+  )]);
+  assert.equal(formFeed.decodedCount, 1);
 });
 
 test('token-aware extraction excludes non-executable text and preserves syntactic confidence', () => {
@@ -473,12 +478,12 @@ test('HTML templates and tree-corrected root attributes retain executable locati
     `<template><button onclick="atob('${payload}')"></button></template>`,
     `<template><script>atob('${payload}')</script></template>`
   ].join('\n'), 'templates.html')]);
-  assert.equal(templates.candidates, 2);
-  assert.equal(templates.decodedCount, 2);
-  assert.deepEqual(templates.entries.map((entry) => entry.encodedLine), [1, 2]);
+  assert.equal(templates.candidates, 1);
+  assert.equal(templates.decodedCount, 1);
+  assert.deepEqual(templates.entries.map((entry) => entry.encodedLine), [1]);
 
   const mergedRoots = extractEncodedPayloads([source([
-    '<html><head></head><body><p>x</p>',
+    '<p>x</p>',
     `<body onclick="atob('${payload}')">`,
     `<html onclick="atob('${payload}')">`
   ].join('\n'), 'merged-roots.html')]);
@@ -519,12 +524,40 @@ test('SVG handlers, SMIL scope, and scripts follow SVG execution grammar', () =>
     `<svg><script src="ignored.js">atob('${payload}')</script></svg>`,
     `<svg><script for="document" event="onclick">atob('${payload}')</script></svg>`,
     `<svg><script>atob(&quot;${payload}&quot;)</script></svg>`,
+    `<svg><script><![CDATA[atob("${payload}")]]></script></svg>`,
     `<svg><script href="external.js">atob('${payload}')</script></svg>`,
     `<math><script>atob('${payload}')</script></math>`
   ].join('\n'), 'svg-scripts.html')]);
-  assert.equal(scripts.candidates, 5);
-  assert.equal(scripts.decodedCount, 5);
-  assert.deepEqual(scripts.entries.map((entry) => entry.encodedLine), [1, 2, 3, 4, 5]);
+  assert.equal(scripts.candidates, 6);
+  assert.equal(scripts.decodedCount, 6);
+  assert.deepEqual(scripts.entries.map((entry) => entry.encodedLine), [1, 2, 3, 4, 5, 6]);
+});
+
+test('srcdoc and standalone SVG documents retain bounded executable contexts', async (t) => {
+  const payload = base64('eval(documentPayload);xxxx');
+  const srcdoc = `&lt;script>atob(&quot;${payload}&quot;)&lt;/script>`;
+  const documents = extractEncodedPayloads([source([
+    '<p>outer</p>',
+    `<iframe srcdoc="${srcdoc}"></iframe>`,
+    `<iframe sandbox srcdoc="${srcdoc}"></iframe>`,
+    `<iframe sandbox="ALLOW-SCRIPTS" srcdoc="${srcdoc}"></iframe>`
+  ].join('\n'), 'documents.html')]);
+  assert.equal(documents.candidates, 2);
+  assert.equal(documents.decodedCount, 2);
+  assert.equal(documents.htmlMaxDocumentDepth, 2);
+  assert.ok(documents.htmlNestedChars > 0);
+  assert.deepEqual(documents.entries.map((entry) => entry.encodedLine), [2, 4]);
+
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-encoded-svg-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeExtension(temp, {
+    manifest_version: 3, name: 'SVG source fixture', version: '1.0.0'
+  }, {
+    'page.svg': `<svg xmlns="http://www.w3.org/2000/svg"><script>atob("${payload}")</script></svg>`
+  });
+  const result = await auditExtension(temp);
+  assert.equal(result.encodedPayloads.decodedCount, 1);
+  assert.equal(result.encodedPayloads.entries[0].path, 'page.svg');
 });
 
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
@@ -586,6 +619,38 @@ test('malformed literal attempts consume fixed budgets without repeated rescans'
   assert.ok(
     adversarialMilliseconds < 2_000,
     `adversarial HTML scan took ${adversarialMilliseconds}ms`
+  );
+
+  const mergedAttributes = source(
+    `<p>x</p>${Array.from({ length: 12_000 }, (_, index) =>
+      `<body x${index}>`).join('')}`,
+    'merged-attributes.html'
+  );
+  const mergedStarted = process.hrtime.bigint();
+  const mergedResult = extractEncodedPayloads([mergedAttributes]);
+  const mergedMilliseconds = Number(process.hrtime.bigint() - mergedStarted) / 1e6;
+  assert.equal(mergedResult.htmlAttributes, 12_000);
+  assert.ok(mergedResult.htmlTreeWork >= 12_000);
+  assert.ok(
+    mergedMilliseconds < 2_000,
+    `merged HTML attributes took ${mergedMilliseconds}ms`
+  );
+
+  const oversizedTag = source(
+    `<div ${Array.from({ length: 20_000 }, (_, index) => `x${index}`).join(' ')}>`,
+    'oversized-tag.html'
+  );
+  const oversizedTagStarted = process.hrtime.bigint();
+  assert.throws(
+    () => extractEncodedPayloads([oversizedTag]),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML attributes/.test(error.message)
+  );
+  const oversizedTagMilliseconds = Number(
+    process.hrtime.bigint() - oversizedTagStarted
+  ) / 1e6;
+  assert.ok(
+    oversizedTagMilliseconds < 2_000,
+    `oversized HTML tag took ${oversizedTagMilliseconds}ms`
   );
 });
 
@@ -693,12 +758,14 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
     extractEncodedPayloads([source('const o={x};')], { maxAstNodes: 8 }).astNodes,
     8
   );
-  const html = source('<div><span>text</span></div>', 'limits.html');
+  const html = source('<div id="x" class="y"><span>text</span></div>', 'limits.html');
   const htmlResult = extractEncodedPayloads([html]);
   assert.ok(htmlResult.htmlTokens > 0);
+  assert.ok(htmlResult.htmlAttributes > 0);
   assert.ok(htmlResult.htmlNodes > 0);
   assert.ok(htmlResult.htmlTreeWork > 0);
   assert.ok(htmlResult.htmlMaxDepth > 0);
+  assert.equal(htmlResult.htmlMaxDocumentDepth, 1);
   assert.throws(
     () => extractEncodedPayloads([html], { maxHtmlTokens: 1 }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML tokens/.test(error.message)
@@ -706,6 +773,10 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
   assert.throws(
     () => extractEncodedPayloads([html], { maxHtmlNodes: 1 }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML node/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([html], { maxHtmlAttributes: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML attributes/.test(error.message)
   );
   assert.throws(
     () => extractEncodedPayloads([
@@ -718,6 +789,18 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
       source('<div>'.repeat(16), 'work.html')
     ], { maxHtmlTreeDepth: 32, maxHtmlTreeWork: 16 }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /tree-construction work/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([source(
+      '<iframe srcdoc="&lt;p>nested&lt;/p>"></iframe>', 'document-depth.html'
+    )], { maxHtmlDocumentDepth: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML document depth/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([source(
+      '<iframe srcdoc="&lt;p>nested&lt;/p>"></iframe>', 'nested-size.html'
+    )], { maxNestedHtmlChars: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /Nested HTML/.test(error.message)
   );
   const deeplyNested = source(
     '['.repeat(3_000) + `atob('${base64('eval(deepPayload);xxxx')}')` + ']'.repeat(3_000)

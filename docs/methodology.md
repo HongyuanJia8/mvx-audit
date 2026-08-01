@@ -320,7 +320,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - Binary files are hashed but not parsed. Magic bytes identify WebAssembly,
   PE/DOS, ELF, and Mach-O payloads for manual review; a filename extension alone
   never creates that finding. Supported text extensions are JS-family files,
-  HTML, and JSON.
+  HTML, SVG, and JSON.
 - CRX/ZIP input defaults to a 100 MB archive, 10,000 entries, 50 MB per entry,
   250 MB total expansion, ratio 200 after 5 MB, and 64 path segments. Archive
   limits also bound CRX3 headers to 256 KiB, signature proofs to 32, and each
@@ -331,7 +331,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
   rules, 5,000 indicators, 1 MB total literal bytes, and 10,000 matches. See
   [declarative rule packs](rule-packs.md) for the complete limits.
-- In executable JS/HTML contexts, a bounded ECMAScript parser finds syntax-
+- In executable JS/HTML/SVG contexts, a bounded ECMAScript parser finds syntax-
   valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
   or `globalThis.atob` without executing JavaScript. The exact parser version is
   bundled in the published package. Exact bundled Parse5 and entities versions
@@ -342,12 +342,15 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
   handlers, using classic, module, or actual function-body grammar as applicable.
-  Template contents and tree-builder attribute merges on repeated `html` and
-  `body` start tags retain their original evidence locations. SVG handlers use
+  Executable handlers and nested navigables in template contents are retained,
+  while template-owned scripts remain inert. Tree-builder attribute merges on
+  repeated explicit or implicit `html` and `body` roots retain their original
+  evidence locations. Unsandboxed `iframe[srcdoc]` and sandboxes with
+  `allow-scripts` are parsed as bounded nested HTML documents. SVG handlers use
   their browser `evt` formal parameter; SMIL timing handlers are limited to the
   pinned revision's animation elements. SVG scripts ignore HTML-only `src`,
   `language`, `nomodule`, `for`, and `event` controls and decode SVG text
-  character references before ECMAScript parsing; SVG `href` remains the
+  character references and CDATA sections before ECMAScript parsing; SVG `href` remains the
   external-source control.
   Only names in a frozen, exported browser event-handler profile are
   executable; arbitrary `on*` attributes remain data. The generated profile is
@@ -368,14 +371,17 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   preserve original source offsets. The
   scanner does not resolve runtime bindings, so this is a medium-confidence
   syntax signal. Only unescaped, canonical Base64 literals of at least 16
-  decoded bytes are inventoried.
+  decoded bytes are inventoried; the Infra ASCII whitespace accepted by browser
+  `atob`, including form feed, is removed before canonical validation.
   Defaults allow 4,096 candidate calls, 128 decoded payloads, 1.5 million
   inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
   recursive layers. ECMAScript work is capped at 1 million tokens and 2 million
   AST node allocations across original and decoded inputs. HTML work is
-  separately capped at 1 million tokens, 100,000 node allocations, 2,048 open-
-  element depth, and 4 million depth-weighted tree-construction work units.
+  separately capped at 1 million tokens, 16,384 attributes, 100,000 node
+  allocations, 2,048 open-element depth, 16 document levels, and 4 million
+  depth-weighted tree-construction work units. Nested HTML content is capped at
+  5 million characters in total.
   These content-deterministic counters interrupt tokenization, allocation, and
   expensive tree construction before a complete DOM is required, while parser
   stack exhaustion independently fails closed. The effective limits and work

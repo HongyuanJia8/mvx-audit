@@ -6,7 +6,9 @@ import { MvxError } from './errors.js';
 import { executableFormat, packageInventory } from './package.js';
 import { readBoundedRegularFile } from './safe-file.js';
 
-const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.html', '.htm', '.json']);
+const SOURCE_EXTENSIONS = new Set([
+  '.js', '.mjs', '.cjs', '.html', '.htm', '.svg', '.json'
+]);
 export const SCAN_LIMITS = Object.freeze({
   maxFiles: 5_000,
   maxEntries: 10_000,
@@ -245,9 +247,12 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
       encodedPayloadParserTokens: encodedPayloads.parserTokens,
       encodedPayloadAstNodes: encodedPayloads.astNodes,
       encodedPayloadHtmlTokens: encodedPayloads.htmlTokens,
+      encodedPayloadHtmlAttributes: encodedPayloads.htmlAttributes,
       encodedPayloadHtmlNodes: encodedPayloads.htmlNodes,
       encodedPayloadHtmlTreeWork: encodedPayloads.htmlTreeWork,
       encodedPayloadHtmlMaxDepth: encodedPayloads.htmlMaxDepth,
+      encodedPayloadHtmlMaxDocumentDepth: encodedPayloads.htmlMaxDocumentDepth,
+      encodedPayloadHtmlNestedChars: encodedPayloads.htmlNestedChars,
       encodedPayloadsDecoded: encodedPayloads.decodedCount,
       encodedPayloadBytesDecoded: encodedPayloads.totalDecodedBytes,
       warnings: state.warnings,

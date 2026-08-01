@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { Parser as AcornParser } from 'acorn';
 import { DecodingMode, EntityDecoder, htmlDecodeTree } from 'entities/decode';
-import { defaultTreeAdapter, Parser as HtmlParser } from 'parse5';
+import {
+  defaultTreeAdapter, Parser as HtmlParser, Tokenizer as HtmlTokenizer
+} from 'parse5';
 import {
   BROWSER_EVENT_HANDLER_PROFILE, htmlEventHandlerMode
 } from './browser-event-handlers.js';
@@ -26,9 +28,12 @@ export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
   maxParserTokens: 1_000_000,
   maxAstNodes: 2_000_000,
   maxHtmlTokens: 1_000_000,
+  maxHtmlAttributes: 16_384,
   maxHtmlNodes: 100_000,
   maxHtmlTreeDepth: 2_048,
   maxHtmlTreeWork: 4_000_000,
+  maxHtmlDocumentDepth: 16,
+  maxNestedHtmlChars: 5_000_000,
   maxDepth: 2,
   minDecodedBytes: 16
 });
@@ -328,6 +333,65 @@ function decodeHtmlText(content, start, end) {
   return decodeHtmlRange(content, start, end, DecodingMode.Legacy);
 }
 
+function composeOriginalOffsets(offsets, parentOffsets) {
+  if (!parentOffsets) return offsets;
+  const fallback = parentOffsets.at(-1);
+  return offsets.map((offset) => parentOffsets[offset] ?? fallback);
+}
+
+function originalOffsetsForRange(parentOffsets, start, end) {
+  return parentOffsets ? parentOffsets.slice(start, end + 1) : null;
+}
+
+function decodeSvgTextRange(content, start, end) {
+  let decoded = '';
+  const offsets = [];
+  let cursor = start;
+  let finalOffset = end;
+  while (cursor < end) {
+    const marker = content.indexOf('<![CDATA[', cursor);
+    if (marker < 0 || marker >= end) {
+      const part = decodeHtmlText(content, cursor, end);
+      decoded += part.content;
+      offsets.push(...part.offsets.slice(0, -1));
+      finalOffset = part.offsets.at(-1);
+      break;
+    }
+    const prefix = decodeHtmlText(content, cursor, marker);
+    decoded += prefix.content;
+    offsets.push(...prefix.offsets.slice(0, -1));
+    const close = content.indexOf(']]>', marker + 9);
+    const valueEnd = close < 0 || close >= end ? end : close;
+    for (let index = marker + 9; index < valueEnd; index += 1) {
+      decoded += content[index];
+      offsets.push(index);
+    }
+    cursor = close < 0 || close >= end ? end : close + 3;
+    finalOffset = cursor;
+  }
+  offsets.push(finalOffset);
+  return { content: decoded, offsets };
+}
+
+function decodeSvgScript(content, node) {
+  let decoded = '';
+  const offsets = [];
+  let finalOffset = node.sourceCodeLocation.startTag.endOffset;
+  for (const child of node.childNodes ?? []) {
+    if (child.nodeName !== '#text' || !child.sourceCodeLocation) continue;
+    const part = decodeSvgTextRange(
+      content,
+      child.sourceCodeLocation.startOffset,
+      child.sourceCodeLocation.endOffset
+    );
+    decoded += part.content;
+    offsets.push(...part.offsets.slice(0, -1));
+    finalOffset = part.offsets.at(-1);
+  }
+  offsets.push(finalOffset);
+  return { content: decoded, offsets };
+}
+
 function attributeValueBounds(content, location) {
   let cursor = location.startOffset;
   while (cursor < location.endOffset && !isHtmlSpace(content[cursor])
@@ -346,6 +410,15 @@ function attributeValueBounds(content, location) {
 function parseBoundedHtml(content, budget, limits) {
   let activeStartTag = null;
   const mergedAttributeLocations = new WeakMap();
+  const adoptedAttributeNames = new WeakMap();
+  const chargeTreeWork = (units) => {
+    budget.htmlTreeWork += units;
+    if (budget.htmlTreeWork > limits.maxHtmlTreeWork) {
+      throw new MvxError(`HTML tree-construction work exceeds ${limits.maxHtmlTreeWork}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
   const chargeNode = () => {
     budget.htmlNodes += 1;
     if (budget.htmlNodes > limits.maxHtmlNodes) {
@@ -393,18 +466,26 @@ function parseBoundedHtml(content, budget, limits) {
       defaultTreeAdapter.insertTextBefore(parentNode, value, referenceNode);
     },
     adoptAttributes(recipient, attrs) {
-      const existing = new Set(recipient.attrs.map((attribute) => attribute.name));
+      chargeTreeWork(attrs.length);
+      let existing = adoptedAttributeNames.get(recipient);
+      if (!existing) {
+        existing = new Set(recipient.attrs.map((attribute) => attribute.name));
+        adoptedAttributeNames.set(recipient, existing);
+      }
       const locations = activeStartTag?.location?.attrs ?? {};
       for (const attribute of attrs) {
-        if (existing.has(attribute.name) || !locations[attribute.name]) continue;
-        let merged = mergedAttributeLocations.get(recipient);
-        if (!merged) {
-          merged = new Map();
-          mergedAttributeLocations.set(recipient, merged);
+        if (existing.has(attribute.name)) continue;
+        existing.add(attribute.name);
+        recipient.attrs.push(attribute);
+        if (locations[attribute.name]) {
+          let merged = mergedAttributeLocations.get(recipient);
+          if (!merged) {
+            merged = new Map();
+            mergedAttributeLocations.set(recipient, merged);
+          }
+          merged.set(attribute.name, locations[attribute.name]);
         }
-        merged.set(attribute.name, locations[attribute.name]);
       }
-      defaultTreeAdapter.adoptAttributes(recipient, attrs);
     }
   };
   const chargeToken = () => {
@@ -423,14 +504,25 @@ function parseBoundedHtml(content, budget, limits) {
         code: 'ENCODED_PAYLOAD_LIMIT'
       });
     }
-    budget.htmlTreeWork += depth;
-    if (budget.htmlTreeWork > limits.maxHtmlTreeWork) {
-      throw new MvxError(`HTML tree-construction work exceeds ${limits.maxHtmlTreeWork}`, {
-        code: 'ENCODED_PAYLOAD_LIMIT'
-      });
-    }
+    chargeTreeWork(depth);
   };
+  class BoundedHtmlTokenizer extends HtmlTokenizer {
+    _createAttr(firstCharacter) {
+      budget.htmlAttributes += 1;
+      if (budget.htmlAttributes > limits.maxHtmlAttributes) {
+        throw new MvxError(`HTML attributes exceed ${limits.maxHtmlAttributes}`, {
+          code: 'ENCODED_PAYLOAD_LIMIT'
+        });
+      }
+      return super._createAttr(firstCharacter);
+    }
+  }
   class BoundedHtmlParser extends HtmlParser {
+    constructor(options) {
+      super(options);
+      this.tokenizer = new BoundedHtmlTokenizer(this.options, this);
+    }
+
     onStartTag(token) {
       chargeToken();
       chargeTagWork(this);
@@ -542,14 +634,33 @@ function scriptMode(content, tag, namespace) {
   return mode;
 }
 
-function* htmlAtobLiterals(content, starts, budget, limits) {
+function* htmlAtobLiterals(
+  content, starts, budget, limits, originalOffsets = null, documentDepth = 1
+) {
+  if (documentDepth > limits.maxHtmlDocumentDepth) {
+    throw new MvxError(`HTML document depth exceeds ${limits.maxHtmlDocumentDepth}`, {
+      code: 'ENCODED_PAYLOAD_LIMIT'
+    });
+  }
+  budget.htmlMaxDocumentDepth = Math.max(
+    budget.htmlMaxDocumentDepth, documentDepth
+  );
+  if (documentDepth > 1) {
+    budget.htmlNestedChars += content.length;
+    if (budget.htmlNestedChars > limits.maxNestedHtmlChars) {
+      throw new MvxError(`Nested HTML exceeds ${limits.maxNestedHtmlChars} characters`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  }
   const { document, mergedAttributeLocations } = parseBoundedHtml(
     content, budget, limits
   );
-  const stack = [document];
+  const stack = [{ node: document, inTemplate: false }];
   while (stack.length > 0) {
-    const node = stack.pop();
-    if (node.tagName && node.sourceCodeLocation?.startTag) {
+    const { node, inTemplate } = stack.pop();
+    if (node.tagName && (node.sourceCodeLocation?.startTag
+      || mergedAttributeLocations.has(node))) {
       const tag = sourceTag(content, node, mergedAttributeLocations);
       for (const attribute of tag.attributes) {
         const mode = htmlEventHandlerMode(
@@ -561,33 +672,56 @@ function* htmlAtobLiterals(content, starts, budget, limits) {
           );
           yield* javascriptAtobLiterals(
             decoded.content, 0, decoded.content.length, starts, budget, limits,
-            decoded.offsets, mode
+            composeOriginalOffsets(decoded.offsets, originalOffsets), mode
           );
         }
       }
-      if (tag.name === 'script') {
+      if (node.namespaceURI === HTML_NAMESPACE && tag.name === 'iframe') {
+        const srcdoc = tag.attributes.find((attribute) => attribute.name === 'srcdoc');
+        const sandbox = tag.attributes.find((attribute) => attribute.name === 'sandbox');
+        const sandboxValue = sandbox?.valueStart === undefined ? '' : decodeHtmlAttribute(
+          content, sandbox.valueStart, sandbox.valueEnd
+        ).content;
+        const allowsScripts = !sandbox || asciiLower(trimHtmlSpace(sandboxValue))
+          .split(/[\t\n\f\r ]+/).includes('allow-scripts');
+        if (srcdoc?.valueStart !== undefined && allowsScripts) {
+          const decoded = decodeHtmlAttribute(
+            content, srcdoc.valueStart, srcdoc.valueEnd
+          );
+          yield* htmlAtobLiterals(
+            decoded.content,
+            starts,
+            budget,
+            limits,
+            composeOriginalOffsets(decoded.offsets, originalOffsets),
+            documentDepth + 1
+          );
+        }
+      }
+      if (tag.name === 'script' && node.sourceCodeLocation?.startTag && !inTemplate) {
         const bodyStart = node.sourceCodeLocation.startTag.endOffset;
         const bodyEnd = node.sourceCodeLocation.endTag?.startOffset ?? content.length;
         const mode = scriptMode(content, tag, node.namespaceURI);
         if (mode) {
           if (node.namespaceURI === SVG_NAMESPACE) {
-            const decoded = decodeHtmlText(content, bodyStart, bodyEnd);
+            const decoded = decodeSvgScript(content, node);
             yield* javascriptAtobLiterals(
               decoded.content, 0, decoded.content.length, starts, budget, limits,
-              decoded.offsets, mode
+              composeOriginalOffsets(decoded.offsets, originalOffsets), mode
             );
           } else {
             yield* javascriptAtobLiterals(
-              content, bodyStart, bodyEnd, starts, budget, limits, null, mode
+              content, bodyStart, bodyEnd, starts, budget, limits,
+              originalOffsetsForRange(originalOffsets, bodyStart, bodyEnd), mode
             );
           }
         }
       }
     }
-    const children = [
-      ...(node.childNodes ?? []),
-      ...(node.content ? [node.content] : [])
-    ];
+    const children = (node.childNodes ?? []).map((child) => ({
+      node: child, inTemplate
+    }));
+    if (node.content) children.push({ node: node.content, inTemplate: true });
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push(children[index]);
     }
@@ -596,7 +730,7 @@ function* htmlAtobLiterals(content, starts, budget, limits) {
 
 function directAtobLiterals(source, budget, limits) {
   const starts = lineStarts(source.content);
-  if (/\.html?$/i.test(source.path) && source.depth === 0) {
+  if (/\.(?:html?|svg)$/i.test(source.path) && source.depth === 0) {
     return htmlAtobLiterals(source.content, starts, budget, limits);
   }
   return javascriptAtobLiterals(
@@ -607,7 +741,7 @@ function directAtobLiterals(source, budget, limits) {
 }
 
 function normalizeBase64(source) {
-  const compact = source.replace(/[\t\n\r ]/g, '');
+  const compact = source.replace(/[\t\n\f\r ]/g, '');
   if (compact.length === 0 || !BASE64.test(compact) || compact.length % 4 === 1) return null;
   if (compact.includes('=') && compact.length % 4 !== 0) return null;
   return compact;
@@ -652,9 +786,12 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
     parserTokens: 0,
     astNodes: 0,
     htmlTokens: 0,
+    htmlAttributes: 0,
     htmlNodes: 0,
     htmlTreeWork: 0,
-    htmlMaxDepth: 0
+    htmlMaxDepth: 0,
+    htmlMaxDocumentDepth: 0,
+    htmlNestedChars: 0
   };
   let totalDecodedBytes = 0;
 
@@ -742,9 +879,12 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
     parserTokens: candidateBudget.parserTokens,
     astNodes: candidateBudget.astNodes,
     htmlTokens: candidateBudget.htmlTokens,
+    htmlAttributes: candidateBudget.htmlAttributes,
     htmlNodes: candidateBudget.htmlNodes,
     htmlTreeWork: candidateBudget.htmlTreeWork,
     htmlMaxDepth: candidateBudget.htmlMaxDepth,
+    htmlMaxDocumentDepth: candidateBudget.htmlMaxDocumentDepth,
+    htmlNestedChars: candidateBudget.htmlNestedChars,
     entries: frozenEntries
   });
   return Object.freeze({
