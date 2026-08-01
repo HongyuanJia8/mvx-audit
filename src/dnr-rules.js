@@ -322,6 +322,8 @@ export function extractStaticDnrRules(manifest, sources, options = {}) {
   const invalidDnrDeclaration = dnrDeclaration !== undefined && !dataObject(dnrDeclaration);
   const declaredResources = dataObject(dnrDeclaration)
     ? dnrDeclaration.rule_resources : undefined;
+  const invalidRuleResources = dataObject(dnrDeclaration)
+    && !Array.isArray(declaredResources);
   const declarations = Array.isArray(declaredResources) ? declaredResources : [];
   if (declarations.length > limits.maxRulesets) {
     throw new MvxError(`Static DNR rulesets exceed ${limits.maxRulesets}`, {
@@ -333,10 +335,11 @@ export function extractStaticDnrRules(manifest, sources, options = {}) {
   const rulesets = [];
   const seenIds = new Set();
   const budget = { jsonValues: 0, rules: 0, trackedRules: 0 };
-  if (invalidDnrDeclaration
-    || (declaredResources !== undefined && !Array.isArray(declaredResources))) {
+  if (invalidDnrDeclaration || invalidRuleResources) {
     const reason = invalidDnrDeclaration
-      ? 'invalid-declarative-net-request' : 'invalid-rule-resources';
+      ? 'invalid-declarative-net-request'
+      : Object.hasOwn(dnrDeclaration, 'rule_resources')
+        ? 'invalid-rule-resources' : 'missing-rule-resources';
     trackedEntry({
       kind: 'ruleset', path: 'manifest.json', line: 1,
       rulesetId: '<invalid-rule-resources>', enabled: null,

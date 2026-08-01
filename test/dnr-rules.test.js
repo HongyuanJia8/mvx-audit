@@ -172,6 +172,9 @@ test('manifest DNR descriptors use normalized paths and reject unsafe or duplica
   assert.equal(analyzeStaticDnrRules(invalidResources)[0].id, 'MVX115');
   const invalidContainer = extractStaticDnrRules({ declarative_net_request: null }, [rules]);
   assert.equal(invalidContainer.rulesets[0].status, 'invalid-declarative-net-request');
+  const missingResources = extractStaticDnrRules({ declarative_net_request: {} }, [rules]);
+  assert.equal(missingResources.rulesets[0].status, 'missing-rule-resources');
+  assert.equal(analyzeStaticDnrRules(missingResources)[0].id, 'MVX115');
 });
 
 test('DNR resource budgets and option validation fail closed', () => {
