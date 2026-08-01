@@ -12,7 +12,9 @@ versioning from the 2.0 reset onward.
   rescanning by built-in and declarative rules, content-addressed inventory and
   hash-only decoded evidence, fail-closed attempt/work limits, SARIF/text/
   comparison reporting, offline-verification replay, and the `mvx-static-v4`
-  analysis identity.
+  analysis identity. JavaScript control/regex contexts, additional arguments,
+  HTML script end tags, and attribute character references retain bounded,
+  source-mapped handling.
 - Independent identity-bound isolated-lab verification for exact report,
   package, analysis, scenario, event-stream, deterministic evaluation, seccomp,
   and container-image identities, with private inode/device-anchored extension

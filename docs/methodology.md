@@ -334,10 +334,14 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - In executable JS/HTML contexts, a token-aware scanner finds syntactic direct
   literal Base64 calls to bare `atob`, `window.atob`, `self.atob`, or
   `globalThis.atob` without executing JavaScript. Comments and literal text are
-  skipped; HTML analysis is limited to executable script bodies and event
-  handlers. The scanner does not resolve runtime bindings, so this is a medium-
-  confidence syntax signal. Only unescaped, canonical Base64 literals of at
-  least 16 decoded bytes are inventoried.
+  skipped and control delimiters distinguish common regex/division contexts.
+  Additional call arguments are allowed, but only the first literal is decoded.
+  HTML analysis is limited to inline executable script bodies and event
+  handlers; actual script end-tag boundaries and numeric or syntax-relevant
+  named attribute character references preserve original source offsets. The
+  scanner does not resolve runtime bindings, so this is a medium-confidence
+  syntax signal. Only unescaped, canonical Base64 literals of at least 16
+  decoded bytes are inventoried.
   Defaults allow 4,096 candidate calls, 128 decoded payloads, 1.5 million
   inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two

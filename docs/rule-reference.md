@@ -51,7 +51,8 @@ packaged source. Decoded evidence retains hash and line provenance without
 copying decoded line content into the report. It is an obfuscation/review-cost
 signal, not proof that the call resolves to a global decoder or that the decoded
 data is executable or malicious. Built-in findings supported only by decoded
-text are capped at medium confidence.
+text are capped at medium confidence. Additional call arguments do not suppress
+the first-literal signal.
 
 ## Analyst-supplied declarative rules
 

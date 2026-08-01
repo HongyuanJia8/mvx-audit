@@ -200,9 +200,14 @@ test('token-aware extraction excludes non-executable text and preserves syntacti
     `const single = "atob('${payload}')";`,
     `const template = \`atob('${payload}')\`;`,
     `const pattern = /atob\\('${payload}'\\)/;`,
+    `if (true) /atob\\('${payload}'\\)/.test('x');`,
+    `while (false) /atob\\('${payload}'\\)/.test('x');`,
+    `for (;;) /atob\\('${payload}'\\)/.test('x');`,
+    `if (true) {} /atob\\('${payload}'\\)/.test('x');`,
     `<!-- atob('${payload}')`,
     `--> atob('${payload}')`,
     `const astral = 𐐀atob('${payload}');`,
+    `class PrivateDecoder { #atob(value) { return value; } run() { return this.#atob('${payload}'); } }`,
     `function shadowed(atob) { return atob('${payload}'); }`
   ].join('\n');
   const result = extractEncodedPayloads([source(javascript)]);
@@ -224,6 +229,27 @@ test('token-aware extraction excludes non-executable text and preserves syntacti
   assert.equal(htmlResult.candidates, 2);
   assert.equal(htmlResult.decodedCount, 2);
   assert.deepEqual(htmlResult.entries.map((entry) => entry.encodedLine), [5, 6]);
+
+  const syntaxVariants = extractEncodedPayloads([source([
+    `atob('${payload}', undefined);`,
+    `atob('${payload}',);`,
+    'let x = 2, y = 1; x++ / y;',
+    `atob('${payload}');`
+  ].join('\n'))]);
+  assert.equal(syntaxVariants.candidates, 3);
+  assert.equal(syntaxVariants.decodedCount, 3);
+
+  const browserHtml = [
+    `<script>const marker = "</scripty>"; atob('${payload}')</script>`,
+    `<button onclick="atob(&quot;${payload}&quot;)">quoted</button>`,
+    `<button onclick="&#97;tob('${payload}')">numeric</button>`,
+    `<script type="text&#x2f;javascript">atob('${payload}')</script>`,
+    `<script>${'İ'.repeat(80)}</script><script>atob('${payload}')</script>`
+  ].join('\n');
+  const browserHtmlResult = extractEncodedPayloads([source(browserHtml, 'browser.html')]);
+  assert.equal(browserHtmlResult.candidates, 5);
+  assert.equal(browserHtmlResult.decodedCount, 5);
+  assert.deepEqual(browserHtmlResult.entries.map((entry) => entry.encodedLine), [1, 2, 3, 4, 5]);
 });
 
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {

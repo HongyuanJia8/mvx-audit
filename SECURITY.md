@@ -39,7 +39,12 @@ Encoded-payload analysis is static and never calls `eval`, `Function`, `atob`,
 or extension code. A token-aware scanner recognizes direct, unescaped Base64
 string literals in syntactic calls to bare `atob` or the `window`, `self`, and
 `globalThis` member forms. It skips JavaScript comments and literal text, and
-in HTML scans only executable script bodies and event-handler attributes.
+tracks control delimiters when separating regular-expression literals from
+division. Calls may have additional arguments, but only the first literal is
+decoded. In HTML it scans only inline executable script bodies and event-
+handler attributes, validates actual `script` end-tag boundaries, and decodes
+numeric plus syntax-relevant named attribute character references with original
+source-offset provenance.
 This syntax does not prove the runtime binding of a bare or member call, so the
 finding has medium confidence. Canonical decoded bytes are validated and only
 strict UTF-8 text is rescanned. JSON data is never treated as executable.

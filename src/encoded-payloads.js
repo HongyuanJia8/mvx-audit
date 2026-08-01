@@ -23,10 +23,18 @@ const REGEX_PREFIX_KEYWORDS = new Set([
   'await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'return',
   'throw', 'typeof', 'void', 'yield'
 ]);
+const CONTROL_PAREN_KEYWORDS = new Set(['catch', 'for', 'if', 'switch', 'while', 'with']);
 const JAVASCRIPT_TYPES = new Set([
   'application/ecmascript', 'application/javascript', 'module',
   'text/ecmascript', 'text/javascript'
 ]);
+const HTML_CHARACTER_REFERENCES = Object.freeze({
+  AMP: '&', amp: '&', apos: "'", bsol: '\\', colon: ':', comma: ',', dollar: '$',
+  equals: '=', excl: '!', grave: '`', GT: '>', gt: '>', lcub: '{', lpar: '(',
+  lsqb: '[', LT: '<', lt: '<', minus: '-', NewLine: '\n', num: '#', period: '.',
+  plus: '+', quest: '?', QUOT: '"', quot: '"', rcub: '}', rpar: ')', rsqb: ']',
+  semi: ';', sol: '/', Tab: '\t'
+});
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -135,7 +143,7 @@ function skipRegex(content, index, end) {
   while (cursor < end) {
     const character = content[cursor];
     if (character === '\\') cursor = Math.min(cursor + 2, end);
-    else if (isLineTerminator(character)) return cursor;
+    else if (isLineTerminator(character)) return { end: cursor, closed: false };
     else if (character === '[') { inClass = true; cursor += 1; }
     else if (character === ']') { inClass = false; cursor += 1; }
     else if (character === '/' && !inClass) {
@@ -143,14 +151,15 @@ function skipRegex(content, index, end) {
       while (cursor < end && identifierAt(content, cursor)) {
         cursor = identifierAt(content, cursor).end;
       }
-      return cursor;
+      return { end: cursor, closed: true };
     } else cursor += 1;
   }
-  return cursor;
+  return { end: cursor, closed: false };
 }
 
 function supportedReference(tokens) {
   const previous = tokens.at(-1);
+  if (previous?.value === '#') return false;
   if (previous?.value !== '.') return true;
   return ['globalThis', 'self', 'window'].includes(tokens.at(-2)?.value);
 }
@@ -201,17 +210,31 @@ function parseAtobLiteral(content, tokenEnd, end, budget, limits) {
   if (cursor >= end || content[cursor] !== quote) return { end: cursor };
   const valueEnd = cursor;
   cursor = skipTrivia(content, cursor + 1, end);
-  if (content[cursor] !== ')') return { end: cursor };
+  if (content[cursor] !== ')' && content[cursor] !== ',') return { end: cursor };
   return {
     end: cursor + 1,
     candidate: { encoded: content.slice(valueStart, valueEnd), escaped }
   };
 }
 
-function* javascriptAtobLiterals(content, start, end, starts, budget, limits) {
+function statementBrace(tokens) {
+  const previous = tokens.at(-1);
+  if (!previous) return true;
+  if (previous.type === 'control-close' || previous.value === ')'
+    || previous.value === '=>' || ['else', 'try', 'finally', 'do'].includes(previous.value)) {
+    return true;
+  }
+  return !['=', '(', '[', ',', ':', 'return'].includes(previous.value);
+}
+
+function* javascriptAtobLiterals(
+  content, start, end, starts, budget, limits, originalOffsets = null
+) {
   let cursor = start;
   let canStartRegex = true;
   const tokens = [];
+  const parentheses = [];
+  const braces = [];
   const remember = (token) => {
     tokens.push(token);
     if (tokens.length > 3) tokens.shift();
@@ -238,10 +261,13 @@ function* javascriptAtobLiterals(content, start, end, starts, budget, limits) {
       continue;
     }
     if (character === '/' && canStartRegex) {
-      cursor = skipRegex(content, cursor, end);
-      remember({ type: 'atom', value: 'regex' });
-      canStartRegex = false;
-      continue;
+      const regex = skipRegex(content, cursor, end);
+      if (regex.closed) {
+        cursor = regex.end;
+        remember({ type: 'atom', value: 'regex' });
+        canStartRegex = false;
+        continue;
+      }
     }
     const identifier = identifierAt(content, cursor);
     if (identifier) {
@@ -250,11 +276,15 @@ function* javascriptAtobLiterals(content, start, end, starts, budget, limits) {
         if (parsed) {
           if (parsed.candidate) yield {
             ...parsed.candidate,
-            line: lineAt(starts, cursor)
+            line: lineAt(starts, originalOffsets?.[cursor] ?? cursor)
           };
           cursor = Math.max(parsed.end, identifier.end);
-          remember({ type: 'atom', value: 'call' });
-          canStartRegex = false;
+          const separator = content[parsed.end - 1];
+          remember({
+            type: separator === ',' ? 'punctuator' : 'atom',
+            value: separator === ',' ? ',' : 'call'
+          });
+          canStartRegex = separator === ',';
           continue;
         }
       }
@@ -270,8 +300,41 @@ function* javascriptAtobLiterals(content, start, end, starts, budget, limits) {
       canStartRegex = false;
       continue;
     }
-    remember({ type: 'punctuator', value: character });
-    canStartRegex = ![')', ']', '}'].includes(character) && character !== '.';
+    const pair = content.slice(cursor, cursor + 2);
+    if (pair === '++' || pair === '--') {
+      remember({ type: 'postfix', value: pair });
+      canStartRegex = false;
+      cursor += 2;
+      continue;
+    }
+    if (pair === '=>') {
+      remember({ type: 'punctuator', value: pair });
+      canStartRegex = true;
+      cursor += 2;
+      continue;
+    }
+    if (character === '(') {
+      const control = CONTROL_PAREN_KEYWORDS.has(tokens.at(-1)?.value);
+      parentheses.push({ control });
+      remember({ type: 'punctuator', value: character });
+      canStartRegex = true;
+    } else if (character === ')') {
+      const frame = parentheses.pop();
+      remember({ type: frame?.control ? 'control-close' : 'punctuator', value: character });
+      canStartRegex = frame?.control === true;
+    } else if (character === '{') {
+      const block = statementBrace(tokens);
+      braces.push({ block });
+      remember({ type: 'punctuator', value: character });
+      canStartRegex = true;
+    } else if (character === '}') {
+      const frame = braces.pop();
+      remember({ type: frame?.block ? 'block-close' : 'atom', value: character });
+      canStartRegex = frame?.block === true;
+    } else {
+      remember({ type: 'punctuator', value: character });
+      canStartRegex = ![']'].includes(character) && character !== '.' && character !== '#';
+    }
     cursor += 1;
   }
 }
@@ -319,17 +382,80 @@ function parseTag(content, start, end) {
   return null;
 }
 
-function executableScript(tag) {
+function decodeHtmlAttribute(content, start, end) {
+  let decoded = '';
+  const offsets = [];
+  let cursor = start;
+  while (cursor < end) {
+    let replacement = null;
+    let consumed = 0;
+    if (content[cursor] === '&') {
+      const tail = content.slice(cursor, Math.min(end, cursor + 40));
+      const numeric = tail.match(/^&#(?:x([0-9A-Fa-f]+)|([0-9]+));?/);
+      if (numeric) {
+        const value = Number.parseInt(numeric[1] ?? numeric[2], numeric[1] ? 16 : 10);
+        replacement = value > 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff)
+          ? String.fromCodePoint(value)
+          : '\ufffd';
+        consumed = numeric[0].length;
+      } else {
+        const named = tail.match(/^&([A-Za-z][A-Za-z0-9]+);/);
+        if (named && Object.hasOwn(HTML_CHARACTER_REFERENCES, named[1])) {
+          replacement = HTML_CHARACTER_REFERENCES[named[1]];
+          consumed = named[0].length;
+        }
+      }
+    }
+    if (replacement !== null) {
+      decoded += replacement;
+      for (let index = 0; index < replacement.length; index += 1) offsets.push(cursor);
+      cursor += consumed;
+    } else {
+      decoded += content[cursor];
+      offsets.push(cursor);
+      cursor += 1;
+    }
+  }
+  offsets.push(end);
+  return { content: decoded, offsets };
+}
+
+function asciiEqualAt(content, index, expected) {
+  if (index + expected.length > content.length) return false;
+  for (let offset = 0; offset < expected.length; offset += 1) {
+    const actualCode = content.charCodeAt(index + offset);
+    const folded = actualCode >= 65 && actualCode <= 90 ? actualCode + 32 : actualCode;
+    if (folded !== expected.charCodeAt(offset)) return false;
+  }
+  return true;
+}
+
+function findScriptEnd(content, start) {
+  let cursor = start;
+  while (cursor < content.length) {
+    const open = content.indexOf('<', cursor);
+    if (open === -1) return -1;
+    if (asciiEqualAt(content, open, '</script')) {
+      const boundary = content[open + 8];
+      if (boundary === '>' || boundary === '/' || isSpace(boundary)) return open;
+    }
+    cursor = open + 1;
+  }
+  return -1;
+}
+
+function executableScript(content, tag) {
   if (tag.attributes.some((attribute) => attribute.name === 'src')) return false;
-  const type = tag.attributes.find((attribute) => attribute.name === 'type')?.value;
-  if (type === undefined || type.trim() === '') return true;
-  const normalized = type.trim().toLowerCase().split(';', 1)[0];
+  const type = tag.attributes.find((attribute) => attribute.name === 'type');
+  if (!type || type.valueStart === undefined) return true;
+  const decoded = decodeHtmlAttribute(content, type.valueStart, type.valueEnd).content;
+  if (decoded.trim() === '') return true;
+  const normalized = decoded.trim().toLowerCase().split(';', 1)[0];
   return JAVASCRIPT_TYPES.has(normalized)
     || normalized.endsWith('+javascript') || normalized.endsWith('+ecmascript');
 }
 
 function* htmlAtobLiterals(content, starts, budget, limits) {
-  const lower = content.toLowerCase();
   let cursor = 0;
   while (cursor < content.length) {
     const open = content.indexOf('<', cursor);
@@ -344,16 +470,19 @@ function* htmlAtobLiterals(content, starts, budget, limits) {
     if (!tag.closing) {
       for (const attribute of tag.attributes) {
         if (/^on[a-z]/.test(attribute.name) && attribute.valueStart !== undefined) {
+          const decoded = decodeHtmlAttribute(
+            content, attribute.valueStart, attribute.valueEnd
+          );
           yield* javascriptAtobLiterals(
-            content, attribute.valueStart, attribute.valueEnd, starts, budget, limits
+            decoded.content, 0, decoded.content.length, starts, budget, limits, decoded.offsets
           );
         }
       }
     }
     if (!tag.closing && tag.name === 'script') {
-      const close = lower.indexOf('</script', tag.end);
+      const close = findScriptEnd(content, tag.end);
       const bodyEnd = close === -1 ? content.length : close;
-      if (executableScript(tag)) {
+      if (executableScript(content, tag)) {
         yield* javascriptAtobLiterals(content, tag.end, bodyEnd, starts, budget, limits);
       }
       if (close === -1) return;
