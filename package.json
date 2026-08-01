@@ -1,6 +1,6 @@
 {
   "name": "mvx-audit",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Reproducible security auditing, threat intelligence, and isolated analysis for Chrome extensions",
   "type": "module",
   "bin": {
@@ -40,6 +40,7 @@
     "lab:run": "node ./scripts/run-lab.mjs",
     "lab:smoke": "node ./scripts/smoke-lab.mjs",
     "lint": "node ./scripts/check-project.mjs",
+    "release:build": "node ./scripts/build-release.mjs",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage"
   },

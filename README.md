@@ -284,8 +284,12 @@ npm run intel:check     # reproduce it from pinned upstream sources
 npm run lab:build       # build the optional isolated Chromium image
 npm run lab:smoke -- --acknowledge-risk  # real Docker/Chromium smoke test
 npm run check           # all required checks
-npm audit --omit=dev    # expected: zero dependencies, zero advisories
+npm audit --omit=dev    # expected: zero known vulnerabilities
 ```
+
+Runtime parsers are exact-version, shrinkwrap-pinned, and bundled into the npm
+package so offline analysis uses the same grammar implementations. Review them
+with `npm ls --omit=dev` and `npm audit --omit=dev`.
 
 Public API:
 

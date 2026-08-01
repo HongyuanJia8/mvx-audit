@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use MVX Audit in research, please cite this software."
 title: "MVX Audit: Chrome Manifest V2 vs V3 Security"
 type: software
-version: 3.0.0
-date-released: 2026-07-26
+version: 3.1.0
+date-released: 2026-08-01
 authors:
   - family-names: Jia
     given-names: Hongyuan
