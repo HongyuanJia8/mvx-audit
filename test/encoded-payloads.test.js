@@ -316,11 +316,17 @@ test('HTML script selection and handlers follow browser execution contexts', () 
 
   const handlers = extractEncodedPayloads([source([
     `<button onclick="new.target; (() => new.target)(); atob('${payload}')">valid</button>`,
-    `<button onclick="#!comment&#10;return atob('${payload}')">invalid</button>`
+    `<button onclick="#!comment&#10;return atob('${payload}')">invalid</button>`,
+    `<div onfoobar="atob('${payload}')">inert</div>`,
+    `<div once="atob('${payload}')">inert</div>`,
+    `<div onpointerdown="atob('${payload}')">pointer</div>`,
+    `<body onafterprint="atob('${payload}')">window</body>`,
+    `<div onafterprint="atob('${payload}')">inert window handler</div>`,
+    `<div onanimationend="atob('${payload}')">animation</div>`
   ].join('\n'), 'handlers.html')]);
-  assert.equal(handlers.candidates, 2);
-  assert.equal(handlers.decodedCount, 1);
-  assert.equal(handlers.entries[0].encodedLine, 1);
+  assert.equal(handlers.candidates, 5);
+  assert.equal(handlers.decodedCount, 4);
+  assert.deepEqual(handlers.entries.map((entry) => entry.encodedLine), [1, 5, 6, 8]);
 });
 
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
@@ -439,6 +445,14 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
       maxAstNodes: 500
     }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /AST nodes/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([source('const o={x};')], { maxAstNodes: 7 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /AST nodes/.test(error.message)
+  );
+  assert.equal(
+    extractEncodedPayloads([source('const o={x};')], { maxAstNodes: 8 }).astNodes,
+    8
   );
   const deeplyNested = source(
     '['.repeat(800) + `atob('${base64('eval(deepPayload);xxxx')}')` + ']'.repeat(800)

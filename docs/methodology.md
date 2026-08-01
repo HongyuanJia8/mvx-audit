@@ -340,6 +340,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
   handlers, using classic, module, or actual function-body grammar as applicable.
+  Only fixed, browser-defined HTML global/body, Pointer, Touch, Selection, CSS
+  animation/transition/scroll-snap, and Chrome-prefixed animation/transition
+  handler names are executable; arbitrary `on*` attributes remain data.
   Script selection follows the complete WHATWG
   [JavaScript MIME type essence list](https://mimesniff.spec.whatwg.org/#javascript-mime-type),
   legacy `language`, and modern-Chrome `nomodule` behavior. Standalone JS with
@@ -353,9 +356,10 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
   recursive layers. Parser work is capped at 1 million tokens and 2 million AST
-  nodes across original and decoded inputs; these counters interrupt
-  tokenization and AST construction, while parser stack exhaustion independently
-  fails closed. Limit breaches fail with `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8
+  node allocations across original and decoded inputs; these counters interrupt
+  tokenization and AST construction, including copied nodes, while parser stack
+  exhaustion independently fails closed. Limit breaches fail with
+  `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8
   payloads are rescanned by built-in and declarative source rules; binary
   payloads retain byte length and SHA-256 but are not interpreted. Syntax-
   invalid source produces no decoded inventory; a

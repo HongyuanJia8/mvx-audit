@@ -48,11 +48,15 @@ attempts against work budgets. Classic scripts, module scripts, and event
 handlers use their respective grammar goals, with handlers parsed as actual
 function bodies; standalone JS of unknown loading mode may be accepted as
 either a strict script or module. In HTML it scans only inline executable
-script bodies and event-handler attributes, applies the complete WHATWG
-JavaScript MIME essence list plus legacy `language` and modern `nomodule`
-selection, validates actual `script` end-tag boundaries, and decodes numeric
-plus syntax-relevant named attribute character references with original source-
-offset provenance.
+script bodies and a fixed allowlist of browser-defined event-handler content
+attributes; arbitrary `on*` data attributes are inert. The allowlist covers
+HTML global/body handlers plus Pointer, Touch, Selection, CSS animation,
+transition, and scroll-snap extensions and Chrome's prefixed animation/
+transition handlers.
+Script selection applies the complete WHATWG JavaScript MIME essence list plus
+legacy `language` and modern `nomodule` behavior, validates actual `script` end-
+tag boundaries, and decodes numeric plus syntax-relevant named attribute
+character references with original source-offset provenance.
 This syntax does not prove the runtime binding of a bare or member call, so the
 finding has medium confidence. Canonical decoded bytes are validated and only
 strict UTF-8 text is rescanned. JSON data is never treated as executable.
@@ -62,11 +66,12 @@ Binary payloads remain hash-only evidence. Candidate calls, payload count,
 per-attempt and aggregate inspected literal characters, per-payload and aggregate decoded
 bytes, minimum payload size, and recursive depth are fixed, recorded limits;
 malformed and incomplete literal attempts consume the same work budgets, and
-parser work additionally allows at most 1,000,000 tokens and 2,000,000 AST
-nodes across the audit. Token and node limits interrupt parsing during
-tokenization and AST construction, and parser stack exhaustion also fails
-closed. Exceeding a safety bound fails closed. Decoded text is not copied into
-reports or the inventory; decoded matches retain hash-only snippets.
+parser work additionally allows at most 1,000,000 tokens and 2,000,000 AST node
+allocations across the audit. Token and allocation limits interrupt parsing
+during tokenization and AST construction, including nodes Acorn copies, and
+parser stack exhaustion also fails closed. Exceeding a safety bound fails
+closed. Decoded text is not copied into reports or the inventory; decoded
+matches retain hash-only snippets.
 Findings map back to the packaged source line and retain decoded-line and
 content-hash provenance. Line provenance recognizes CRLF, CR, LF, U+2028, and
 U+2029 terminators. This is review assistance, not a claim that encoded

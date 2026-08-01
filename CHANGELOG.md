@@ -17,8 +17,9 @@ versioning from the 2.0 reset onward.
   HTML script end tags, and attribute character references retain bounded,
   source-mapped handling. Complete WHATWG JavaScript MIME selection, legacy
   `language`, modern `nomodule`, classic/module/function-body grammar, parser
-  stack exhaustion, and construction-time token/AST limits fail closed and
-  participate in analysis identity.
+  stack exhaustion, fixed browser event-handler allowlists, and construction-
+  time token/AST-allocation limits fail closed and participate in analysis
+  identity.
 - Independent identity-bound isolated-lab verification for exact report,
   package, analysis, scenario, event-stream, deterministic evaluation, seccomp,
   and container-image identities, with private inode/device-anchored extension
