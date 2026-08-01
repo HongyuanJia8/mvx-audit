@@ -6,14 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to rebuild or publish
+        description: Existing release tag to rebuild and upload
         required: true
         type: string
-      publish_npm:
-        description: Publish to npm through the configured trusted publisher
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -52,25 +47,35 @@ jobs:
           npm install --ignore-scripts --prefix "$install_root" ./dist/*.tgz
           test "$("$install_root/node_modules/.bin/mvx" --version)" = "${RELEASE_TAG#v}"
       - name: Attest build provenance
+        if: ${{ github.event_name == 'push' }}
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: dist/*.tgz
       - name: Attest CycloneDX SBOM
+        if: ${{ github.event_name == 'push' }}
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: dist/*.tgz
           sbom-path: ${{ steps.release-assets.outputs.sbom }}
+      - name: Retain exact runner-built release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets-${{ env.RELEASE_TAG }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes=".github/release-notes/${RELEASE_TAG#v}.md"
           test -f "$notes"
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/* --clobber
-          else
-            gh release create "$RELEASE_TAG" dist/* --verify-tag --title "$RELEASE_TAG" --notes-file "$notes"
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$RELEASE_TAG" --notes-file "$notes"
           fi
+          for asset in dist/*; do
+            gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --clobber
+          done
       - name: Publish to npm with trusted publishing
-        if: ${{ (github.event_name == 'push' && vars.NPM_TRUSTED_PUBLISHING == 'true') || inputs.publish_npm }}
+        if: ${{ github.event_name == 'push' && vars.NPM_TRUSTED_PUBLISHING == 'true' }}
         run: npm publish ./dist/*.tgz --access public
