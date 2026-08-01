@@ -340,9 +340,14 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
   handlers, using classic, module, or actual function-body grammar as applicable.
-  Only fixed, browser-defined HTML global/body, Pointer, Touch, Selection, CSS
-  animation/transition/scroll-snap, and Chrome-prefixed animation/transition
-  handler names are executable; arbitrary `on*` attributes remain data.
+  Only names in a frozen, exported browser event-handler profile are
+  executable; arbitrary `on*` attributes remain data. The profile covers HTML
+  global/body, Pointer, Touch, Selection, CSS animation/transition/scroll-snap,
+  WebXR, and Chrome-specific clipboard, focus, prompt, validation, mouse-wheel,
+  and prefixed event extensions. It pins the Chromium source revision and its
+  profile ID participates in the encoded-payload and overall analysis identity.
+  Maintainers advance the checked-in snapshot explicitly with
+  `npm run handlers:update`; audits never fetch browser metadata at runtime.
   Script selection follows the complete WHATWG
   [JavaScript MIME type essence list](https://mimesniff.spec.whatwg.org/#javascript-mime-type),
   legacy `language`, and modern-Chrome `nomodule` behavior. Standalone JS with

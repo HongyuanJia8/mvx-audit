@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import { Parser } from 'acorn';
+import {
+  BROWSER_EVENT_HANDLER_PROFILE, isExecutableHtmlEventHandler
+} from './browser-event-handlers.js';
 import { MvxError } from './errors.js';
 import { createFinding, REFERENCES } from './model.js';
 import { assertOptionsObject } from './options.js';
@@ -30,39 +33,6 @@ const JAVASCRIPT_TYPES = new Set([
 ]);
 const HANDLER_PREFIX = 'function __mvx_event_handler__(){';
 const HANDLER_SUFFIX = '\n}';
-// Fixed browser event-handler profile: WHATWG HTML plus Pointer Events, Touch
-// Events, Selection API, and CSS animation, transition, and scroll-snap mixins.
-const HTML_EVENT_HANDLER_ATTRIBUTES = new Set([
-  'onabort', 'onanimationcancel', 'onanimationend', 'onanimationiteration',
-  'onanimationstart', 'onauxclick', 'onbeforeinput', 'onbeforematch',
-  'onbeforetoggle', 'onblur', 'oncancel', 'oncanplay', 'oncanplaythrough',
-  'onchange', 'onclick', 'onclose', 'oncommand', 'oncontextlost',
-  'oncontextmenu', 'oncontextrestored', 'oncopy', 'oncuechange', 'oncut',
-  'ondblclick', 'ondrag', 'ondragend', 'ondragenter', 'ondragleave',
-  'ondragover', 'ondragstart', 'ondrop', 'ondurationchange', 'onemptied',
-  'onended', 'onerror', 'onfocus', 'onformdata', 'ongotpointercapture',
-  'oninput', 'oninvalid', 'onkeydown', 'onkeypress', 'onkeyup', 'onload',
-  'onloadeddata', 'onloadedmetadata', 'onloadstart', 'onlostpointercapture',
-  'onmousedown', 'onmouseenter', 'onmouseleave', 'onmousemove', 'onmouseout',
-  'onmouseover', 'onmouseup', 'onpaste', 'onpause', 'onplay', 'onplaying',
-  'onpointercancel', 'onpointerdown', 'onpointerenter', 'onpointerleave',
-  'onpointermove', 'onpointerout', 'onpointerover', 'onpointerrawupdate',
-  'onpointerup', 'onprogress', 'onratechange', 'onreset', 'onresize',
-  'onscroll', 'onscrollend', 'onscrollsnapchange', 'onscrollsnapchanging',
-  'onsecuritypolicyviolation', 'onseeked', 'onseeking', 'onselect',
-  'onselectionchange', 'onselectstart', 'onslotchange', 'onstalled',
-  'onsubmit', 'onsuspend', 'ontimeupdate', 'ontoggle', 'ontouchcancel',
-  'ontouchend', 'ontouchmove', 'ontouchstart', 'ontransitioncancel',
-  'ontransitionend', 'ontransitionrun', 'ontransitionstart', 'onvolumechange',
-  'onwaiting', 'onwebkitanimationend', 'onwebkitanimationiteration',
-  'onwebkitanimationstart', 'onwebkittransitionend', 'onwheel'
-]);
-const WINDOW_EVENT_HANDLER_ATTRIBUTES = new Set([
-  'onafterprint', 'onbeforeprint', 'onbeforeunload', 'onhashchange',
-  'onlanguagechange', 'onmessage', 'onmessageerror', 'onoffline', 'ononline',
-  'onpagehide', 'onpagereveal', 'onpageshow', 'onpageswap', 'onpopstate',
-  'onrejectionhandled', 'onstorage', 'onunhandledrejection', 'onunload'
-]);
 const HTML_CHARACTER_REFERENCES = Object.freeze({
   AMP: '&', amp: '&', apos: "'", bsol: '\\', colon: ':', comma: ',', dollar: '$',
   equals: '=', excl: '!', grave: '`', GT: '>', gt: '>', lcub: '{', lpar: '(',
@@ -456,9 +426,7 @@ function* htmlAtobLiterals(content, starts, budget, limits) {
     if (!tag) { cursor = open + 1; continue; }
     if (!tag.closing) {
       for (const attribute of tag.attributes) {
-        const eventHandler = HTML_EVENT_HANDLER_ATTRIBUTES.has(attribute.name)
-          || (['body', 'frameset'].includes(tag.name)
-            && WINDOW_EVENT_HANDLER_ATTRIBUTES.has(attribute.name));
+        const eventHandler = isExecutableHtmlEventHandler(tag.name, attribute.name);
         if (eventHandler && attribute.valueStart !== undefined) {
           const decoded = decodeHtmlAttribute(
             content, attribute.valueStart, attribute.valueEnd
@@ -622,6 +590,7 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
   const frozenEntries = Object.freeze(entries);
   const identity = Object.freeze({
     profile: ENCODED_PAYLOAD_PROFILE,
+    browserEventHandlerProfile: BROWSER_EVENT_HANDLER_PROFILE,
     limits,
     candidates: candidateBudget.candidates,
     candidateEncodedChars: candidateBudget.candidateEncodedChars,

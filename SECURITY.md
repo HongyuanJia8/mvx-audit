@@ -51,8 +51,9 @@ either a strict script or module. In HTML it scans only inline executable
 script bodies and a fixed allowlist of browser-defined event-handler content
 attributes; arbitrary `on*` data attributes are inert. The allowlist covers
 HTML global/body handlers plus Pointer, Touch, Selection, CSS animation,
-transition, and scroll-snap extensions and Chrome's prefixed animation/
-transition handlers.
+transition, scroll-snap, WebXR, and Chrome-specific clipboard, focus, prompt,
+validation, mouse-wheel, and prefixed event extensions. Its exported profile
+pins the Chromium source revision and participates in the analysis identity.
 Script selection applies the complete WHATWG JavaScript MIME essence list plus
 legacy `language` and modern `nomodule` behavior, validates actual `script` end-
 tag boundaries, and decodes numeric plus syntax-relevant named attribute

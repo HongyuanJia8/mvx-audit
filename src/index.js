@@ -37,3 +37,7 @@ export { MvxError } from './errors.js';
 export {
   ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PROFILE
 } from './encoded-payloads.js';
+export {
+  BROWSER_EVENT_HANDLER_PROFILE, BROWSER_EVENT_HANDLER_PROVENANCE,
+  HTML_EVENT_HANDLER_ATTRIBUTES, WINDOW_EVENT_HANDLER_ATTRIBUTES
+} from './browser-event-handlers.js';

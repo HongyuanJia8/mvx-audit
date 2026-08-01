@@ -9,12 +9,20 @@ import { runCli } from '../src/cli.js';
 import { compareExtensions } from '../src/compare.js';
 import { verifyComparisonReport } from '../src/comparison-verification.js';
 import {
+  BROWSER_EVENT_HANDLER_PROFILE, BROWSER_EVENT_HANDLER_PROVENANCE,
+  HTML_EVENT_HANDLER_ATTRIBUTES, WINDOW_EVENT_HANDLER_ATTRIBUTES
+} from '../src/browser-event-handlers.js';
+import {
   analyzeEncodedPayloads, ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PROFILE,
   extractEncodedPayloads
 } from '../src/encoded-payloads.js';
 import {
   ENCODED_PAYLOAD_LIMITS as PUBLIC_ENCODED_PAYLOAD_LIMITS,
-  ENCODED_PAYLOAD_PROFILE as PUBLIC_ENCODED_PAYLOAD_PROFILE
+  ENCODED_PAYLOAD_PROFILE as PUBLIC_ENCODED_PAYLOAD_PROFILE,
+  BROWSER_EVENT_HANDLER_PROFILE as PUBLIC_BROWSER_EVENT_HANDLER_PROFILE,
+  BROWSER_EVENT_HANDLER_PROVENANCE as PUBLIC_BROWSER_EVENT_HANDLER_PROVENANCE,
+  HTML_EVENT_HANDLER_ATTRIBUTES as PUBLIC_HTML_EVENT_HANDLER_ATTRIBUTES,
+  WINDOW_EVENT_HANDLER_ATTRIBUTES as PUBLIC_WINDOW_EVENT_HANDLER_ATTRIBUTES
 } from '../src/index.js';
 import { verifyAuditReport } from '../src/audit-verification.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from '../src/reporters.js';
@@ -63,6 +71,10 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
   const result = await auditExtension(temp);
   assert.equal(result.analysis.profile, 'mvx-static-v4');
   assert.equal(result.encodedPayloads.profile, ENCODED_PAYLOAD_PROFILE);
+  assert.equal(
+    result.encodedPayloads.browserEventHandlerProfile,
+    BROWSER_EVENT_HANDLER_PROFILE
+  );
   assert.equal(result.encodedPayloads.decodedCount, 1);
   assert.equal(result.encodedPayloads.candidateEncodedChars, base64(hidden).length);
   assert.ok(result.encodedPayloads.parserTokens > 0);
@@ -329,6 +341,48 @@ test('HTML script selection and handlers follow browser execution contexts', () 
   assert.deepEqual(handlers.entries.map((entry) => entry.encodedLine), [1, 5, 6, 8]);
 });
 
+test('frozen Chromium handler profile exhaustively recognizes its content attributes', () => {
+  const payload = base64('eval(profilePayload);xxxx');
+  assert.equal(Object.isFrozen(HTML_EVENT_HANDLER_ATTRIBUTES), true);
+  assert.equal(Object.isFrozen(WINDOW_EVENT_HANDLER_ATTRIBUTES), true);
+  assert.equal(Object.isFrozen(BROWSER_EVENT_HANDLER_PROVENANCE), true);
+  assert.equal(Object.isFrozen(BROWSER_EVENT_HANDLER_PROVENANCE.sources), true);
+  assert.equal(
+    BROWSER_EVENT_HANDLER_PROVENANCE.revision,
+    '3c06821a384385ee5f355148a5fcd427f5230118'
+  );
+  assert.deepEqual(HTML_EVENT_HANDLER_ATTRIBUTES, [...HTML_EVENT_HANDLER_ATTRIBUTES].sort());
+  assert.deepEqual(WINDOW_EVENT_HANDLER_ATTRIBUTES, [...WINDOW_EVENT_HANDLER_ATTRIBUTES].sort());
+  assert.equal(new Set(HTML_EVENT_HANDLER_ATTRIBUTES).size, HTML_EVENT_HANDLER_ATTRIBUTES.length);
+  assert.equal(new Set(WINDOW_EVENT_HANDLER_ATTRIBUTES).size, WINDOW_EVENT_HANDLER_ATTRIBUTES.length);
+
+  const executable = [
+    ...HTML_EVENT_HANDLER_ATTRIBUTES.map(
+      (name) => `<div ${name}="atob('${payload}')"></div>`
+    ),
+    ...WINDOW_EVENT_HANDLER_ATTRIBUTES.map(
+      (name) => `<body ${name}="atob('${payload}')"></body>`
+    )
+  ];
+  const result = extractEncodedPayloads(
+    [source(executable.join('\n'), 'profile.html')],
+    { maxCandidates: 512, maxPayloads: 512 }
+  );
+  assert.equal(result.browserEventHandlerProfile, BROWSER_EVENT_HANDLER_PROFILE);
+  assert.equal(result.candidates, executable.length);
+  assert.equal(result.decodedCount, executable.length);
+
+  const inert = extractEncodedPayloads([source([
+    ...WINDOW_EVENT_HANDLER_ATTRIBUTES.map(
+      (name) => `<div ${name}="atob('${payload}')"></div>`
+    ),
+    `<div onfoobar="atob('${payload}')"></div>`,
+    `<div once="atob('${payload}')"></div>`
+  ].join('\n'), 'inert-profile.html')]);
+  assert.equal(inert.candidates, 0);
+  assert.equal(inert.decodedCount, 0);
+});
+
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
   const twoIncompleteLines = source("atob('unterminated\natob('unterminated");
   assert.throws(
@@ -403,6 +457,13 @@ test('JSON data is not misclassified as executable runtime decoding', async (t) 
 test('encoded-payload resource limits fail closed and malformed limits are rejected', () => {
   assert.equal(PUBLIC_ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_LIMITS);
   assert.equal(PUBLIC_ENCODED_PAYLOAD_PROFILE, ENCODED_PAYLOAD_PROFILE);
+  assert.equal(PUBLIC_BROWSER_EVENT_HANDLER_PROFILE, BROWSER_EVENT_HANDLER_PROFILE);
+  assert.equal(
+    PUBLIC_BROWSER_EVENT_HANDLER_PROVENANCE,
+    BROWSER_EVENT_HANDLER_PROVENANCE
+  );
+  assert.equal(PUBLIC_HTML_EVENT_HANDLER_ATTRIBUTES, HTML_EVENT_HANDLER_ATTRIBUTES);
+  assert.equal(PUBLIC_WINDOW_EVENT_HANDLER_ATTRIBUTES, WINDOW_EVENT_HANDLER_ATTRIBUTES);
   const payload = base64('x'.repeat(16));
   const two = source(`atob('${payload}'); atob('${payload}');`);
   assert.throws(
@@ -455,7 +516,7 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
     8
   );
   const deeplyNested = source(
-    '['.repeat(800) + `atob('${base64('eval(deepPayload);xxxx')}')` + ']'.repeat(800)
+    '['.repeat(3_000) + `atob('${base64('eval(deepPayload);xxxx')}')` + ']'.repeat(3_000)
   );
   assert.throws(
     () => extractEncodedPayloads([deeplyNested]),

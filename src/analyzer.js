@@ -96,6 +96,7 @@ export async function auditExtension(inputPath, options = {}) {
     package: snapshot.inventory,
     encodedPayloads: {
       profile: snapshot.encodedPayloads.profile,
+      browserEventHandlerProfile: snapshot.encodedPayloads.browserEventHandlerProfile,
       limits: snapshot.encodedPayloads.limits,
       candidates: snapshot.encodedPayloads.candidates,
       candidateEncodedChars: snapshot.encodedPayloads.candidateEncodedChars,
