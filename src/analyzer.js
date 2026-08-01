@@ -110,6 +110,8 @@ export async function auditExtension(inputPath, options = {}) {
       htmlMaxDepth: snapshot.encodedPayloads.htmlMaxDepth,
       htmlMaxDocumentDepth: snapshot.encodedPayloads.htmlMaxDocumentDepth,
       htmlNestedChars: snapshot.encodedPayloads.htmlNestedChars,
+      xmlEntityDeclarations: snapshot.encodedPayloads.xmlEntityDeclarations,
+      xmlExpandedChars: snapshot.encodedPayloads.xmlExpandedChars,
       decodedCount: snapshot.encodedPayloads.decodedCount,
       utf8Count: snapshot.encodedPayloads.utf8Count,
       totalDecodedBytes: snapshot.encodedPayloads.totalDecodedBytes,

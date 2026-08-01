@@ -39,8 +39,9 @@ Encoded-payload analysis is static and never calls `eval`, `Function`, `atob`,
 or extension code. A bounded ECMAScript parser recognizes direct, unescaped
 Base64 string literals in syntax-valid calls to bare `atob` or the `window`,
 `self`, and `globalThis` member forms. This delegates JavaScript grammar to the
-exact bundled Acorn version and HTML tokenization/tree construction to the exact
-bundled Parse5 and entities versions; `npm-shrinkwrap.json` records their
+exact bundled Acorn version, HTML tokenization/tree construction to the exact
+bundled Parse5 and entities versions, and standalone SVG XML parsing to the exact
+bundled Saxes and xmlchars versions; `npm-shrinkwrap.json` records their
 registry integrity. Calls may have
 additional arguments, but only the first literal is decoded. Syntax-invalid
 source is never decoded; a linear fallback only charges recognizable malformed
@@ -57,6 +58,11 @@ Script selection applies the complete WHATWG JavaScript MIME essence list plus
 legacy `language` and modern `nomodule` behavior, validates actual `script` end-
 tag boundaries, raw-text states, duplicate-attribute suppression, HTML/MathML/SVG
 namespaces, and all character references with original source-offset provenance.
+Standalone `.svg` input preserves XML namespace resolution, case sensitivity,
+CDATA, newline normalization, and source mapping. Well-formed simple internal
+general entities are expanded under fixed declaration, depth, and character
+budgets. External, parameter, recursive, markup-bearing, or otherwise unsupported
+DTD constructs abort the audit explicitly; they cannot produce a clean result.
 This syntax does not prove the runtime binding of a bare or member call, so the
 finding has medium confidence. Canonical decoded bytes are validated and only
 strict UTF-8 text is rescanned. JSON data is never treated as executable.
@@ -66,11 +72,15 @@ Binary payloads remain hash-only evidence. Candidate calls, payload count,
 per-attempt and aggregate inspected literal characters, per-payload and aggregate decoded
 bytes, minimum payload size, and recursive depth are fixed, recorded limits;
 malformed and incomplete literal attempts consume the same work budgets, and
-parser work additionally allows at most 1,000,000 tokens and 2,000,000 AST node
-allocations across the audit. Token and allocation limits interrupt parsing
-during tokenization and AST construction, including nodes Acorn copies, and
-parser stack exhaustion also fails closed. Exceeding a safety bound fails
-closed. Decoded text is not copied into reports or the inventory; decoded
+ECMAScript parser work additionally allows at most 1,000,000 tokens and 2,000,000 AST node
+allocations across the audit. HTML and standalone SVG XML share separately
+reported limits of 1,000,000 markup tokens, 16,384 attributes, 100,000 nodes,
+2,048 tree depth, and 4,000,000 tree-work units. Nested HTML is capped at 16
+document levels and 5,000,000 characters; XML DTD processing is capped at 256
+entity declarations, 16 entity levels, and 1,000,000 expanded characters.
+Token, allocation, and construction limits interrupt parser work, including
+nodes Acorn copies, and parser stack exhaustion also fails closed. Exceeding a
+safety bound fails closed. Decoded text is not copied into reports or the inventory; decoded
 matches retain hash-only snippets.
 Findings map back to the packaged source line and retain decoded-line and
 content-hash provenance. Line provenance recognizes CRLF, CR, LF, U+2028, and

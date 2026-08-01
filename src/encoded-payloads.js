@@ -18,7 +18,8 @@ export const ENCODED_PAYLOAD_PARSER_PROFILES = Object.freeze({
   ecmascript: 'acorn-8.18.0',
   html: 'parse5-7.3.0',
   htmlEntities: 'entities-6.0.1',
-  xml: 'saxes-6.0.0'
+  xml: 'saxes-6.0.0',
+  xmlCharacters: 'xmlchars-2.2.0'
 });
 export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
   maxCandidates: 4_096,
@@ -36,6 +37,9 @@ export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
   maxHtmlTreeWork: 4_000_000,
   maxHtmlDocumentDepth: 16,
   maxNestedHtmlChars: 5_000_000,
+  maxXmlEntityDeclarations: 256,
+  maxXmlEntityDepth: 16,
+  maxXmlExpandedChars: 1_000_000,
   maxDepth: 2,
   minDecodedBytes: 16
 });
@@ -731,11 +735,14 @@ function* htmlAtobLiterals(
   }
 }
 
-const XML_ENTITIES = Object.freeze({
+const XML_ENTITIES = Object.freeze(Object.assign(Object.create(null), {
   amp: '&', apos: "'", gt: '>', lt: '<', quot: '"'
-});
+}));
 
-function decodeXmlSourceRange(content, start, end, { attribute = false, entities = true } = {}) {
+function decodeXmlSourceRange(
+  content, start, end,
+  { attribute = false, entities = true, entityValues = XML_ENTITIES } = {}
+) {
   let decoded = '';
   const offsets = [];
   let cursor = start;
@@ -761,7 +768,7 @@ function decodeXmlSourceRange(content, start, end, { attribute = false, entities
         });
       }
       const entity = content.slice(cursor + 1, semicolon);
-      let replacement = XML_ENTITIES[entity];
+      let replacement = entityValues[entity];
       if (replacement === undefined && /^#x[0-9a-f]+$/i.test(entity)) {
         replacement = String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
       } else if (replacement === undefined && /^#[0-9]+$/.test(entity)) {
@@ -783,6 +790,189 @@ function decodeXmlSourceRange(content, start, end, { attribute = false, entities
   }
   offsets.push(end);
   return { content: decoded, offsets };
+}
+
+function invalidXmlDtd(message) {
+  return new MvxError(message, { code: 'INVALID_INPUT' });
+}
+
+function xmlCharacterReference(reference, version) {
+  let codePoint;
+  if (/^#x[0-9a-f]+$/i.test(reference)) {
+    codePoint = Number.parseInt(reference.slice(2), 16);
+  } else if (/^#[0-9]+$/.test(reference)) {
+    codePoint = Number.parseInt(reference.slice(1), 10);
+  } else return undefined;
+  const valid = version === '1.1'
+    ? (codePoint >= 0x1 && codePoint <= 0xd7ff)
+      || (codePoint >= 0xe000 && codePoint <= 0xfffd)
+      || (codePoint >= 0x10000 && codePoint <= 0x10ffff)
+    : codePoint === 0x9 || codePoint === 0xa || codePoint === 0xd
+      || (codePoint >= 0x20 && codePoint <= 0xd7ff)
+      || (codePoint >= 0xe000 && codePoint <= 0xfffd)
+      || (codePoint >= 0x10000 && codePoint <= 0x10ffff);
+  return valid ? String.fromCodePoint(codePoint) : undefined;
+}
+
+function xmlEntityValue(
+  raw, name, rawValues, resolvedValues, resolving, depth, version, budget, limits
+) {
+  if (depth > limits.maxXmlEntityDepth) {
+    throw new MvxError(`XML entity depth exceeds ${limits.maxXmlEntityDepth}`, {
+      code: 'ENCODED_PAYLOAD_LIMIT'
+    });
+  }
+  const cached = resolvedValues[name];
+  if (cached !== undefined) return cached;
+  if (resolving.has(name)) throw invalidXmlDtd('Recursive XML entity declaration');
+  resolving.add(name);
+  const parts = [];
+  let characters = 0;
+  let cursor = 0;
+  const append = (value) => {
+    characters += value.length;
+    if (characters > limits.maxXmlExpandedChars) {
+      throw new MvxError(`XML entity expansion exceeds ${limits.maxXmlExpandedChars} characters`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+    parts.push(value);
+  };
+  while (cursor < raw.length) {
+    const ampersand = raw.indexOf('&', cursor);
+    if (ampersand < 0) {
+      append(raw.slice(cursor));
+      break;
+    }
+    append(raw.slice(cursor, ampersand));
+    const semicolon = raw.indexOf(';', ampersand + 1);
+    if (semicolon < 0) throw invalidXmlDtd(`Incomplete XML entity value: ${name}`);
+    const reference = raw.slice(ampersand + 1, semicolon);
+    let replacement = XML_ENTITIES[reference];
+    if (replacement === undefined && reference.startsWith('#')) {
+      replacement = xmlCharacterReference(reference, version);
+    } else if (replacement === undefined && Object.hasOwn(rawValues, reference)) {
+      replacement = xmlEntityValue(
+        rawValues[reference], reference, rawValues, resolvedValues,
+        resolving, depth + 1, version, budget, limits
+      );
+    }
+    if (replacement === undefined) {
+      throw invalidXmlDtd(`Undefined XML entity in declaration: ${reference}`);
+    }
+    append(replacement);
+    cursor = semicolon + 1;
+  }
+  resolving.delete(name);
+  const value = parts.join('');
+  budget.xmlExpandedChars += value.length;
+  if (budget.xmlExpandedChars > limits.maxXmlExpandedChars) {
+    throw new MvxError(
+      `XML entity expansions exceed ${limits.maxXmlExpandedChars} characters`,
+      { code: 'ENCODED_PAYLOAD_LIMIT' }
+    );
+  }
+  resolvedValues[name] = value;
+  return value;
+}
+
+function parseXmlEntityDeclarations(doctype, remainingSource, version, budget, limits) {
+  const open = doctype.indexOf('[');
+  const declarationHead = open < 0 ? doctype : doctype.slice(0, open);
+  if (/(?:^|[\t\n\r ])(?:PUBLIC|SYSTEM)(?=[\t\n\r ])/.test(declarationHead)) {
+    throw invalidXmlDtd('External XML DTD subsets are outside the static analysis profile');
+  }
+  if (open < 0) return XML_ENTITIES;
+  const close = doctype.lastIndexOf(']');
+  if (close < open || trimHtmlSpace(doctype.slice(close + 1)) !== '') {
+    throw invalidXmlDtd('Malformed XML DTD internal subset');
+  }
+  const subset = doctype.slice(open + 1, close);
+  const rawValues = Object.create(null);
+  let cursor = 0;
+  const skipSpace = () => {
+    while (cursor < subset.length && isHtmlSpace(subset[cursor])) cursor += 1;
+  };
+  while (cursor < subset.length) {
+    skipSpace();
+    if (cursor >= subset.length) break;
+    if (subset.startsWith('<!--', cursor)) {
+      const end = subset.indexOf('-->', cursor + 4);
+      if (end < 0) throw invalidXmlDtd('Malformed XML DTD comment');
+      cursor = end + 3;
+      continue;
+    }
+    if (subset.startsWith('<?', cursor)) {
+      const end = subset.indexOf('?>', cursor + 2);
+      if (end < 0) throw invalidXmlDtd('Malformed XML DTD processing instruction');
+      cursor = end + 2;
+      continue;
+    }
+    if (!subset.startsWith('<!ENTITY', cursor)
+      || !isHtmlSpace(subset[cursor + '<!ENTITY'.length])) {
+      throw invalidXmlDtd('Unsupported XML DTD declaration');
+    }
+    cursor += '<!ENTITY'.length;
+    skipSpace();
+    if (subset[cursor] === '%') {
+      throw invalidXmlDtd('Parameter XML entities are outside the static analysis profile');
+    }
+    const nameMatch = /^[A-Za-z_:][A-Za-z0-9_.:-]*/.exec(subset.slice(cursor));
+    if (!nameMatch) throw invalidXmlDtd('Unsupported XML entity name');
+    const name = nameMatch[0];
+    cursor += name.length;
+    if (!isHtmlSpace(subset[cursor])) throw invalidXmlDtd('Malformed XML entity declaration');
+    skipSpace();
+    const quote = subset[cursor];
+    if (quote !== "'" && quote !== '"') {
+      throw invalidXmlDtd('External XML entities are outside the static analysis profile');
+    }
+    const valueStart = cursor + 1;
+    const valueEnd = subset.indexOf(quote, valueStart);
+    if (valueEnd < 0) throw invalidXmlDtd('Malformed XML entity declaration');
+    const raw = subset.slice(valueStart, valueEnd);
+    if (raw.includes('<') || /%[A-Za-z_:][A-Za-z0-9_.:-]*;/.test(raw)) {
+      throw invalidXmlDtd('Markup and parameter references in XML entities are unsupported');
+    }
+    cursor = valueEnd + 1;
+    skipSpace();
+    if (subset[cursor] !== '>') throw invalidXmlDtd('Malformed XML entity declaration');
+    cursor += 1;
+    if (Object.hasOwn(rawValues, name) || Object.hasOwn(XML_ENTITIES, name)) {
+      throw invalidXmlDtd(`Duplicate XML entity declaration: ${name}`);
+    }
+    budget.xmlEntityDeclarations += 1;
+    if (budget.xmlEntityDeclarations > limits.maxXmlEntityDeclarations) {
+      throw new MvxError(
+        `XML entity declarations exceed ${limits.maxXmlEntityDeclarations}`,
+        { code: 'ENCODED_PAYLOAD_LIMIT' }
+      );
+    }
+    rawValues[name] = raw;
+  }
+  const resolvedValues = Object.create(null);
+  const resolving = new Set();
+  for (const name of Object.keys(rawValues)) {
+    xmlEntityValue(
+      rawValues[name], name, rawValues, resolvedValues, resolving, 1,
+      version, budget, limits
+    );
+  }
+  const entityValues = Object.assign(Object.create(null), XML_ENTITIES, resolvedValues);
+  const referencePattern = /&([A-Za-z_:][A-Za-z0-9_.:-]*);/g;
+  for (let match = referencePattern.exec(remainingSource); match;
+    match = referencePattern.exec(remainingSource)) {
+    const value = resolvedValues[match[1]];
+    if (value === undefined) continue;
+    budget.xmlExpandedChars += value.length;
+    if (budget.xmlExpandedChars > limits.maxXmlExpandedChars) {
+      throw new MvxError(
+        `XML entity expansions exceed ${limits.maxXmlExpandedChars} characters`,
+        { code: 'ENCODED_PAYLOAD_LIMIT' }
+      );
+    }
+  }
+  return entityValues;
 }
 
 function xmlAttributeValueBounds(content, name, searchStart, end) {
@@ -847,6 +1037,8 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
   let attributeSearchStart = 0;
   let sourceCursor = 0;
   let syntaxError = false;
+  let entityValues = XML_ENTITIES;
+  let xmlVersion = '1.0';
   const chargeLeaf = () => {
     chargeToken();
     chargeNode();
@@ -864,6 +1056,10 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
       });
     }
     chargeWork(1);
+    if (syntaxError) {
+      attributeSearchStart = parser.position;
+      return;
+    }
     const bounds = xmlAttributeValueBounds(
       content, attribute.name, attributeSearchStart, parser.position
     );
@@ -873,7 +1069,7 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
       });
     }
     const decoded = decodeXmlSourceRange(content, bounds.start, bounds.end, {
-      attribute: true
+      attribute: true, entityValues
     });
     if (decoded.content !== attribute.value) {
       throw new MvxError('XML attribute source mapping does not match the parser', {
@@ -926,8 +1122,8 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
     // it publishes a text event. Keep that delimiter for the following event.
     const end = content[parser.position - 1] === '<'
       ? parser.position - 1 : parser.position;
-    if (elements.at(-1)?.script) {
-      const decoded = decodeXmlSourceRange(content, sourceCursor, end);
+    if (!syntaxError && elements.at(-1)?.script) {
+      const decoded = decodeXmlSourceRange(content, sourceCursor, end, { entityValues });
       if (decoded.content !== value) {
         throw new MvxError('XML text source mapping does not match the parser', {
           code: 'ENCODED_PAYLOAD_LIMIT'
@@ -941,7 +1137,7 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
     chargeLeaf();
     const start = sourceCursor + 9;
     const end = parser.position - 3;
-    if (elements.at(-1)?.script) {
+    if (!syntaxError && elements.at(-1)?.script) {
       const decoded = decodeXmlSourceRange(content, start, end, { entities: false });
       if (decoded.content !== value) {
         throw new MvxError('XML CDATA source mapping does not match the parser', {
@@ -964,7 +1160,24 @@ function* svgDocumentAtobLiterals(content, starts, budget, limits) {
     }
     sourceCursor = parser.position;
   });
-  for (const event of ['comment', 'doctype', 'processinginstruction', 'xmldecl']) {
+  parser.on('doctype', (value) => {
+    chargeLeaf();
+    entityValues = parseXmlEntityDeclarations(
+      value, content.slice(parser.position), xmlVersion, budget, limits
+    );
+    for (const [name, replacement] of Object.entries(entityValues)) {
+      Object.defineProperty(parser.ENTITIES, name, {
+        configurable: true, enumerable: true, value: replacement, writable: true
+      });
+    }
+    sourceCursor = parser.position;
+  });
+  parser.on('xmldecl', (declaration) => {
+    chargeLeaf();
+    xmlVersion = declaration.version ?? '1.0';
+    sourceCursor = parser.position;
+  });
+  for (const event of ['comment', 'processinginstruction']) {
     parser.on(event, () => {
       chargeLeaf();
       sourceCursor = parser.position;
@@ -1052,7 +1265,9 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
     htmlTreeWork: 0,
     htmlMaxDepth: 0,
     htmlMaxDocumentDepth: 0,
-    htmlNestedChars: 0
+    htmlNestedChars: 0,
+    xmlEntityDeclarations: 0,
+    xmlExpandedChars: 0
   };
   let totalDecodedBytes = 0;
 
@@ -1146,6 +1361,8 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
     htmlMaxDepth: candidateBudget.htmlMaxDepth,
     htmlMaxDocumentDepth: candidateBudget.htmlMaxDocumentDepth,
     htmlNestedChars: candidateBudget.htmlNestedChars,
+    xmlEntityDeclarations: candidateBudget.xmlEntityDeclarations,
+    xmlExpandedChars: candidateBudget.xmlExpandedChars,
     entries: frozenEntries
   });
   return Object.freeze({

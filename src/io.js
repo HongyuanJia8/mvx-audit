@@ -253,6 +253,8 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
       encodedPayloadHtmlMaxDepth: encodedPayloads.htmlMaxDepth,
       encodedPayloadHtmlMaxDocumentDepth: encodedPayloads.htmlMaxDocumentDepth,
       encodedPayloadHtmlNestedChars: encodedPayloads.htmlNestedChars,
+      encodedPayloadXmlEntityDeclarations: encodedPayloads.xmlEntityDeclarations,
+      encodedPayloadXmlExpandedChars: encodedPayloads.xmlExpandedChars,
       encodedPayloadsDecoded: encodedPayloads.decodedCount,
       encodedPayloadBytesDecoded: encodedPayloads.totalDecodedBytes,
       warnings: state.warnings,

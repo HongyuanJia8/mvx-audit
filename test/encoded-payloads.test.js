@@ -47,6 +47,14 @@ function source(content, sourcePath = 'worker.js') {
   };
 }
 
+const PARSER_PROFILE_GOLDEN = Object.freeze({
+  ecmascript: 'acorn-8.18.0',
+  html: 'parse5-7.3.0',
+  htmlEntities: 'entities-6.0.1',
+  xml: 'saxes-6.0.0',
+  xmlCharacters: 'xmlchars-2.2.0'
+});
+
 const HANDLER_PROFILE_GOLDEN = Object.freeze({
   profile: 'mvx-chromium-event-handlers-v1-sha256-eb73431ee6afe8d0d75a6f58744136e74ca5ba7ef8ecee9fe02dff4d9a86f14c',
   lists: Object.freeze({
@@ -91,6 +99,8 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
   assert.equal(result.analysis.profile, 'mvx-static-v4');
   assert.equal(result.encodedPayloads.profile, ENCODED_PAYLOAD_PROFILE);
   assert.equal(result.encodedPayloads.parserProfiles, ENCODED_PAYLOAD_PARSER_PROFILES);
+  assert.equal(Object.isFrozen(ENCODED_PAYLOAD_PARSER_PROFILES), true);
+  assert.deepEqual(ENCODED_PAYLOAD_PARSER_PROFILES, PARSER_PROFILE_GOLDEN);
   assert.equal(
     result.encodedPayloads.browserEventHandlerProfile,
     BROWSER_EVENT_HANDLER_PROFILE
@@ -574,6 +584,23 @@ test('srcdoc and standalone SVG documents retain bounded executable contexts', a
   assert.ok(standalone.htmlTreeWork > 0);
   assert.equal(standalone.htmlMaxDocumentDepth, 1);
 
+  const entities = extractEncodedPayloads([source([
+    '<!DOCTYPE s:svg [',
+    '  <!ENTITY label "safe">',
+    `  <!ENTITY call "atob(&quot;${payload}&quot;)">`,
+    '  <!ENTITY nested "&call;">',
+    '  <!ENTITY __proto__ "&nested;">',
+    '  <!ENTITY toString "&__proto__;">',
+    ']>',
+    '<s:svg xmlns:s="http://www.w3.org/2000/svg"><s:text>&label;</s:text><s:script>',
+    '&toString;',
+    '</s:script></s:svg>'
+  ].join('\n'), 'entities.svg')]);
+  assert.equal(entities.decodedCount, 1);
+  assert.equal(entities.entries[0].encodedLine, 9);
+  assert.equal(entities.xmlEntityDeclarations, 5);
+  assert.equal(entities.xmlExpandedChars, 8 + `atob("${payload}")`.length * 5);
+
   const malformed = extractEncodedPayloads([source(
     `<svg xmlns="http://www.w3.org/2000/svg"><script>atob('${payload}')</svg>`,
     'malformed.svg'
@@ -830,6 +857,50 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
     () => extractEncodedPayloads([svg], { maxHtmlTreeDepth: 1 }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /XML tree depth/.test(error.message)
   );
+  const entitySvg = source([
+    '<!DOCTYPE svg [<!ENTITY a "safe"><!ENTITY b "&a;">]>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><script>&b;</script></svg>'
+  ].join('\n'), 'entity-limits.svg');
+  assert.throws(
+    () => extractEncodedPayloads([entitySvg], { maxXmlEntityDeclarations: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /entity declarations/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([entitySvg], { maxXmlEntityDepth: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /entity depth/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([entitySvg], { maxXmlExpandedChars: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /entity expansion/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([source(
+      '<!DOCTYPE svg SYSTEM "external.dtd"><svg/>', 'external-dtd.svg'
+    )]),
+    (error) => error.code === 'INVALID_INPUT' && /External XML DTD/.test(error.message)
+  );
+  const unsupportedDtds = [
+    ['parameter', '<!DOCTYPE svg [<!ENTITY % p "x">]><svg/>', /Parameter XML entities/],
+    ['recursive', '<!DOCTYPE svg [<!ENTITY a "&a;">]><svg/>', /Recursive XML entity/],
+    ['markup', '<!DOCTYPE svg [<!ENTITY a "<g/>">]><svg/>', /Markup and parameter/],
+    ['default-attribute', '<!DOCTYPE svg [<!ATTLIST svg onclick CDATA #IMPLIED>]><svg/>', /Unsupported XML DTD/],
+    ['duplicate', '<!DOCTYPE svg [<!ENTITY a "x"><!ENTITY a "y">]><svg/>', /Duplicate XML entity/],
+    ['undefined', '<!DOCTYPE svg [<!ENTITY a "&missing;">]><svg/>', /Undefined XML entity/],
+    ['public', '<!DOCTYPE svg PUBLIC "identifier" "external.dtd"><svg/>', /External XML DTD/],
+    ['xml10-control', '<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "&#1;">]><svg/>', /Undefined XML entity/]
+  ];
+  for (const [name, content, message] of unsupportedDtds) {
+    assert.throws(
+      () => extractEncodedPayloads([source(content, `${name}.svg`)]),
+      (error) => error.code === 'INVALID_INPUT' && message.test(error.message)
+    );
+  }
+  const xml11 = extractEncodedPayloads([source(
+    '<?xml version="1.1"?><!DOCTYPE svg [<!ENTITY a "&#1;">]>'
+      + '<svg xmlns="http://www.w3.org/2000/svg"><text>&a;</text></svg>',
+    'xml11.svg'
+  )]);
+  assert.equal(xml11.xmlEntityDeclarations, 1);
   assert.throws(
     () => extractEncodedPayloads([
       source('<div>'.repeat(16), 'depth.html')

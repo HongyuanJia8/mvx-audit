@@ -20,7 +20,7 @@ versioning from the 2.0 reset onward.
   stack exhaustion, exact bundled HTML5 and namespace-aware XML parsing, a content-hashed generated
   Chromium-revision HTML/body/frameset/MathML/SVG event-handler profile with independent
   golden tests, namespace-specific SVG script/handler/CDATA grammars, inert-template,
-  nested-`srcdoc`, standalone-SVG, and corrected-root handling, and construction-time
+  nested-`srcdoc`, standalone-SVG, bounded internal XML entities, and corrected-root handling, and construction-time
   ECMAScript/HTML/XML token, attribute, node, document-depth, tree-depth, and tree-work
   limits fail closed and participate in analysis identity.
   Malformed HTML, raw-text elements, duplicate and merged attributes, handler

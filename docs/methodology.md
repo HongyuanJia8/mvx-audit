@@ -334,7 +334,7 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - In executable JS/HTML/SVG contexts, a bounded ECMAScript parser finds syntax-
   valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
   or `globalThis.atob` without executing JavaScript. The exact parser version is
-  bundled in the published package. Exact bundled Parse5, Saxes, and entities
+  bundled in the published package. Exact bundled Parse5, Saxes, entities, and xmlchars
   versions supply HTML5 tokenization and tree construction, namespace-aware XML
   parsing, and character-reference decoding, while the published shrinkwrap records every parser's registry
   integrity. Comments, literal text, regex lexical goals, templates, automatic
@@ -355,6 +355,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   external-source control. Standalone `.svg` package files are parsed as XML,
   preserving namespace resolution and case-sensitive element and attribute names,
   and are discarded as executable evidence when the XML is not well formed.
+  Simple internal general entities are expanded with source mapping; recursive,
+  parameter, external, markup-bearing, or otherwise unsupported DTD constructs
+  fail the audit explicitly instead of producing a clean result.
   Only names in a frozen, exported browser event-handler profile are
   executable; arbitrary `on*` attributes remain data. The generated profile is
   derived from a pinned Chromium revision's actual generic HTML, body, frameset,
@@ -384,12 +387,14 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   SVG XML work is separately capped at 1 million tokens, 16,384 attributes, 100,000 node
   allocations, 2,048 open-element depth, 16 document levels, and 4 million
   depth-weighted tree-construction work units. Nested HTML content is capped at
-  5 million characters in total.
+  5 million characters in total. XML DTD processing is capped at 256 internal
+  entity declarations, 16 expansion levels, and 1 million expanded characters.
   These content-deterministic counters interrupt tokenization, allocation, and
   expensive tree construction before a complete DOM is required, while parser
   stack exhaustion independently fails closed. The effective limits and work
   counters participate in encoded-payload identity. The published `html*` work
   fields are shared markup-parser budgets for both HTML and standalone SVG XML.
+  XML entity declaration and expanded-character counters are reported separately.
   Limit breaches fail with
   `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8
   payloads are rescanned by built-in and declarative source rules; binary

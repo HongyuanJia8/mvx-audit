@@ -31,9 +31,9 @@ and [MV3 overview](https://developer.chrome.com/docs/extensions/develop/migrate/
 
 ## Quick start
 
-Requirements: Node.js 20 or newer. The exact Acorn parser is bundled in the
-published package, and `npm-shrinkwrap.json` records its registry integrity; no
-browser is downloaded.
+Requirements: Node.js 20 or newer. The exact Acorn, Parse5, entities, Saxes, and
+xmlchars parser stack is bundled in the published package, and
+`npm-shrinkwrap.json` records registry integrity; no browser is downloaded.
 
 ```bash
 git clone https://github.com/hyj28/mvx-audit.git
