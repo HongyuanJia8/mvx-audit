@@ -30,7 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ github.event_name == 'push' && github.sha || format('refs/tags/{0}', inputs.tag) }}
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -40,6 +41,8 @@ jobs:
       - run: npm run check
       - run: npm audit --omit=dev
       - run: npm run release:build -- --expected-tag "$RELEASE_TAG"
+      - name: Verify the tag resolves to the checked-out commit
+        run: test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
       - name: Record release asset paths
         id: release-assets
         run: echo "sbom=dist/mvx-audit-${RELEASE_TAG#v}.cdx.json" >> "$GITHUB_OUTPUT"
