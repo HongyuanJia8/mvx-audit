@@ -240,6 +240,8 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
       packageFilesHashed: inventory.fileCount,
       packageBytesHashed: inventory.totalBytes,
       encodedPayloadCandidateChars: encodedPayloads.candidateEncodedChars,
+      encodedPayloadParserTokens: encodedPayloads.parserTokens,
+      encodedPayloadAstNodes: encodedPayloads.astNodes,
       encodedPayloadsDecoded: encodedPayloads.decodedCount,
       encodedPayloadBytesDecoded: encodedPayloads.totalDecodedBytes,
       warnings: state.warnings,

@@ -9,13 +9,14 @@ versioning from the 2.0 reset onward.
 
 - Bounded, non-executing analysis of direct literal Base64 `atob` payloads,
   including syntax-valid ECMAScript executable-context filtering with an exact
-  lockfile-integrity-pinned parser, recursive strict-UTF-8
+  bundled parser and published registry-integrity shrinkwrap, recursive strict-UTF-8
   rescanning by built-in and declarative rules, content-addressed inventory and
   hash-only decoded evidence, fail-closed attempt/work limits, SARIF/text/
   comparison reporting, offline-verification replay, and the `mvx-static-v4`
   analysis identity. JavaScript lexical goals, ASI, templates, additional arguments,
   HTML script end tags, and attribute character references retain bounded,
-  source-mapped handling.
+  source-mapped handling. Classic/module/handler grammar and parser token/AST
+  limits fail closed and participate in analysis identity.
 - Independent identity-bound isolated-lab verification for exact report,
   package, analysis, scenario, event-stream, deterministic evaluation, seccomp,
   and container-image identities, with private inode/device-anchored extension

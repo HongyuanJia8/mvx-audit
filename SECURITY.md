@@ -40,10 +40,14 @@ or extension code. A bounded ECMAScript parser recognizes direct, unescaped
 Base64 string literals in syntax-valid calls to bare `atob` or the `window`,
 `self`, and `globalThis` member forms. This delegates regex lexical goals,
 automatic semicolon insertion, templates, and delimiter validity to the exact
-Acorn version and integrity pinned by `package-lock.json`. Calls may have
+Acorn version bundled in the package; `npm-shrinkwrap.json` records the registry
+integrity used to install it. Calls may have
 additional arguments, but only the first literal is decoded. Syntax-invalid
 source is never decoded; a linear fallback only charges recognizable malformed
-attempts against work budgets. In HTML it scans only inline executable script bodies and event-
+attempts against work budgets. Classic scripts, module scripts, and event
+handlers use their respective grammar goals; standalone JS of unknown loading
+mode may be accepted as either a strict script or module. In HTML it scans only
+inline executable script bodies and event-
 handler attributes, validates actual `script` end-tag boundaries, and decodes
 numeric plus syntax-relevant named attribute character references with original
 source-offset provenance.
@@ -56,7 +60,8 @@ Binary payloads remain hash-only evidence. Candidate calls, payload count,
 per-attempt and aggregate inspected literal characters, per-payload and aggregate decoded
 bytes, minimum payload size, and recursive depth are fixed, recorded limits;
 malformed and incomplete literal attempts consume the same work budgets, and
-exceeding a safety bound fails closed. Decoded text is not copied into reports
+parser work additionally allows at most 1,000,000 tokens and 2,000,000 AST
+nodes across the audit. Exceeding a safety bound fails closed. Decoded text is not copied into reports
 or the inventory; decoded matches retain hash-only snippets.
 Findings map back to the packaged source line and retain decoded-line and
 content-hash provenance. Line provenance recognizes CRLF, CR, LF, U+2028, and

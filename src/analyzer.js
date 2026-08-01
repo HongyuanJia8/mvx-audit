@@ -99,6 +99,8 @@ export async function auditExtension(inputPath, options = {}) {
       limits: snapshot.encodedPayloads.limits,
       candidates: snapshot.encodedPayloads.candidates,
       candidateEncodedChars: snapshot.encodedPayloads.candidateEncodedChars,
+      parserTokens: snapshot.encodedPayloads.parserTokens,
+      astNodes: snapshot.encodedPayloads.astNodes,
       decodedCount: snapshot.encodedPayloads.decodedCount,
       utf8Count: snapshot.encodedPayloads.utf8Count,
       totalDecodedBytes: snapshot.encodedPayloads.totalDecodedBytes,

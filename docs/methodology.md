@@ -333,12 +333,15 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   [declarative rule packs](rule-packs.md) for the complete limits.
 - In executable JS/HTML contexts, a bounded ECMAScript parser finds syntax-
   valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
-  or `globalThis.atob` without executing JavaScript. The lockfile pins the exact
-  parser bytes; comments, literal text, regex lexical goals, templates,
+  or `globalThis.atob` without executing JavaScript. The exact parser version is
+  bundled in the published package, while the published shrinkwrap records its
+  registry integrity; comments, literal text, regex lexical goals, templates,
   automatic semicolon insertion, and delimiters follow its grammar.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
-  handlers; actual script end-tag boundaries and numeric or syntax-relevant
+  handlers, each using its declared classic, module, or handler grammar;
+  standalone JS with unknown loading mode may use strict script or module
+  grammar. Actual script end-tag boundaries and numeric or syntax-relevant
   named attribute character references preserve original source offsets. The
   scanner does not resolve runtime bindings, so this is a medium-confidence
   syntax signal. Only unescaped, canonical Base64 literals of at least 16
@@ -346,7 +349,8 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   Defaults allow 4,096 candidate calls, 128 decoded payloads, 1.5 million
   inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
-  recursive layers. Limit breaches fail with
+  recursive layers. Parser work is capped at 1 million tokens and 2 million AST
+  nodes across original and decoded inputs. Limit breaches fail with
   `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8 payloads are rescanned by built-in and
   declarative source rules; binary payloads retain byte length and SHA-256 but
   are not interpreted. Syntax-invalid source produces no decoded inventory; a

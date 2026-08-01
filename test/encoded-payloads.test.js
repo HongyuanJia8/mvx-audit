@@ -65,6 +65,8 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
   assert.equal(result.encodedPayloads.profile, ENCODED_PAYLOAD_PROFILE);
   assert.equal(result.encodedPayloads.decodedCount, 1);
   assert.equal(result.encodedPayloads.candidateEncodedChars, base64(hidden).length);
+  assert.ok(result.encodedPayloads.parserTokens > 0);
+  assert.ok(result.encodedPayloads.astNodes > 0);
   assert.equal(result.encodedPayloads.utf8Count, 1);
   assert.equal(result.encodedPayloads.totalDecodedBytes, Buffer.byteLength(hidden));
   assert.equal(result.analysis.encodedPayloads.sha256, result.encodedPayloads.sha256);
@@ -257,12 +259,20 @@ test('token-aware extraction excludes non-executable text and preserves syntacti
     `<script type="text&#x2f;javascript">atob('${payload}')</script>`,
     `<script>${'İ'.repeat(80)}</script><script>atob('${payload}')</script>`,
     `<script>const marker = "</script\u00a0x>"; atob('${payload}')</script>`,
-    `<script type="module;garbage">atob('${payload}')</script>`
+    `<script type="module;garbage">atob('${payload}')</script>`,
+    `<script>import value from './x.js'; atob('${payload}')</script>`,
+    `<script type="module">with (value) atob('${payload}')</script>`,
+    `<script>return atob('${payload}')</script>`,
+    `<script type="module">import value from './x.js'; atob('${payload}')</script>`,
+    `<script type="module">await 1; atob('${payload}')</script>`,
+    `<button onclick="return atob('${payload}')">handler</button>`
   ].join('\n');
   const browserHtmlResult = extractEncodedPayloads([source(browserHtml, 'browser.html')]);
-  assert.equal(browserHtmlResult.candidates, 6);
-  assert.equal(browserHtmlResult.decodedCount, 6);
-  assert.deepEqual(browserHtmlResult.entries.map((entry) => entry.encodedLine), [1, 2, 3, 4, 5, 6]);
+  assert.equal(browserHtmlResult.candidates, 12);
+  assert.equal(browserHtmlResult.decodedCount, 9);
+  assert.deepEqual(browserHtmlResult.entries.map((entry) => entry.encodedLine), [
+    1, 2, 3, 4, 5, 6, 11, 12, 13
+  ]);
 });
 
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
@@ -369,6 +379,17 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
     (error) => error.code === 'INVALID_ARGUMENT');
   assert.throws(() => extractEncodedPayloads([two], new Proxy({}, {})),
     (error) => error.code === 'INVALID_ARGUMENT');
+  assert.throws(
+    () => extractEncodedPayloads([source(';'.repeat(1_001))], { maxParserTokens: 1_000 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /tokens/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([source('0;'.repeat(500))], {
+      maxParserTokens: 5_000,
+      maxAstNodes: 500
+    }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /AST nodes/.test(error.message)
+  );
 
   const nested = source(`atob('${base64(`atob('${base64('eval(payload);xxxxx')}')`)}')`);
   const shallow = extractEncodedPayloads([nested], { maxDepth: 1 });

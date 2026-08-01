@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
 
-MVX Audit is a deterministic, dependency-free security research toolkit for
+MVX Audit is a deterministic, minimal-dependency security research toolkit for
 Chrome extensions. It combines static auditing, MV2/MV3 capability comparison,
 reproducible real-world threat intelligence, hash-verified quarantine,
 real-sample triage benchmarking, and an optional networkless dynamic canary lab.
@@ -31,8 +31,9 @@ and [MV3 overview](https://developer.chrome.com/docs/extensions/develop/migrate/
 
 ## Quick start
 
-Requirements: Node.js 20 or newer. The single runtime dependency is the exact,
-lockfile-integrity-bound Acorn parser; no browser is downloaded.
+Requirements: Node.js 20 or newer. The exact Acorn parser is bundled in the
+published package, and `npm-shrinkwrap.json` records its registry integrity; no
+browser is downloaded.
 
 ```bash
 git clone https://github.com/hyj28/mvx-audit.git

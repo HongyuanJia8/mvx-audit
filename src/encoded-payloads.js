@@ -13,6 +13,8 @@ export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
   maxTotalEncodedChars: 8_000_000,
   maxDecodedBytes: 1_000_000,
   maxTotalDecodedBytes: 5_000_000,
+  maxParserTokens: 1_000_000,
+  maxAstNodes: 2_000_000,
   maxDepth: 2,
   minDecodedBytes: 16
 });
@@ -128,32 +130,46 @@ function chargeMalformedSource(segment, budget, limits) {
   }
 }
 
-function parseJavaScript(segment) {
+function parseJavaScriptGoal(segment, sourceType, parserBudget, limits, handler = false) {
   const options = {
-    allowAwaitOutsideFunction: true,
     allowHashBang: true,
-    allowReturnOutsideFunction: true,
-    ecmaVersion: 'latest'
-  };
-  try {
-    return parse(segment, { ...options, sourceType: 'script' });
-  } catch (scriptError) {
-    if (!(scriptError instanceof SyntaxError)) {
-      throw new MvxError('ECMAScript parser exceeded a safe runtime resource', {
-        code: 'ENCODED_PAYLOAD_LIMIT', cause: scriptError
-      });
-    }
-    try {
-      return parse(segment, { ...options, sourceType: 'module' });
-    } catch (moduleError) {
-      if (!(moduleError instanceof SyntaxError)) {
-        throw new MvxError('ECMAScript parser exceeded a safe runtime resource', {
-          code: 'ENCODED_PAYLOAD_LIMIT', cause: moduleError
+    allowReturnOutsideFunction: handler,
+    ecmaVersion: 'latest',
+    onToken: () => {
+      parserBudget.parserTokens += 1;
+      if (parserBudget.parserTokens > limits.maxParserTokens) {
+        throw new MvxError(`ECMAScript tokens exceed ${limits.maxParserTokens}`, {
+          code: 'ENCODED_PAYLOAD_LIMIT'
         });
       }
-      return null;
+    },
+    sourceType
+  };
+  try {
+    return parse(segment, options);
+  } catch (error) {
+    if (error instanceof MvxError) throw error;
+    if (!(error instanceof SyntaxError)) {
+      throw new MvxError('ECMAScript parser exceeded a safe runtime resource', {
+        code: 'ENCODED_PAYLOAD_LIMIT', cause: error
+      });
     }
+    return null;
   }
+}
+
+function parseJavaScript(segment, mode, parserBudget, limits) {
+  if (mode === 'script') {
+    return parseJavaScriptGoal(segment, 'script', parserBudget, limits);
+  }
+  if (mode === 'module') {
+    return parseJavaScriptGoal(segment, 'module', parserBudget, limits);
+  }
+  if (mode === 'handler') {
+    return parseJavaScriptGoal(segment, 'script', parserBudget, limits, true);
+  }
+  const script = parseJavaScriptGoal(segment, 'script', parserBudget, limits);
+  return script ?? parseJavaScriptGoal(segment, 'module', parserBudget, limits);
 }
 
 function directAtobCall(node) {
@@ -168,10 +184,10 @@ function directAtobCall(node) {
 }
 
 function* javascriptAtobLiterals(
-  content, start, end, starts, budget, limits, originalOffsets = null
+  content, start, end, starts, budget, limits, originalOffsets = null, mode = 'unknown'
 ) {
   const segment = content.slice(start, end);
-  const program = parseJavaScript(segment);
+  const program = parseJavaScript(segment, mode, budget, limits);
   if (!program) {
     chargeMalformedSource(segment, budget, limits);
     return;
@@ -179,6 +195,12 @@ function* javascriptAtobLiterals(
   const stack = [program];
   while (stack.length > 0) {
     const node = stack.pop();
+    budget.astNodes += 1;
+    if (budget.astNodes > limits.maxAstNodes) {
+      throw new MvxError(`ECMAScript AST nodes exceed ${limits.maxAstNodes}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
     if (directAtobCall(node)) {
       const first = node.arguments[0];
       if (first?.type === 'Literal' && typeof first.value === 'string') {
@@ -307,17 +329,19 @@ function findScriptEnd(content, start) {
   return -1;
 }
 
-function executableScript(content, tag) {
-  if (tag.attributes.some((attribute) => attribute.name === 'src')) return false;
+function scriptMode(content, tag) {
+  if (tag.attributes.some((attribute) => attribute.name === 'src')) return null;
   const type = tag.attributes.find((attribute) => attribute.name === 'type');
-  if (!type || type.valueStart === undefined) return true;
+  if (!type || type.valueStart === undefined) return 'script';
   const decoded = decodeHtmlAttribute(content, type.valueStart, type.valueEnd).content;
   const trimmed = trimHtmlSpace(decoded);
-  if (trimmed === '') return true;
-  if (trimmed.toLowerCase() === 'module') return true;
+  if (trimmed === '') return 'script';
+  if (trimmed.toLowerCase() === 'module') return 'module';
   const normalized = trimHtmlSpace(trimmed.split(';', 1)[0]).toLowerCase();
   return JAVASCRIPT_TYPES.has(normalized)
-    || normalized.endsWith('+javascript') || normalized.endsWith('+ecmascript');
+    || normalized.endsWith('+javascript') || normalized.endsWith('+ecmascript')
+    ? 'script'
+    : null;
 }
 
 function* htmlAtobLiterals(content, starts, budget, limits) {
@@ -339,7 +363,8 @@ function* htmlAtobLiterals(content, starts, budget, limits) {
             content, attribute.valueStart, attribute.valueEnd
           );
           yield* javascriptAtobLiterals(
-            decoded.content, 0, decoded.content.length, starts, budget, limits, decoded.offsets
+            decoded.content, 0, decoded.content.length, starts, budget, limits,
+            decoded.offsets, 'handler'
           );
         }
       }
@@ -347,8 +372,11 @@ function* htmlAtobLiterals(content, starts, budget, limits) {
     if (!tag.closing && tag.name === 'script') {
       const close = findScriptEnd(content, tag.end);
       const bodyEnd = close === -1 ? content.length : close;
-      if (executableScript(content, tag)) {
-        yield* javascriptAtobLiterals(content, tag.end, bodyEnd, starts, budget, limits);
+      const mode = scriptMode(content, tag);
+      if (mode) {
+        yield* javascriptAtobLiterals(
+          content, tag.end, bodyEnd, starts, budget, limits, null, mode
+        );
       }
       if (close === -1) return;
       const closingTag = parseTag(content, close, content.length);
@@ -363,7 +391,9 @@ function directAtobLiterals(source, budget, limits) {
     return htmlAtobLiterals(source.content, starts, budget, limits);
   }
   return javascriptAtobLiterals(
-    source.content, 0, source.content.length, starts, budget, limits
+    source.content, 0, source.content.length, starts, budget, limits, null,
+    source.depth > 0 ? 'unknown' : /\.mjs$/i.test(source.path) ? 'module'
+      : /\.cjs$/i.test(source.path) ? 'script' : 'unknown'
   );
 }
 
@@ -407,7 +437,12 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
   }));
   const decodedSources = [];
   const entries = [];
-  const candidateBudget = { candidates: 0, candidateEncodedChars: 0 };
+  const candidateBudget = {
+    candidates: 0,
+    candidateEncodedChars: 0,
+    parserTokens: 0,
+    astNodes: 0
+  };
   let totalDecodedBytes = 0;
 
   for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
@@ -489,6 +524,8 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
     limits,
     candidates: candidateBudget.candidates,
     candidateEncodedChars: candidateBudget.candidateEncodedChars,
+    parserTokens: candidateBudget.parserTokens,
+    astNodes: candidateBudget.astNodes,
     entries: frozenEntries
   });
   return Object.freeze({

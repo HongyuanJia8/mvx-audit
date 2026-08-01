@@ -19,6 +19,7 @@
     "docs/",
     "CHANGELOG.md",
     "LICENSE",
+    "npm-shrinkwrap.json",
     "README.md",
     "SECURITY.md"
   ],
@@ -60,5 +61,8 @@
   "homepage": "https://github.com/hyj28/mvx-audit#readme",
   "dependencies": {
     "acorn": "8.18.0"
-  }
+  },
+  "bundleDependencies": [
+    "acorn"
+  ]
 }
