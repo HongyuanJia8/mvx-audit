@@ -17,9 +17,12 @@ versioning from the 2.0 reset onward.
   HTML script end tags, and attribute character references retain bounded,
   source-mapped handling. Complete WHATWG JavaScript MIME selection, legacy
   `language`, modern `nomodule`, classic/module/function-body grammar, parser
-  stack exhaustion, a frozen Chromium-revision event-handler profile with
-  exhaustive content-attribute tests, and construction-time token/AST-
-  allocation limits fail closed and participate in analysis identity.
+  stack exhaustion, exact bundled HTML5 parsing, a content-hashed generated
+  Chromium-revision HTML/body/frameset/MathML/SVG event-handler profile with independent
+  golden tests, and construction-time token/AST-allocation limits fail closed
+  and participate in analysis identity. Malformed HTML, raw-text elements,
+  duplicate attributes, handler formal parameters, and SVG/SMIL handlers retain
+  browser-aligned executable-context handling.
 - Independent identity-bound isolated-lab verification for exact report,
   package, analysis, scenario, event-stream, deterministic evaluation, seccomp,
   and container-image identities, with private inode/device-anchored extension

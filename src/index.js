@@ -35,9 +35,11 @@ export { loadRulePacks, rulePacksToText } from './rule-packs.js';
 export { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
 export { MvxError } from './errors.js';
 export {
-  ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PROFILE
+  ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PARSER_PROFILES,
+  ENCODED_PAYLOAD_PROFILE
 } from './encoded-payloads.js';
 export {
   BROWSER_EVENT_HANDLER_PROFILE, BROWSER_EVENT_HANDLER_PROVENANCE,
-  HTML_EVENT_HANDLER_ATTRIBUTES, WINDOW_EVENT_HANDLER_ATTRIBUTES
+  BODY_EVENT_HANDLER_ATTRIBUTES, FRAMESET_EVENT_HANDLER_ATTRIBUTES,
+  HTML_EVENT_HANDLER_ATTRIBUTES, SVG_EVENT_HANDLER_ATTRIBUTES
 } from './browser-event-handlers.js';

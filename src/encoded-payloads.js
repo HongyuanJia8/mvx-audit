@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { Parser } from 'acorn';
+import { DecodingMode, EntityDecoder, htmlDecodeTree } from 'entities/decode';
+import { parse as parseHtml } from 'parse5';
 import {
-  BROWSER_EVENT_HANDLER_PROFILE, isExecutableHtmlEventHandler
+  BROWSER_EVENT_HANDLER_PROFILE, htmlEventHandlerMode
 } from './browser-event-handlers.js';
 import { MvxError } from './errors.js';
 import { createFinding, REFERENCES } from './model.js';
@@ -9,6 +11,11 @@ import { assertOptionsObject } from './options.js';
 import { lineAt, lineStarts } from './text-locations.js';
 
 export const ENCODED_PAYLOAD_PROFILE = 'mvx-encoded-payloads-v1';
+export const ENCODED_PAYLOAD_PARSER_PROFILES = Object.freeze({
+  ecmascript: 'acorn-8.18.0',
+  html: 'parse5-7.3.0',
+  htmlEntities: 'entities-6.0.1'
+});
 export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
   maxCandidates: 4_096,
   maxPayloads: 128,
@@ -31,15 +38,10 @@ const JAVASCRIPT_TYPES = new Set([
   'text/javascript1.3', 'text/javascript1.4', 'text/javascript1.5',
   'text/jscript', 'text/livescript', 'text/x-ecmascript', 'text/x-javascript'
 ]);
-const HANDLER_PREFIX = 'function __mvx_event_handler__(){';
+const HANDLER_PREFIX = 'function __mvx_event_handler__(event){';
+const ERROR_HANDLER_PREFIX =
+  'function __mvx_event_handler__(event, source, lineno, colno, error){';
 const HANDLER_SUFFIX = '\n}';
-const HTML_CHARACTER_REFERENCES = Object.freeze({
-  AMP: '&', amp: '&', apos: "'", bsol: '\\', colon: ':', comma: ',', dollar: '$',
-  equals: '=', excl: '!', grave: '`', GT: '>', gt: '>', lcub: '{', lpar: '(',
-  lsqb: '[', LT: '<', lt: '<', minus: '-', NewLine: '\n', num: '#', period: '.',
-  plus: '+', quest: '?', QUOT: '"', quot: '"', rcub: '}', rpar: ')', rsqb: ']',
-  semi: ';', sol: '/', Tab: '\t'
-});
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -145,8 +147,9 @@ function chargeMalformedSource(segment, budget, limits) {
   }
 }
 
-function parseJavaScriptGoal(segment, sourceType, parserBudget, limits, handler = false) {
-  const prefix = handler ? HANDLER_PREFIX : '';
+function parseJavaScriptGoal(segment, sourceType, parserBudget, limits, handler = null) {
+  const prefix = handler === 'error' ? ERROR_HANDLER_PREFIX
+    : handler === 'event' ? HANDLER_PREFIX : '';
   const input = handler ? `${prefix}${segment}${HANDLER_SUFFIX}` : segment;
   const chargeAstNode = () => {
     parserBudget.astNodes += 1;
@@ -211,7 +214,10 @@ function parseJavaScript(segment, mode, parserBudget, limits) {
     return parseJavaScriptGoal(segment, 'module', parserBudget, limits);
   }
   if (mode === 'handler') {
-    return parseJavaScriptGoal(segment, 'script', parserBudget, limits, true);
+    return parseJavaScriptGoal(segment, 'script', parserBudget, limits, 'event');
+  }
+  if (mode === 'error-handler') {
+    return parseJavaScriptGoal(segment, 'script', parserBudget, limits, 'error');
   }
   const script = parseJavaScriptGoal(segment, 'script', parserBudget, limits);
   return script ?? parseJavaScriptGoal(segment, 'module', parserBudget, limits);
@@ -267,109 +273,70 @@ function* javascriptAtobLiterals(
   }
 }
 
-function parseTag(content, start, end) {
-  let cursor = start + 1;
-  let closing = false;
-  if (content[cursor] === '/') { closing = true; cursor += 1; }
-  while (isHtmlSpace(content[cursor])) cursor += 1;
-  const nameStart = cursor;
-  while (/[A-Za-z0-9:-]/.test(content[cursor] ?? '')) cursor += 1;
-  if (cursor === nameStart) return null;
-  const name = asciiLower(content.slice(nameStart, cursor));
-  const attributes = [];
-  while (cursor < end) {
-    while (isHtmlSpace(content[cursor])) cursor += 1;
-    if (content[cursor] === '>') return { name, closing, attributes, end: cursor + 1 };
-    if (content[cursor] === '/' && content[cursor + 1] === '>') {
-      return { name, closing, attributes, end: cursor + 2 };
-    }
-    const attributeStart = cursor;
-    while (cursor < end && !isHtmlSpace(content[cursor])
-      && !['=', '>', '/'].includes(content[cursor])) cursor += 1;
-    if (cursor === attributeStart) { cursor += 1; continue; }
-    const attribute = { name: asciiLower(content.slice(attributeStart, cursor)) };
-    while (isHtmlSpace(content[cursor])) cursor += 1;
-    if (content[cursor] === '=') {
-      cursor += 1;
-      while (isHtmlSpace(content[cursor])) cursor += 1;
-      const quote = content[cursor];
-      if (quote === "'" || quote === '"') {
-        attribute.valueStart = cursor + 1;
-        const close = content.indexOf(quote, attribute.valueStart);
-        attribute.valueEnd = close === -1 || close >= end ? end : close;
-        cursor = close === -1 || close >= end ? end : close + 1;
-      } else {
-        attribute.valueStart = cursor;
-        while (cursor < end && !isHtmlSpace(content[cursor]) && content[cursor] !== '>') cursor += 1;
-        attribute.valueEnd = cursor;
-      }
-      attribute.value = content.slice(attribute.valueStart, attribute.valueEnd);
-    }
-    attributes.push(attribute);
-  }
-  return null;
-}
-
 function decodeHtmlAttribute(content, start, end) {
   let decoded = '';
   const offsets = [];
-  let cursor = start;
-  while (cursor < end) {
-    let replacement = null;
-    let consumed = 0;
-    if (content[cursor] === '&') {
-      const tail = content.slice(cursor, Math.min(end, cursor + 40));
-      const numeric = tail.match(/^&#(?:x([0-9A-Fa-f]+)|([0-9]+));?/);
-      if (numeric) {
-        const value = Number.parseInt(numeric[1] ?? numeric[2], numeric[1] ? 16 : 10);
-        replacement = value > 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff)
-          ? String.fromCodePoint(value)
-          : '\ufffd';
-        consumed = numeric[0].length;
-      } else {
-        const named = tail.match(/^&([A-Za-z][A-Za-z0-9]+);/);
-        if (named && Object.hasOwn(HTML_CHARACTER_REFERENCES, named[1])) {
-          replacement = HTML_CHARACTER_REFERENCES[named[1]];
-          consumed = named[0].length;
-        }
-      }
+  const raw = content.slice(start, end);
+  let entityOffset = start;
+  const decoder = new EntityDecoder(htmlDecodeTree, (codePoint) => {
+    const replacement = String.fromCodePoint(codePoint);
+    decoded += replacement;
+    for (let index = 0; index < replacement.length; index += 1) {
+      offsets.push(entityOffset);
     }
-    if (replacement !== null) {
-      decoded += replacement;
-      for (let index = 0; index < replacement.length; index += 1) offsets.push(cursor);
-      cursor += consumed;
-    } else {
-      decoded += content[cursor];
-      offsets.push(cursor);
+  });
+  let cursor = 0;
+  while (cursor < raw.length) {
+    const ampersand = raw.indexOf('&', cursor);
+    const literalEnd = ampersand === -1 ? raw.length : ampersand;
+    while (cursor < literalEnd) {
+      decoded += raw[cursor];
+      offsets.push(start + cursor);
       cursor += 1;
     }
+    if (ampersand === -1) break;
+    entityOffset = start + ampersand;
+    decoder.startEntity(DecodingMode.Attribute);
+    let consumed = decoder.write(raw, ampersand + 1);
+    if (consumed < 0) consumed = decoder.end();
+    if (consumed === 0) {
+      decoded += '&';
+      offsets.push(entityOffset);
+      cursor = ampersand + 1;
+    } else cursor = ampersand + consumed;
   }
   offsets.push(end);
   return { content: decoded, offsets };
 }
 
-function asciiEqualAt(content, index, expected) {
-  if (index + expected.length > content.length) return false;
-  for (let offset = 0; offset < expected.length; offset += 1) {
-    const actualCode = content.charCodeAt(index + offset);
-    const folded = actualCode >= 65 && actualCode <= 90 ? actualCode + 32 : actualCode;
-    if (folded !== expected.charCodeAt(offset)) return false;
+function attributeValueBounds(content, location) {
+  let cursor = location.startOffset;
+  while (cursor < location.endOffset && !isHtmlSpace(content[cursor])
+    && content[cursor] !== '=') cursor += 1;
+  while (cursor < location.endOffset && isHtmlSpace(content[cursor])) cursor += 1;
+  if (content[cursor] !== '=') return null;
+  cursor += 1;
+  while (cursor < location.endOffset && isHtmlSpace(content[cursor])) cursor += 1;
+  const quote = content[cursor];
+  if (quote === "'" || quote === '"') {
+    return { start: cursor + 1, end: Math.max(cursor + 1, location.endOffset - 1) };
   }
-  return true;
+  return { start: cursor, end: location.endOffset };
 }
 
-function findScriptEnd(content, start) {
-  let cursor = start;
-  while (cursor < content.length) {
-    const open = content.indexOf('<', cursor);
-    if (open === -1) return -1;
-    if (asciiEqualAt(content, open, '</script')) {
-      const boundary = content[open + 8];
-      if (boundary === '>' || boundary === '/' || isHtmlSpace(boundary)) return open;
-    }
-    cursor = open + 1;
-  }
-  return -1;
+function sourceTag(content, node) {
+  const locations = node.sourceCodeLocation?.attrs ?? {};
+  return {
+    name: node.tagName,
+    attributes: node.attrs.map((attribute) => {
+      const location = locations[attribute.name];
+      const bounds = location ? attributeValueBounds(content, location) : null;
+      return {
+        name: attribute.name,
+        ...(bounds ? { valueStart: bounds.start, valueEnd: bounds.end } : {})
+      };
+    })
+  };
 }
 
 function scriptMode(content, tag) {
@@ -413,44 +380,41 @@ function scriptMode(content, tag) {
 }
 
 function* htmlAtobLiterals(content, starts, budget, limits) {
-  let cursor = 0;
-  while (cursor < content.length) {
-    const open = content.indexOf('<', cursor);
-    if (open === -1) return;
-    if (content.startsWith('<!--', open)) {
-      const close = content.indexOf('-->', open + 4);
-      cursor = close === -1 ? content.length : close + 3;
-      continue;
-    }
-    const tag = parseTag(content, open, content.length);
-    if (!tag) { cursor = open + 1; continue; }
-    if (!tag.closing) {
+  const document = parseHtml(content, { sourceCodeLocationInfo: true });
+  const stack = [document];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node.tagName && node.sourceCodeLocation?.startTag) {
+      const tag = sourceTag(content, node);
       for (const attribute of tag.attributes) {
-        const eventHandler = isExecutableHtmlEventHandler(tag.name, attribute.name);
-        if (eventHandler && attribute.valueStart !== undefined) {
+        const mode = htmlEventHandlerMode(
+          node.namespaceURI, tag.name, attribute.name
+        );
+        if (mode && attribute.valueStart !== undefined) {
           const decoded = decodeHtmlAttribute(
             content, attribute.valueStart, attribute.valueEnd
           );
           yield* javascriptAtobLiterals(
             decoded.content, 0, decoded.content.length, starts, budget, limits,
-            decoded.offsets, 'handler'
+            decoded.offsets, mode
+          );
+        }
+      }
+      if (tag.name === 'script') {
+        const bodyStart = node.sourceCodeLocation.startTag.endOffset;
+        const bodyEnd = node.sourceCodeLocation.endTag?.startOffset ?? content.length;
+        const mode = scriptMode(content, tag);
+        if (mode) {
+          yield* javascriptAtobLiterals(
+            content, bodyStart, bodyEnd, starts, budget, limits, null, mode
           );
         }
       }
     }
-    if (!tag.closing && tag.name === 'script') {
-      const close = findScriptEnd(content, tag.end);
-      const bodyEnd = close === -1 ? content.length : close;
-      const mode = scriptMode(content, tag);
-      if (mode) {
-        yield* javascriptAtobLiterals(
-          content, tag.end, bodyEnd, starts, budget, limits, null, mode
-        );
-      }
-      if (close === -1) return;
-      const closingTag = parseTag(content, close, content.length);
-      cursor = closingTag?.end ?? close + 2;
-    } else cursor = tag.end;
+    const children = node.childNodes ?? [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
   }
 }
 
@@ -590,6 +554,7 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
   const frozenEntries = Object.freeze(entries);
   const identity = Object.freeze({
     profile: ENCODED_PAYLOAD_PROFILE,
+    parserProfiles: ENCODED_PAYLOAD_PARSER_PROFILES,
     browserEventHandlerProfile: BROWSER_EVENT_HANDLER_PROFILE,
     limits,
     candidates: candidateBudget.candidates,

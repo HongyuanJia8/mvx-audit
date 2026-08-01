@@ -38,26 +38,25 @@ expiry, integrity, and conclusions.
 Encoded-payload analysis is static and never calls `eval`, `Function`, `atob`,
 or extension code. A bounded ECMAScript parser recognizes direct, unescaped
 Base64 string literals in syntax-valid calls to bare `atob` or the `window`,
-`self`, and `globalThis` member forms. This delegates regex lexical goals,
-automatic semicolon insertion, templates, and delimiter validity to the exact
-Acorn version bundled in the package; `npm-shrinkwrap.json` records the registry
-integrity used to install it. Calls may have
+`self`, and `globalThis` member forms. This delegates JavaScript grammar to the
+exact bundled Acorn version and HTML tokenization/tree construction to the exact
+bundled Parse5 and entities versions; `npm-shrinkwrap.json` records their
+registry integrity. Calls may have
 additional arguments, but only the first literal is decoded. Syntax-invalid
 source is never decoded; a linear fallback only charges recognizable malformed
 attempts against work budgets. Classic scripts, module scripts, and event
 handlers use their respective grammar goals, with handlers parsed as actual
 function bodies; standalone JS of unknown loading mode may be accepted as
 either a strict script or module. In HTML it scans only inline executable
-script bodies and a fixed allowlist of browser-defined event-handler content
-attributes; arbitrary `on*` data attributes are inert. The allowlist covers
-HTML global/body handlers plus Pointer, Touch, Selection, CSS animation,
-transition, scroll-snap, WebXR, and Chrome-specific clipboard, focus, prompt,
-validation, mouse-wheel, and prefixed event extensions. Its exported profile
-pins the Chromium source revision and participates in the analysis identity.
+script bodies and a frozen profile of browser-defined event-handler content
+attributes; arbitrary `on*` data attributes are inert. The profile is generated
+from a pinned Chromium revision's actual generic HTML, body, frameset, MathML, and SVG
+attribute-trigger implementations. Its canonical content hash and all parser
+versions participate in the analysis identity.
 Script selection applies the complete WHATWG JavaScript MIME essence list plus
 legacy `language` and modern `nomodule` behavior, validates actual `script` end-
-tag boundaries, and decodes numeric plus syntax-relevant named attribute
-character references with original source-offset provenance.
+tag boundaries, raw-text states, duplicate-attribute suppression, HTML/MathML/SVG
+namespaces, and all character references with original source-offset provenance.
 This syntax does not prove the runtime binding of a bare or member call, so the
 finding has medium confidence. Canonical decoded bytes are validated and only
 strict UTF-8 text is rescanned. JSON data is never treated as executable.

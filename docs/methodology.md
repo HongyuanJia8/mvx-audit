@@ -334,26 +334,30 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - In executable JS/HTML contexts, a bounded ECMAScript parser finds syntax-
   valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
   or `globalThis.atob` without executing JavaScript. The exact parser version is
-  bundled in the published package, while the published shrinkwrap records its
-  registry integrity; comments, literal text, regex lexical goals, templates,
-  automatic semicolon insertion, and delimiters follow its grammar.
+  bundled in the published package. Exact bundled Parse5 and entities versions
+  supply HTML5 tokenization, tree construction, and character-reference
+  decoding, while the published shrinkwrap records every parser's registry
+  integrity. Comments, literal text, regex lexical goals, templates, automatic
+  semicolon insertion, and delimiters follow the ECMAScript grammar.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
   handlers, using classic, module, or actual function-body grammar as applicable.
   Only names in a frozen, exported browser event-handler profile are
-  executable; arbitrary `on*` attributes remain data. The profile covers HTML
-  global/body, Pointer, Touch, Selection, CSS animation/transition/scroll-snap,
-  WebXR, and Chrome-specific clipboard, focus, prompt, validation, mouse-wheel,
-  and prefixed event extensions. It pins the Chromium source revision and its
-  profile ID participates in the encoded-payload and overall analysis identity.
+  executable; arbitrary `on*` attributes remain data. The generated profile is
+  derived from a pinned Chromium revision's actual generic HTML, body, frameset,
+  MathML, and SVG content-attribute trigger implementations. Its profile ID contains a
+  canonical hash of the full revision, source list, and all generated handler
+  lists; that ID and exact parser versions participate in encoded-payload and
+  overall analysis identity.
   Maintainers advance the checked-in snapshot explicitly with
   `npm run handlers:update`; audits never fetch browser metadata at runtime.
   Script selection follows the complete WHATWG
   [JavaScript MIME type essence list](https://mimesniff.spec.whatwg.org/#javascript-mime-type),
   legacy `language`, and modern-Chrome `nomodule` behavior. Standalone JS with
   unknown loading mode may use strict script or module grammar. Actual script
-  end-tag boundaries and numeric or syntax-relevant
-  named attribute character references preserve original source offsets. The
+  tree construction, raw-text states, duplicate-attribute suppression,
+  HTML/MathML/SVG namespaces, end-tag boundaries, and all character references
+  preserve original source offsets. The
   scanner does not resolve runtime bindings, so this is a medium-confidence
   syntax signal. Only unescaped, canonical Base64 literals of at least 16
   decoded bytes are inventoried.

@@ -10,19 +10,23 @@ import { compareExtensions } from '../src/compare.js';
 import { verifyComparisonReport } from '../src/comparison-verification.js';
 import {
   BROWSER_EVENT_HANDLER_PROFILE, BROWSER_EVENT_HANDLER_PROVENANCE,
-  HTML_EVENT_HANDLER_ATTRIBUTES, WINDOW_EVENT_HANDLER_ATTRIBUTES
+  BODY_EVENT_HANDLER_ATTRIBUTES, FRAMESET_EVENT_HANDLER_ATTRIBUTES,
+  HTML_EVENT_HANDLER_ATTRIBUTES, SVG_EVENT_HANDLER_ATTRIBUTES
 } from '../src/browser-event-handlers.js';
 import {
-  analyzeEncodedPayloads, ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PROFILE,
-  extractEncodedPayloads
+  analyzeEncodedPayloads, ENCODED_PAYLOAD_LIMITS,
+  ENCODED_PAYLOAD_PARSER_PROFILES, ENCODED_PAYLOAD_PROFILE, extractEncodedPayloads
 } from '../src/encoded-payloads.js';
 import {
   ENCODED_PAYLOAD_LIMITS as PUBLIC_ENCODED_PAYLOAD_LIMITS,
+  ENCODED_PAYLOAD_PARSER_PROFILES as PUBLIC_ENCODED_PAYLOAD_PARSER_PROFILES,
   ENCODED_PAYLOAD_PROFILE as PUBLIC_ENCODED_PAYLOAD_PROFILE,
   BROWSER_EVENT_HANDLER_PROFILE as PUBLIC_BROWSER_EVENT_HANDLER_PROFILE,
   BROWSER_EVENT_HANDLER_PROVENANCE as PUBLIC_BROWSER_EVENT_HANDLER_PROVENANCE,
+  BODY_EVENT_HANDLER_ATTRIBUTES as PUBLIC_BODY_EVENT_HANDLER_ATTRIBUTES,
+  FRAMESET_EVENT_HANDLER_ATTRIBUTES as PUBLIC_FRAMESET_EVENT_HANDLER_ATTRIBUTES,
   HTML_EVENT_HANDLER_ATTRIBUTES as PUBLIC_HTML_EVENT_HANDLER_ATTRIBUTES,
-  WINDOW_EVENT_HANDLER_ATTRIBUTES as PUBLIC_WINDOW_EVENT_HANDLER_ATTRIBUTES
+  SVG_EVENT_HANDLER_ATTRIBUTES as PUBLIC_SVG_EVENT_HANDLER_ATTRIBUTES
 } from '../src/index.js';
 import { verifyAuditReport } from '../src/audit-verification.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from '../src/reporters.js';
@@ -39,6 +43,16 @@ function source(content, sourcePath = 'worker.js') {
     sha256: createHash('sha256').update(content).digest('hex')
   };
 }
+
+const HANDLER_PROFILE_GOLDEN = Object.freeze({
+  profile: 'mvx-chromium-event-handlers-v1-sha256-c4a32df3d5b9d85a0ce371c8b96c6060d69f22105de5a8dd5ce9302f1ccd1ec0',
+  lists: Object.freeze({
+    body: Object.freeze({ count: 23, sha256: '4ddd4a6e31f75be8eb3d0f339a432333f93e35c1d7b4d63ff63e8d6cb64f5dca' }),
+    frameset: Object.freeze({ count: 23, sha256: 'ec184fa2af1bf99c1dbc41b3bbbf199f7b5d5cd76f38fa7a9028ca2c8be1a985' }),
+    html: Object.freeze({ count: 115, sha256: 'c93522e21c1c8e010b0ae87f4888ca36301e36946a2fef6d9929203ce4f70000' }),
+    svg: Object.freeze({ count: 6, sha256: 'f3c1555b121deca7b728d41730c4b5f1de1257d20733afa3152e80f691929672' })
+  })
+});
 
 function pack(indicator) {
   return {
@@ -71,6 +85,7 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
   const result = await auditExtension(temp);
   assert.equal(result.analysis.profile, 'mvx-static-v4');
   assert.equal(result.encodedPayloads.profile, ENCODED_PAYLOAD_PROFILE);
+  assert.equal(result.encodedPayloads.parserProfiles, ENCODED_PAYLOAD_PARSER_PROFILES);
   assert.equal(
     result.encodedPayloads.browserEventHandlerProfile,
     BROWSER_EVENT_HANDLER_PROFILE
@@ -327,60 +342,120 @@ test('HTML script selection and handlers follow browser execution contexts', () 
   );
 
   const handlers = extractEncodedPayloads([source([
+    `<body onafterprint="atob('${payload}')">window`,
     `<button onclick="new.target; (() => new.target)(); atob('${payload}')">valid</button>`,
     `<button onclick="#!comment&#10;return atob('${payload}')">invalid</button>`,
     `<div onfoobar="atob('${payload}')">inert</div>`,
     `<div once="atob('${payload}')">inert</div>`,
     `<div onpointerdown="atob('${payload}')">pointer</div>`,
-    `<body onafterprint="atob('${payload}')">window</body>`,
     `<div onafterprint="atob('${payload}')">inert window handler</div>`,
-    `<div onanimationend="atob('${payload}')">animation</div>`
+    `<div onanimationend="atob('${payload}')">animation</div></body>`
   ].join('\n'), 'handlers.html')]);
   assert.equal(handlers.candidates, 5);
   assert.equal(handlers.decodedCount, 4);
-  assert.deepEqual(handlers.entries.map((entry) => entry.encodedLine), [1, 5, 6, 8]);
+  assert.deepEqual(handlers.entries.map((entry) => entry.encodedLine), [1, 2, 6, 8]);
 });
 
-test('frozen Chromium handler profile exhaustively recognizes its content attributes', () => {
+test('frozen Chromium handler profile matches independent goldens and contexts', () => {
   const payload = base64('eval(profilePayload);xxxx');
-  assert.equal(Object.isFrozen(HTML_EVENT_HANDLER_ATTRIBUTES), true);
-  assert.equal(Object.isFrozen(WINDOW_EVENT_HANDLER_ATTRIBUTES), true);
+  const lists = {
+    body: BODY_EVENT_HANDLER_ATTRIBUTES,
+    frameset: FRAMESET_EVENT_HANDLER_ATTRIBUTES,
+    html: HTML_EVENT_HANDLER_ATTRIBUTES,
+    svg: SVG_EVENT_HANDLER_ATTRIBUTES
+  };
+  assert.equal(BROWSER_EVENT_HANDLER_PROFILE, HANDLER_PROFILE_GOLDEN.profile);
+  for (const [name, values] of Object.entries(lists)) {
+    assert.equal(Object.isFrozen(values), true);
+    assert.deepEqual(values, [...values].sort());
+    assert.equal(new Set(values).size, values.length);
+    assert.equal(values.length, HANDLER_PROFILE_GOLDEN.lists[name].count);
+    assert.equal(
+      createHash('sha256').update(JSON.stringify(values)).digest('hex'),
+      HANDLER_PROFILE_GOLDEN.lists[name].sha256
+    );
+  }
   assert.equal(Object.isFrozen(BROWSER_EVENT_HANDLER_PROVENANCE), true);
   assert.equal(Object.isFrozen(BROWSER_EVENT_HANDLER_PROVENANCE.sources), true);
-  assert.equal(
-    BROWSER_EVENT_HANDLER_PROVENANCE.revision,
-    '3c06821a384385ee5f355148a5fcd427f5230118'
-  );
-  assert.deepEqual(HTML_EVENT_HANDLER_ATTRIBUTES, [...HTML_EVENT_HANDLER_ATTRIBUTES].sort());
-  assert.deepEqual(WINDOW_EVENT_HANDLER_ATTRIBUTES, [...WINDOW_EVENT_HANDLER_ATTRIBUTES].sort());
-  assert.equal(new Set(HTML_EVENT_HANDLER_ATTRIBUTES).size, HTML_EVENT_HANDLER_ATTRIBUTES.length);
-  assert.equal(new Set(WINDOW_EVENT_HANDLER_ATTRIBUTES).size, WINDOW_EVENT_HANDLER_ATTRIBUTES.length);
+  const identity = {
+    revision: BROWSER_EVENT_HANDLER_PROVENANCE.revision,
+    sources: BROWSER_EVENT_HANDLER_PROVENANCE.sources,
+    body: BODY_EVENT_HANDLER_ATTRIBUTES,
+    frameset: FRAMESET_EVENT_HANDLER_ATTRIBUTES,
+    html: HTML_EVENT_HANDLER_ATTRIBUTES,
+    svg: SVG_EVENT_HANDLER_ATTRIBUTES
+  };
+  const identityHash = createHash('sha256')
+    .update(JSON.stringify(identity)).digest('hex');
+  assert.equal(identityHash, BROWSER_EVENT_HANDLER_PROVENANCE.sha256);
+  assert.match(BROWSER_EVENT_HANDLER_PROFILE, new RegExp(`${identityHash}$`));
 
-  const executable = [
-    ...HTML_EVENT_HANDLER_ATTRIBUTES.map(
+  const htmlResult = extractEncodedPayloads(
+    [source(HTML_EVENT_HANDLER_ATTRIBUTES.map(
       (name) => `<div ${name}="atob('${payload}')"></div>`
-    ),
-    ...WINDOW_EVENT_HANDLER_ATTRIBUTES.map(
-      (name) => `<body ${name}="atob('${payload}')"></body>`
-    )
-  ];
-  const result = extractEncodedPayloads(
-    [source(executable.join('\n'), 'profile.html')],
+    ).join('\n'), 'profile.html')],
     { maxCandidates: 512, maxPayloads: 512 }
   );
-  assert.equal(result.browserEventHandlerProfile, BROWSER_EVENT_HANDLER_PROFILE);
-  assert.equal(result.candidates, executable.length);
-  assert.equal(result.decodedCount, executable.length);
+  assert.equal(htmlResult.browserEventHandlerProfile, BROWSER_EVENT_HANDLER_PROFILE);
+  assert.equal(htmlResult.decodedCount, HTML_EVENT_HANDLER_ATTRIBUTES.length);
+
+  const bodyResult = extractEncodedPayloads([source(
+    `<body ${BODY_EVENT_HANDLER_ATTRIBUTES.map(
+      (name) => `${name}="atob('${payload}')"`
+    ).join(' ')}></body>`, 'body-profile.html'
+  )], { maxCandidates: 512, maxPayloads: 512 });
+  assert.equal(bodyResult.decodedCount, BODY_EVENT_HANDLER_ATTRIBUTES.length);
+
+  const framesetResult = extractEncodedPayloads([source(
+    `<frameset ${FRAMESET_EVENT_HANDLER_ATTRIBUTES.map(
+      (name) => `${name}="atob('${payload}')"`
+    ).join(' ')}></frameset>`, 'frameset-profile.html'
+  )], { maxCandidates: 512, maxPayloads: 512 });
+  assert.equal(framesetResult.decodedCount, FRAMESET_EVENT_HANDLER_ATTRIBUTES.length);
+
+  const svgResult = extractEncodedPayloads([source(
+    `<svg><animate ${SVG_EVENT_HANDLER_ATTRIBUTES.map(
+      (name) => `${name}="atob('${payload}')"`
+    ).join(' ')}></animate></svg>`, 'svg-profile.html'
+  )]);
+  assert.equal(svgResult.decodedCount, SVG_EVENT_HANDLER_ATTRIBUTES.length);
 
   const inert = extractEncodedPayloads([source([
-    ...WINDOW_EVENT_HANDLER_ATTRIBUTES.map(
-      (name) => `<div ${name}="atob('${payload}')"></div>`
-    ),
+    ...BODY_EVENT_HANDLER_ATTRIBUTES.filter(
+      (name) => !HTML_EVENT_HANDLER_ATTRIBUTES.includes(name)
+    ).map((name) => `<div ${name}="atob('${payload}')"></div>`),
+    ...[
+      'onautofill', 'onbeforematch', 'onbeforexrselect', 'ondismiss',
+      'onresolve', 'onsearch', 'onshow', 'ontransitioncancel',
+      'ontransitionrun', 'ontransitionstart'
+    ].map((name) => `<div ${name}="atob('${payload}')"></div>`),
     `<div onfoobar="atob('${payload}')"></div>`,
     `<div once="atob('${payload}')"></div>`
   ].join('\n'), 'inert-profile.html')]);
   assert.equal(inert.candidates, 0);
   assert.equal(inert.decodedCount, 0);
+});
+
+test('HTML5 parsing excludes inert text and duplicates and includes foreign handlers', () => {
+  const payload = base64('eval(htmlTokenizerPayload);');
+  const result = extractEncodedPayloads([source([
+    `<textarea><button onclick="atob('${payload}')"></button></textarea>`,
+    `<title><button onclick="atob('${payload}')"></button></title>`,
+    `<style><button onclick="atob('${payload}')"></button></style>`,
+    `<button onclick="void 0" onclick="atob('${payload}')"></button>`,
+    `<button onclick="atob('${payload}')" onclick="void 0"></button>`,
+    `<svg><animate onbegin="atob('${payload}')"></animate></svg>`,
+    `<math><mrow onclick="atob('${payload}')"></mrow></math>`
+  ].join('\n'), 'tokenizer.html')]);
+  assert.equal(result.candidates, 3);
+  assert.equal(result.decodedCount, 3);
+  assert.deepEqual(result.entries.map((entry) => entry.encodedLine), [5, 6, 7]);
+
+  const formalParameters = extractEncodedPayloads([source([
+    `<button onclick="let event; atob('${payload}')"></button>`,
+    `<body onerror="let source; atob('${payload}')"></body>`
+  ].join('\n'), 'handler-parameters.html')]);
+  assert.equal(formalParameters.decodedCount, 0);
 });
 
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
@@ -420,6 +495,13 @@ test('malformed literal attempts consume fixed budgets without repeated rescans'
   const regexMilliseconds = Number(process.hrtime.bigint() - regexStarted) / 1e6;
   assert.equal(regexResult.candidates, 0);
   assert.ok(regexMilliseconds < 2_000, `unmatched regex scan took ${regexMilliseconds}ms`);
+
+  const malformedHtml = source('<a'.repeat(16_000), 'malformed.html');
+  const htmlStarted = process.hrtime.bigint();
+  const htmlResult = extractEncodedPayloads([malformedHtml]);
+  const htmlMilliseconds = Number(process.hrtime.bigint() - htmlStarted) / 1e6;
+  assert.equal(htmlResult.candidates, 0);
+  assert.ok(htmlMilliseconds < 2_000, `malformed HTML scan took ${htmlMilliseconds}ms`);
 });
 
 test('all ECMAScript line terminators preserve encoded and decoded provenance', async (t) => {
@@ -456,14 +538,20 @@ test('JSON data is not misclassified as executable runtime decoding', async (t) 
 
 test('encoded-payload resource limits fail closed and malformed limits are rejected', () => {
   assert.equal(PUBLIC_ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_LIMITS);
+  assert.equal(PUBLIC_ENCODED_PAYLOAD_PARSER_PROFILES, ENCODED_PAYLOAD_PARSER_PROFILES);
   assert.equal(PUBLIC_ENCODED_PAYLOAD_PROFILE, ENCODED_PAYLOAD_PROFILE);
   assert.equal(PUBLIC_BROWSER_EVENT_HANDLER_PROFILE, BROWSER_EVENT_HANDLER_PROFILE);
   assert.equal(
     PUBLIC_BROWSER_EVENT_HANDLER_PROVENANCE,
     BROWSER_EVENT_HANDLER_PROVENANCE
   );
+  assert.equal(PUBLIC_BODY_EVENT_HANDLER_ATTRIBUTES, BODY_EVENT_HANDLER_ATTRIBUTES);
+  assert.equal(
+    PUBLIC_FRAMESET_EVENT_HANDLER_ATTRIBUTES,
+    FRAMESET_EVENT_HANDLER_ATTRIBUTES
+  );
   assert.equal(PUBLIC_HTML_EVENT_HANDLER_ATTRIBUTES, HTML_EVENT_HANDLER_ATTRIBUTES);
-  assert.equal(PUBLIC_WINDOW_EVENT_HANDLER_ATTRIBUTES, WINDOW_EVENT_HANDLER_ATTRIBUTES);
+  assert.equal(PUBLIC_SVG_EVENT_HANDLER_ATTRIBUTES, SVG_EVENT_HANDLER_ATTRIBUTES);
   const payload = base64('x'.repeat(16));
   const two = source(`atob('${payload}'); atob('${payload}');`);
   assert.throws(

@@ -26,13 +26,14 @@
   ],
   "scripts": {
     "audit:example": "node ./bin/mvx.js audit ./corpus/fixtures/cookie-access/mv3",
-    "check": "npm run lint && npm test && npm run corpus:validate && npm run intel:validate && npm run docs:check",
+    "check": "npm run lint && npm run handlers:check && npm test && npm run corpus:validate && npm run intel:validate && npm run docs:check",
     "corpus:validate": "node ./bin/mvx.js corpus validate",
     "docs:check": "node ./scripts/generate-report.mjs --check",
     "docs:generate": "node ./scripts/generate-report.mjs",
     "intel:check": "node ./scripts/update-intelligence.mjs --check",
     "intel:update": "node ./scripts/update-intelligence.mjs",
     "intel:validate": "node ./bin/mvx.js intel validate",
+    "handlers:check": "node ./scripts/update-browser-event-handlers.mjs --check",
     "handlers:update": "node ./scripts/update-browser-event-handlers.mjs",
     "lab:build": "docker build --tag mvx-lab:local ./lab",
     "lab:run": "node ./scripts/run-lab.mjs",
@@ -62,9 +63,13 @@
   },
   "homepage": "https://github.com/hyj28/mvx-audit#readme",
   "dependencies": {
-    "acorn": "8.18.0"
+    "acorn": "8.18.0",
+    "entities": "6.0.1",
+    "parse5": "7.3.0"
   },
   "bundleDependencies": [
-    "acorn"
+    "acorn",
+    "entities",
+    "parse5"
   ]
 }

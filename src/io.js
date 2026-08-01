@@ -69,6 +69,7 @@ function analysisProvenance(manifestBytes, state, limits, inventory, encodedPayl
     limits,
     encodedPayloads: {
       profile: encodedPayloads.profile,
+      parserProfiles: encodedPayloads.parserProfiles,
       browserEventHandlerProfile: encodedPayloads.browserEventHandlerProfile,
       limits: encodedPayloads.limits,
       sha256: encodedPayloads.sha256
