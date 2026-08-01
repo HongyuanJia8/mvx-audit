@@ -142,7 +142,7 @@ test('CLI help documents stable exit codes', async () => {
 test('CLI emits valid SARIF and version output', async () => {
   const versionCapture = captureStreams();
   assert.equal(await runCli(['--version'], versionCapture.streams), 0);
-  assert.match(versionCapture.output().stdout, /^3\.0\.0/);
+  assert.match(versionCapture.output().stdout, /^3\.1\.0/);
 
   const sarifCapture = captureStreams();
   assert.equal(await runCli(['audit', path.join(ROOT, 'cookie-access/mv3'), '--format', 'sarif'], sarifCapture.streams), 0);

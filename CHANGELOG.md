@@ -5,6 +5,8 @@ versioning from the 2.0 reset onward.
 
 ## Unreleased
 
+## 3.1.0 - 2026-08-01
+
 ### Added
 
 - Strict, bounded inventory of manifest-declared static Declarative Net Request

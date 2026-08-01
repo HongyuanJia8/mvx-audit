@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to rebuild or publish
+        required: true
+        type: string
+      publish_npm:
+        description: Publish to npm through the configured trusted publisher
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    name: Build, attest, and release
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run check
+      - run: npm audit --omit=dev
+      - run: npm run release:build -- --expected-tag "$RELEASE_TAG"
+      - name: Record release asset paths
+        id: release-assets
+        run: echo "sbom=dist/mvx-audit-${RELEASE_TAG#v}.cdx.json" >> "$GITHUB_OUTPUT"
+      - name: Smoke-test the packed CLI
+        run: |
+          install_root="$(mktemp -d)"
+          npm install --ignore-scripts --prefix "$install_root" ./dist/*.tgz
+          test "$("$install_root/node_modules/.bin/mvx" --version)" = "${RELEASE_TAG#v}"
+      - name: Attest build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: dist/*.tgz
+      - name: Attest CycloneDX SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: dist/*.tgz
+          sbom-path: ${{ steps.release-assets.outputs.sbom }}
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=".github/release-notes/${RELEASE_TAG#v}.md"
+          test -f "$notes"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --title "$RELEASE_TAG" --notes-file "$notes"
+          fi
+      - name: Publish to npm with trusted publishing
+        if: ${{ (github.event_name == 'push' && vars.NPM_TRUSTED_PUBLISHING == 'true') || inputs.publish_npm }}
+        run: npm publish ./dist/*.tgz --access public

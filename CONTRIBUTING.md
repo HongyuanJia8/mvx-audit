@@ -38,4 +38,21 @@ verify checksums, preserve source-specific labels, and retain provenance. Follow
 the review procedure in `docs/data-sources.md` and commit the source lock with
 its generated snapshot.
 
+## Release process
+
+1. Move the accumulated changelog entries under a dated semantic version and
+   update `package.json`, `npm-shrinkwrap.json`, `src/version.js`,
+   `CITATION.cff`, the CLI version test, and the matching release-notes file.
+2. Run `npm run check`, `npm audit --omit=dev`, and `npm run release:build`.
+   The release builder rejects inconsistent versions, proves that two npm
+   archives are byte-identical, and emits a normalized CycloneDX SBOM plus
+   `SHA256SUMS` under `dist/`.
+3. Merge the reviewed release commit and push an annotated `vX.Y.Z` tag. The
+   release workflow rebuilds and smoke-tests the archive, signs SLSA build
+   provenance and SBOM attestations, and publishes the GitHub Release assets.
+4. npm publishing uses a trusted publisher bound to `hyj28/mvx-audit` and
+   `.github/workflows/release.yml`. Set the repository variable
+   `NPM_TRUSTED_PUBLISHING=true` only after that binding exists. The tag run then
+   publishes with short-lived OIDC credentials and automatic npm provenance.
+
 By participating, you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
