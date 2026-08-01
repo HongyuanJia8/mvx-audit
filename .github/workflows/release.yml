@@ -6,14 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to rebuild or publish
+        description: Existing release tag to rebuild and upload
         required: true
         type: string
-      publish_npm:
-        description: Publish to npm through the configured trusted publisher
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -52,10 +47,12 @@ jobs:
           npm install --ignore-scripts --prefix "$install_root" ./dist/*.tgz
           test "$("$install_root/node_modules/.bin/mvx" --version)" = "${RELEASE_TAG#v}"
       - name: Attest build provenance
+        if: ${{ github.event_name == 'push' }}
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: dist/*.tgz
       - name: Attest CycloneDX SBOM
+        if: ${{ github.event_name == 'push' }}
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: dist/*.tgz
@@ -80,5 +77,5 @@ jobs:
             gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --clobber
           done
       - name: Publish to npm with trusted publishing
-        if: ${{ (github.event_name == 'push' && vars.NPM_TRUSTED_PUBLISHING == 'true') || inputs.publish_npm }}
+        if: ${{ github.event_name == 'push' && vars.NPM_TRUSTED_PUBLISHING == 'true' }}
         run: npm publish ./dist/*.tgz --access public
