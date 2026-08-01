@@ -610,6 +610,40 @@ test('srcdoc and standalone SVG documents retain bounded executable contexts', a
   assert.equal(xml11Newlines.decodedCount, 1);
   assert.equal(xml11Newlines.entries[0].encodedLine, 3);
 
+  const attributeEntities = extractEncodedPayloads([source([
+    '<!DOCTYPE svg [',
+    `  <!ENTITY lf "throw\natob(&quot;${payload}&quot;)">`,
+    `  <!ENTITY tab "throw\tatob(&quot;${payload}&quot;)">`,
+    `  <!ENTITY cr "throw\ratob(&quot;${payload}&quot;)">`,
+    `  <!ENTITY numeric "throw&#10;atob(&quot;${payload}&quot;)">`,
+    ']>',
+    '<svg xmlns="http://www.w3.org/2000/svg">',
+    '  <rect onclick="&lf;"/>',
+    '  <rect onclick="&tab;"/>',
+    '  <rect onclick="&cr;"/>',
+    '  <rect onclick="&numeric;"/>',
+    `  <rect onclick="throw&#10;atob('${payload}')"/>`,
+    '</svg>'
+  ].join('\n'), 'attribute-entities.svg')]);
+  assert.equal(attributeEntities.candidates, 5);
+  assert.equal(attributeEntities.decodedCount, 4);
+
+  const xml11AttributeEntity = extractEncodedPayloads([source(
+    '<?xml version="1.1"?><!DOCTYPE svg ['
+      + `<!ENTITY handler "let safe=1&#8232;atob(&quot;${payload}&quot;)">]>`
+      + '<svg xmlns="http://www.w3.org/2000/svg" onclick="&handler;"/>',
+    'xml11-attribute-entity.svg'
+  )]);
+  assert.equal(xml11AttributeEntity.decodedCount, 1);
+
+  const splitScript = extractEncodedPayloads([source(
+    '<svg xmlns="http://www.w3.org/2000/svg"><script>'
+      + `a<!-- separator -->tob(&quot;${payload}&quot;)`
+      + '</script></svg>',
+    'split-script.svg'
+  )]);
+  assert.equal(splitScript.decodedCount, 1);
+
   const malformed = extractEncodedPayloads([source(
     `<svg xmlns="http://www.w3.org/2000/svg"><script>atob('${payload}')</svg>`,
     'malformed.svg'
@@ -882,6 +916,15 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
     () => extractEncodedPayloads([entitySvg], { maxXmlExpandedChars: 1 }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /entity expansion/.test(error.message)
   );
+  const ignoredEntityReferences = '&large;'.repeat(100);
+  const ignoredEntityZones = extractEncodedPayloads([source(
+    `<!DOCTYPE svg [<!ENTITY large "${'x'.repeat(10_001)}">]>`
+      + '<svg xmlns="http://www.w3.org/2000/svg">'
+      + `<!--[${ignoredEntityReferences}]--><?audit ${ignoredEntityReferences}?>`
+      + `<![CDATA[${ignoredEntityReferences}]]></svg>`,
+    'ignored-entity-zones.svg'
+  )]);
+  assert.equal(ignoredEntityZones.xmlExpandedChars, 10_001);
   assert.throws(
     () => extractEncodedPayloads([source(
       '<!DOCTYPE svg SYSTEM "external.dtd"><svg/>', 'external-dtd.svg'
@@ -898,7 +941,8 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
     ['public', '<!DOCTYPE svg PUBLIC "identifier" "external.dtd"><svg/>', /External XML DTD/],
     ['xml10-control', '<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "&#1;">]><svg/>', /Undefined XML entity/],
     ['numeric-markup', '<!DOCTYPE svg [<!ENTITY a "&#60;script>">]><svg/>', /Markup-bearing numeric/],
-    ['numeric-reference', '<!DOCTYPE svg [<!ENTITY a "&#38;#60;script>">]><svg/>', /Markup-bearing numeric/]
+    ['numeric-reference', '<!DOCTYPE svg [<!ENTITY a "&#38;#60;script>">]><svg/>', /Markup-bearing numeric/],
+    ['cdata-close', '<!DOCTYPE svg [<!ENTITY a "]]>">]><svg><script>&a;</script></svg>', /forbidden.*\]\]>/]
   ];
   for (const [name, content, message] of unsupportedDtds) {
     assert.throws(

@@ -747,25 +747,31 @@ function decodeXmlSourceRange(
   } = {}
 ) {
   let decoded = '';
+  let parserDecoded = '';
   const offsets = [];
   let cursor = start;
   while (cursor < end) {
     const character = content[cursor];
     if (character === '\r') {
-      decoded += attribute ? ' ' : '\n';
+      const replacement = attribute ? ' ' : '\n';
+      decoded += replacement;
+      parserDecoded += replacement;
       offsets.push(cursor);
       cursor += content[cursor + 1] === '\n'
         || (version === '1.1' && content[cursor + 1] === '\u0085') ? 2 : 1;
       continue;
     }
     if (version === '1.1' && (character === '\u0085' || character === '\u2028')) {
-      decoded += attribute ? ' ' : '\n';
+      const replacement = attribute ? ' ' : '\n';
+      decoded += replacement;
+      parserDecoded += replacement;
       offsets.push(cursor);
       cursor += 1;
       continue;
     }
     if (attribute && (character === '\n' || character === '\t')) {
       decoded += ' ';
+      parserDecoded += ' ';
       offsets.push(cursor);
       cursor += 1;
       continue;
@@ -789,17 +795,24 @@ function decodeXmlSourceRange(
           code: 'ENCODED_PAYLOAD_LIMIT'
         });
       }
-      decoded += replacement;
-      for (let index = 0; index < replacement.length; index += 1) offsets.push(cursor);
+      parserDecoded += replacement;
+      const normalized = attribute && !entity.startsWith('#')
+        && !Object.hasOwn(XML_ENTITIES, entity)
+        ? replacement.replace(
+          /[\t\n\r]/g, ' '
+        ) : replacement;
+      decoded += normalized;
+      for (let index = 0; index < normalized.length; index += 1) offsets.push(cursor);
       cursor = semicolon + 1;
       continue;
     }
     decoded += character;
+    parserDecoded += character;
     offsets.push(cursor);
     cursor += 1;
   }
   offsets.push(end);
-  return { content: decoded, offsets };
+  return { content: decoded, offsets, parserContent: parserDecoded };
 }
 
 function xmlLineStarts(content, version = '1.0') {
@@ -907,6 +920,82 @@ function xmlEntityValue(
   return value;
 }
 
+function chargeXmlEntityReferences(source, resolvedValues, budget, limits) {
+  const referencePattern = /&([A-Za-z_:][A-Za-z0-9_.:-]*);/y;
+  const chargeReference = (cursor, textContent) => {
+    referencePattern.lastIndex = cursor;
+    const match = referencePattern.exec(source);
+    if (!match) return 0;
+    const value = resolvedValues[match[1]];
+    if (value === undefined) return match[0].length;
+    if (textContent && value.includes(']]>')) {
+      throw invalidXmlDtd("XML entity replacement creates a forbidden ']]>' sequence");
+    }
+    budget.xmlExpandedChars += value.length;
+    if (budget.xmlExpandedChars > limits.maxXmlExpandedChars) {
+      throw new MvxError(
+        `XML entity expansions exceed ${limits.maxXmlExpandedChars} characters`,
+        { code: 'ENCODED_PAYLOAD_LIMIT' }
+      );
+    }
+    return match[0].length;
+  };
+  let cursor = 0;
+  let inTag = false;
+  let quote = null;
+  while (cursor < source.length) {
+    if (!inTag) {
+      let terminator = null;
+      let width = 0;
+      if (source.startsWith('<!--', cursor)) {
+        terminator = '-->';
+        width = 3;
+      } else if (source.startsWith('<![CDATA[', cursor)) {
+        terminator = ']]>';
+        width = 3;
+      } else if (source.startsWith('<?', cursor)) {
+        terminator = '?>';
+        width = 2;
+      }
+      if (terminator) {
+        const end = source.indexOf(terminator, cursor + 2);
+        cursor = end < 0 ? source.length : end + width;
+        continue;
+      }
+      if (source[cursor] === '<') {
+        inTag = true;
+        cursor += 1;
+        continue;
+      }
+      if (source[cursor] === '&') {
+        const consumed = chargeReference(cursor, true);
+        if (consumed > 0) {
+          cursor += consumed;
+          continue;
+        }
+      }
+      cursor += 1;
+      continue;
+    }
+    if (quote) {
+      if (source[cursor] === quote) {
+        quote = null;
+      } else if (source[cursor] === '&') {
+        const consumed = chargeReference(cursor, false);
+        if (consumed > 0) {
+          cursor += consumed;
+          continue;
+        }
+      }
+    } else if (source[cursor] === '"' || source[cursor] === "'") {
+      quote = source[cursor];
+    } else if (source[cursor] === '>') {
+      inTag = false;
+    }
+    cursor += 1;
+  }
+}
+
 function parseXmlEntityDeclarations(doctype, remainingSource, version, budget, limits) {
   const open = doctype.indexOf('[');
   const declarationHead = open < 0 ? doctype : doctype.slice(0, open);
@@ -990,19 +1079,7 @@ function parseXmlEntityDeclarations(doctype, remainingSource, version, budget, l
     );
   }
   const entityValues = Object.assign(Object.create(null), XML_ENTITIES, resolvedValues);
-  const referencePattern = /&([A-Za-z_:][A-Za-z0-9_.:-]*);/g;
-  for (let match = referencePattern.exec(remainingSource); match;
-    match = referencePattern.exec(remainingSource)) {
-    const value = resolvedValues[match[1]];
-    if (value === undefined) continue;
-    budget.xmlExpandedChars += value.length;
-    if (budget.xmlExpandedChars > limits.maxXmlExpandedChars) {
-      throw new MvxError(
-        `XML entity expansions exceed ${limits.maxXmlExpandedChars} characters`,
-        { code: 'ENCODED_PAYLOAD_LIMIT' }
-      );
-    }
-  }
+  chargeXmlEntityReferences(remainingSource, resolvedValues, budget, limits);
   return entityValues;
 }
 
@@ -1103,7 +1180,7 @@ function* svgDocumentAtobLiterals(content, budget, limits) {
     const decoded = decodeXmlSourceRange(content, bounds.start, bounds.end, {
       attribute: true, entityValues, version: xmlVersion
     });
-    if (decoded.content !== attribute.value) {
+    if (decoded.parserContent !== attribute.value) {
       throw new MvxError('XML attribute source mapping does not match the parser', {
         code: 'ENCODED_PAYLOAD_LIMIT'
       });
@@ -1217,7 +1294,8 @@ function* svgDocumentAtobLiterals(content, budget, limits) {
   for (const event of ['comment', 'processinginstruction']) {
     parser.on(event, () => {
       chargeLeaf();
-      sourceCursor = parser.position;
+      sourceCursor = content[parser.position] === '>'
+        ? parser.position + 1 : parser.position;
     });
   }
   parser.on('error', () => { syntaxError = true; });
