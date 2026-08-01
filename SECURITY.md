@@ -35,6 +35,20 @@ rendering. It never imports code or fetches pack references. A valid pack is not
 trusted intelligence: operators remain responsible for its source, license,
 expiry, integrity, and conclusions.
 
+Encoded-payload analysis is static and never calls `eval`, `Function`, `atob`,
+or extension code. It recognizes only direct, unescaped Base64 string literals
+passed to the global `atob` function or its `window`, `self`, or `globalThis`
+forms in executable JS/HTML source, validates canonical decoded bytes, and
+rescans only strict UTF-8 text. JSON data is never treated as executable.
+Binary payloads remain hash-only evidence. Candidate calls, payload count,
+per-payload and aggregate encoded characters, per-payload and aggregate decoded
+bytes, minimum payload size, and recursive depth are fixed, recorded limits;
+exceeding a safety bound fails closed. Decoded text is not written to disk or
+copied into the inventory.
+Findings map back to the packaged source line and retain decoded-line and
+content-hash provenance. This is review assistance, not a claim that encoded
+content is malicious or that other obfuscation was recovered.
+
 The optional sample fetcher writes live CRX files only after explicit risk
 acknowledgement. Quarantine files are not safe merely because their hashes were
 verified. Keep quarantine outside backups and shared folders, never open it

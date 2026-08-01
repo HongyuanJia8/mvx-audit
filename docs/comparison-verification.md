@@ -42,6 +42,8 @@ MVX version reproduced:
 
 - both complete static audits, including findings, evidence, summaries,
   capabilities, scan limits, package inventory, and analysis identity;
+- both bounded encoded-payload inventories and every decoded-source finding,
+  with original/decoded location and payload-hash provenance;
 - exact rule-pack and disposition-policy byte provenance;
 - every resolved or introduced finding and every added or removed evidence
   record;

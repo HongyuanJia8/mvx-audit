@@ -73,7 +73,7 @@ mvx lab evaluate lab/scenarios/credential-exfiltration.json \
 
 The report's `mvx-lab-evidence-v1` record hashes the exact scenario and event
 bytes and a domain-separated deterministic evaluation. A profiled live run also
-records the exact `mvx-package-v1` and `mvx-static-v3` identities of the mounted
+records the exact `mvx-package-v1` and `mvx-static-v4` identities of the mounted
 snapshot, Chromium version, Docker image ID/reference, network mode, duration,
 tool version, and seccomp SHA-256. Verify the retained bundle offline:
 
@@ -102,7 +102,7 @@ the retained bundle:
 |---|---|
 | `--expected-report-sha256` | Raw `report.json` bytes. |
 | `--expected-package-sha256` | Re-audited `mvx-package-v1` snapshot identity. |
-| `--expected-analysis-sha256` | Re-audited `mvx-static-v3` snapshot identity. |
+| `--expected-analysis-sha256` | Re-audited `mvx-static-v4` snapshot identity. |
 | `--expected-scenario-sha256` | Raw scenario bytes actually evaluated. |
 | `--expected-events-sha256` | Raw JSONL bytes actually evaluated. |
 | `--expected-evaluation-sha256` | Domain-separated deterministic evaluation identity. |

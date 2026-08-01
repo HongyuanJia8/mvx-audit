@@ -76,6 +76,13 @@ function lineSnippet(content, starts, line) {
   return content.slice(start, end === -1 ? content.length : end).trim().slice(0, 240);
 }
 
+const UNSAFE_SNIPPET = /[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u2028-\u202e\u2066-\u2069]/g;
+
+function safeDecodedSnippet(value) {
+  return value.replace(UNSAFE_SNIPPET, (character) =>
+    `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
 function textScopeMatches(scope, kind) {
   return scope === 'all-text' || scope === kind;
 }
@@ -111,38 +118,54 @@ export function analyzeCustomRules(snapshot, prepared) {
     state.seen[indicatorIndex].add(identity);
     state.matches[indicatorIndex].push(evidence);
   };
-  const scan = (file, content, kind, automaton) => {
-    if (!automaton?.kinds.has(kind)) return;
+  const scan = (textFile, automaton) => {
+    if (!automaton?.kinds.has(textFile.kind)) return;
     let state = 0;
     let starts;
-    for (let index = 0; index < content.length; index += 1) {
-      const character = characterAt(content, index, automaton.foldAscii);
+    for (let index = 0; index < textFile.content.length; index += 1) {
+      const character = characterAt(textFile.content, index, automaton.foldAscii);
       while (state !== 0 && !automaton.nodes[state].next.has(character)) state = automaton.nodes[state].fail;
       if (automaton.nodes[state].next.has(character)) state = automaton.nodes[state].next.get(character);
       for (let outputState = state; outputState !== -1; outputState = automaton.nodes[outputState].outputLink) {
         for (const output of automaton.nodes[outputState].outputs) {
-          if (!textScopeMatches(output.scope, kind)) continue;
+          if (!textScopeMatches(output.scope, textFile.kind)) continue;
           const offset = index - output.length + 1;
-          starts ??= lineStarts(content);
-          const line = lineAt(starts, offset);
-          record(output.stateIndex, output.indicatorIndex, {
-            file,
-            line,
+          starts ??= lineStarts(textFile.content);
+          const decodedLine = lineAt(starts, offset);
+          const evidence = {
+            file: textFile.file,
+            line: textFile.decodedFrom?.line ?? decodedLine,
             indicator: output.indicatorIndex,
             indicatorType: 'text',
-            snippet: lineSnippet(content, starts, line)
-          }, `${file}\0${line}`);
+            snippet: lineSnippet(textFile.content, starts, decodedLine)
+          };
+          if (textFile.decodedFrom) {
+            evidence.decodedLine = decodedLine;
+            evidence.decodedFrom = textFile.decodedFrom;
+            evidence.snippet = safeDecodedSnippet(evidence.snippet);
+          }
+          record(output.stateIndex, output.indicatorIndex, evidence,
+            `${textFile.file}\0${textFile.decodedFrom?.line ?? ''}`
+            + `\0${textFile.decodedFrom?.encodedLine ?? ''}`
+            + `\0${textFile.decodedFrom?.depth ?? ''}`
+            + `\0${textFile.decodedFrom?.sha256 ?? ''}\0${decodedLine}`);
         }
       }
     }
   };
   const textFiles = [
     { file: 'manifest.json', content: snapshot.manifestSource, kind: 'manifest' },
-    ...snapshot.sources.map((source) => ({ file: source.path, content: source.content, kind: 'source' }))
+    ...snapshot.sources.map((source) => ({ file: source.path, content: source.content, kind: 'source' })),
+    ...snapshot.decodedSources.map((source) => ({
+      file: source.path,
+      content: source.content,
+      kind: 'source',
+      decodedFrom: source.decodedFrom
+    }))
   ];
   for (const textFile of textFiles) {
-    scan(textFile.file, textFile.content, textFile.kind, sensitive);
-    scan(textFile.file, textFile.content, textFile.kind, insensitive);
+    scan(textFile, sensitive);
+    scan(textFile, insensitive);
   }
 
   const files = snapshot.inventory.entries.filter((entry) => entry.type === 'file');

@@ -63,13 +63,16 @@ not ordering, proximity, or data flow.
 
 Text indicators are literals, so characters such as `.*` and `[]` have no
 special meaning. Source scope covers the same supported JS-family, HTML, and
-JSON files as built-in source analysis. Manifest scope is the raw decoded
-`manifest.json` text. One text evidence item is retained per indicator, file,
-and line; path and hash evidence is retained per matching file. A package hash
-uses package-level evidence without inventing a filesystem location. Exceeding
-the global raw-match limit fails the audit rather than truncating evidence,
-including when repeated occurrences would otherwise collapse to one evidence
-line.
+JSON files as built-in source analysis, plus strict UTF-8 text recovered by the
+bounded direct-literal `atob` decoder. Decoded matches retain the packaged file
+and encoding line, decoded line, payload depth, parent/payload SHA-256, and
+decoder profile rather than inventing a virtual package path. Manifest scope is
+the raw decoded `manifest.json` text. One text evidence item is retained per
+indicator, file, line, and decoded payload; path and hash evidence is retained
+per matching file. A package hash uses package-level evidence without inventing
+a filesystem location. Exceeding the global raw-match limit fails the audit
+rather than truncating evidence, including when repeated occurrences would
+otherwise collapse to one evidence line.
 
 ## Validation and provenance
 
@@ -83,7 +86,7 @@ to render; they do not establish publisher trust.
 Every report records each pack's namespace, name, version, exact raw byte
 length, raw-byte SHA-256, rule count, and indicator count. Input filenames and
 absolute paths are excluded. Packs are sorted by namespace, so identical pack
-bytes and limits produce the same `mvx-static-v3` analysis identity regardless
+bytes and limits produce the same `mvx-static-v4` analysis identity regardless
 of input order or local path. Reformatting JSON changes the pack and analysis
 hashes, but not the package digest.
 

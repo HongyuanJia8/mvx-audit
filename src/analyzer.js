@@ -7,6 +7,7 @@ import { analyzeCustomRules } from './rules/custom-rules.js';
 import { resolveRulePacks } from './rule-packs.js';
 import { createFinding } from './model.js';
 import { applyDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
+import { analyzeEncodedPayloads } from './encoded-payloads.js';
 import { assertOptionsObject } from './options.js';
 import { VERSION } from './version.js';
 
@@ -67,7 +68,8 @@ export async function auditExtension(inputPath, options = {}) {
     ...analyzeIntegrity(snapshot.manifest, snapshot.files),
     ...analyzePackage(snapshot.executableFiles),
     ...analyzeManifest(snapshot.manifest, snapshot.sources),
-    ...analyzeSources(snapshot.sources),
+    ...analyzeSources([...snapshot.sources, ...snapshot.decodedSources]),
+    ...analyzeEncodedPayloads(snapshot.encodedPayloads),
     ...analyzeCustomRules(snapshot, preparedRulePacks)
   ]);
   const dispositions = applyDispositionPolicies(findings, {
@@ -92,6 +94,17 @@ export async function auditExtension(inputPath, options = {}) {
     },
     analysis: snapshot.provenance,
     package: snapshot.inventory,
+    encodedPayloads: {
+      profile: snapshot.encodedPayloads.profile,
+      limits: snapshot.encodedPayloads.limits,
+      candidates: snapshot.encodedPayloads.candidates,
+      candidateEncodedChars: snapshot.encodedPayloads.candidateEncodedChars,
+      decodedCount: snapshot.encodedPayloads.decodedCount,
+      utf8Count: snapshot.encodedPayloads.utf8Count,
+      totalDecodedBytes: snapshot.encodedPayloads.totalDecodedBytes,
+      entries: snapshot.encodedPayloads.entries,
+      sha256: snapshot.encodedPayloads.sha256
+    },
     rulePacks: preparedRulePacks.provenance,
     ...(dispositionPoliciesApplied ? {
       dispositionPolicies: preparedDispositionPolicies.provenance,
@@ -110,6 +123,7 @@ export async function auditExtension(inputPath, options = {}) {
       'Static findings describe capability and suspicious implementation patterns, not proof of malicious intent.',
       'Absence of a finding is not proof that an extension is safe.',
       'Manifest V3 reduces selected attack surfaces but does not make granted privileges harmless.',
+      'Literal Base64 decoding is bounded static evidence; it does not execute code or fully deobfuscate dynamic behavior.',
       ...(preparedRulePacks.packs.length > 0 ? [
         'Analyst-supplied declarative rule-pack matches are review indicators, not proof of malicious intent.'
       ] : []),

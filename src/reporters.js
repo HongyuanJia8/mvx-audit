@@ -37,6 +37,9 @@ export function auditToText(result) {
     ...(result.package ? [
       `Package (${result.package.profile}): ${result.package.fileCount} file(s), ${result.package.totalBytes} bytes, SHA-256: ${result.package.sha256}`
     ] : []),
+    ...(result.encodedPayloads ? [
+      `Encoded payloads (${result.encodedPayloads.profile}): ${result.encodedPayloads.decodedCount} decoded, ${result.encodedPayloads.totalDecodedBytes} bytes, SHA-256: ${result.encodedPayloads.sha256}`
+    ] : []),
     ...(result.rulePacks?.length ? [`Rule packs: ${result.rulePacks.length} (${result.rulePacks.map((pack) => `${escapeText(pack.namespace)}@${escapeText(pack.version)}`).join(', ')})`] : []),
     ...(result.dispositionPolicies?.length ? [
       `Disposition policy provenance: ${result.dispositionPolicies.length}`,
@@ -68,7 +71,12 @@ export function auditToText(result) {
     lines.push(`  ${escapeText(finding.description)}`);
     for (const item of finding.evidence) {
       const location = escapeText(item.file ?? item.scope ?? 'package');
-      lines.push(`  at ${location}${item.line ? `:${item.line}` : ''}${item.field ? ` (${escapeText(item.field)})` : ''}`);
+      const decodedDetail = item.decodedFrom
+        ? ` [decoded depth ${item.decodedFrom.depth}, encoded line ${item.decodedFrom.encodedLine}, decoded line ${item.decodedLine}, SHA-256 ${item.decodedFrom.sha256}]`
+        : item.decodedSha256
+          ? ` [${escapeText(item.encoding)} depth ${item.depth}, encoded line ${item.encodedLine}, ${item.decodedBytes} bytes, SHA-256 ${item.decodedSha256}]`
+          : '';
+      lines.push(`  at ${location}${item.line ? `:${item.line}` : ''}${item.field ? ` (${escapeText(item.field)})` : ''}${decodedDetail}`);
     }
     if (finding.disposition) {
       lines.push(`  Disposition: ${finding.disposition.status.toUpperCase()} ${escapeText(finding.disposition.disposition)} by ${escapeText(finding.disposition.owner)} until ${finding.disposition.expiresAt}`);
@@ -87,6 +95,7 @@ export function auditToSarif(result) {
   const runProperties = {
     ...(result.analysis ? { analysis: result.analysis } : {}),
     ...(result.package ? { package: result.package } : {}),
+    ...(result.encodedPayloads ? { encodedPayloads: result.encodedPayloads } : {}),
     ...(result.rulePacks?.length ? { rulePacks: result.rulePacks } : {}),
     ...(result.dispositionPolicies?.length ? {
       dispositionPolicies: result.dispositionPolicies,
@@ -131,7 +140,19 @@ export function auditToSarif(result) {
           fingerprint: findingKey(finding),
           ...(finding.disposition ? { disposition: finding.disposition } : {}),
           ...(finding.rulePack ? { rulePack: finding.rulePack } : {}),
-          ...(finding.condition ? { condition: finding.condition } : {})
+          ...(finding.condition ? { condition: finding.condition } : {}),
+          ...(item.decodedFrom ? {
+            decodedFrom: item.decodedFrom,
+            decodedLine: item.decodedLine
+          } : {}),
+          ...(item.decodedSha256 ? {
+            decodedSha256: item.decodedSha256,
+            decodedBytes: item.decodedBytes,
+            encodedLine: item.encodedLine,
+            encoding: item.encoding,
+            depth: item.depth,
+            utf8: item.utf8
+          } : {})
         }
       }))),
       ...(Object.keys(runProperties).length > 0 ? { properties: runProperties } : {})
@@ -203,6 +224,9 @@ export function comparisonToMarkdown(comparison) {
     `| Total findings | ${before.summary.total} | ${after.summary.total} |`,
     ...(before.rulePacks && after.rulePacks ? [`| Rule packs | ${before.rulePacks.length} | ${after.rulePacks.length} |`] : []),
     ...(before.package && after.package ? [`| Package SHA-256 | \`${before.package.sha256}\` | \`${after.package.sha256}\` |`] : []),
+    ...(before.encodedPayloads && after.encodedPayloads ? [
+      `| Encoded payloads decoded | ${before.encodedPayloads.decodedCount} | ${after.encodedPayloads.decodedCount} |`
+    ] : []),
     ...(before.analysis && after.analysis ? [`| Analysis SHA-256 | \`${before.analysis.sha256}\` | \`${after.analysis.sha256}\` |`] : []),
     ...(before.artifact && after.artifact ? [
       `| Archive SHA-256 | \`${before.artifact.sha256}\` | \`${after.artifact.sha256}\` |`,

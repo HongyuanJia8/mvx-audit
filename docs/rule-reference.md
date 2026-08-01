@@ -42,6 +42,13 @@ within the 3.x release line.
 | MVX210 | Critical | Medium | Privileged Chrome API use in a message handler without an apparent sender check in the same file. |
 | MVX211 | High | Medium | A remote origin embedded as extension UI in an iframe. |
 | MVX212 | High | High | Sensitive clipboard, camera, microphone, or geolocation delegation to an iframe. |
+| MVX213 | Medium | High | A direct global `atob`-call pattern contains a packaged Base64 literal of at least 16 bytes. |
+
+MVX213 records encoding location, recursive depth, decoded byte length,
+SHA-256, and UTF-8 status. Valid UTF-8 payloads are also evaluated by the other
+source rules and declarative text indicators, with evidence mapped back to the
+packaged source. It is an obfuscation/review-cost signal, not proof that the
+decoded data is executable or malicious.
 
 ## Analyst-supplied declarative rules
 

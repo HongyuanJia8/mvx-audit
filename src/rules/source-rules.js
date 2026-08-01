@@ -94,14 +94,32 @@ function locateAll(content, pattern) {
   return matches;
 }
 
+const UNSAFE_SNIPPET = /[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u2028-\u202e\u2066-\u2069]/g;
+
+function safeDecodedSnippet(value) {
+  return value.replace(UNSAFE_SNIPPET, (character) =>
+    `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+function sourceEvidence(source, location) {
+  if (!source.decodedFrom) return { file: source.path, ...location };
+  return {
+    file: source.path,
+    line: source.decodedFrom.line,
+    decodedLine: location.line,
+    decodedFrom: source.decodedFrom,
+    snippet: safeDecodedSnippet(location.snippet)
+  };
+}
+
 export function analyzeSources(sources) {
   const findings = [];
-  const executableSources = sources.filter((source) => !source.path.endsWith('.json'));
+  const executableSources = sources.filter((source) => !/\.json$/i.test(source.path));
   for (const rule of RULES) {
     const matches = [];
     for (const source of executableSources) {
       const locations = locateAll(source.content, rule.pattern);
-      matches.push(...locations.map((location) => ({ file: source.path, ...location })));
+      matches.push(...locations.map((location) => sourceEvidence(source, location)));
       if (matches.length >= 20) break;
     }
     if (matches.length > 0) findings.push(createFinding(rule, matches.slice(0, 20)));
@@ -119,7 +137,7 @@ export function analyzeSources(sources) {
         description: 'A message handler invokes privileged Chrome APIs without an apparent sender check in the same file.',
         remediation: 'Allowlist senders, validate a strict message schema, and map messages to fixed least-privilege actions.',
         references: [REFERENCES.messaging, REFERENCES.security]
-      }, { file: source.path, ...location }));
+      }, sourceEvidence(source, location)));
     }
   }
   return findings;

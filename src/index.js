@@ -34,3 +34,6 @@ export { fetchSample, fetchSampleBatch, planSample, planSampleBatch } from './qu
 export { loadRulePacks, rulePacksToText } from './rule-packs.js';
 export { auditToSarif, auditToText, comparisonToMarkdown } from './reporters.js';
 export { MvxError } from './errors.js';
+export {
+  ENCODED_PAYLOAD_LIMITS, ENCODED_PAYLOAD_PROFILE
+} from './encoded-payloads.js';

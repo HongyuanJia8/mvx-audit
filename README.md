@@ -136,6 +136,9 @@ development.
 - Source indicators for dynamic evaluation, HTML injection, wildcard
   messaging, keystroke observation, cookie enumeration, insecure transport,
   downloads, clipboard reads, and unvalidated privileged message bridges.
+- Bounded static extraction of direct literal Base64 `atob` payloads, with
+  recursive UTF-8 rescanning by built-in and analyst-supplied rules, exact
+  decoded-byte hashes, original/decoded line provenance, and no code execution.
 - Remote iframe-based extension UI and sensitive capability delegation to
   framed origins.
 - Stable evidence locations, risk summary, explicit assumptions, and SARIF
@@ -340,8 +343,9 @@ Every successful audit includes `package.sha256` and `analysis.sha256`.
 Matching package values mean the same `mvx-package-v1` profile inventoried the
 same extension-relative entries and regular-file bytes, even when directories
 differ. The analysis identity additionally binds the text-analysis profile,
-effective limits, and exact declarative rule-pack provenance. Neither value is
-a signature or a digest of the original CRX/ZIP container; retain
+effective limits, the content-addressed encoded-payload inventory, and exact
+declarative rule-pack provenance. Neither value is a signature or a digest of
+the original CRX/ZIP container; retain
 `artifact.sha256` or the quarantine SHA-256 for exact packed-artifact identity.
 Packed results also include `artifact.authenticity`; this cryptographic status
 has the narrower trust meaning described above. When supplied,

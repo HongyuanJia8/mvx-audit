@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readdir, readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { extractEncodedPayloads } from './encoded-payloads.js';
 import { MvxError } from './errors.js';
 import { executableFormat, packageInventory } from './package.js';
 import { readBoundedRegularFile } from './safe-file.js';
@@ -15,7 +16,7 @@ export const SCAN_LIMITS = Object.freeze({
   maxPackageFileBytes: 100_000_000,
   maxPackageBytes: 250_000_000
 });
-const ANALYSIS_PROFILE = 'mvx-static-v3';
+const ANALYSIS_PROFILE = 'mvx-static-v4';
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -45,7 +46,7 @@ export function normalizeScanLimits(options) {
   return limits;
 }
 
-function analysisProvenance(manifestBytes, state, limits, inventory, context) {
+function analysisProvenance(manifestBytes, state, limits, inventory, encodedPayloads, context) {
   const manifest = {
     path: 'manifest.json',
     bytes: manifestBytes.length,
@@ -66,6 +67,11 @@ function analysisProvenance(manifestBytes, state, limits, inventory, context) {
     packageSha256: inventory.sha256,
     sources,
     limits,
+    encodedPayloads: {
+      profile: encodedPayloads.profile,
+      limits: encodedPayloads.limits,
+      sha256: encodedPayloads.sha256
+    },
     rulePacks: context.rulePacks,
     rulePackLimits: context.rulePackLimits
   };
@@ -210,6 +216,9 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
   };
   await walk(root, root, state, limits, manifestBytes);
   const inventory = packageInventory(state.inventory);
+  const encodedPayloads = extractEncodedPayloads(
+    state.sources.filter((source) => !/\.json$/i.test(source.path))
+  );
   return {
     root: await realpath(root),
     manifest,
@@ -218,7 +227,11 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
     sources: state.sources,
     executableFiles: state.executableFiles,
     inventory,
-    provenance: analysisProvenance(manifestBytes, state, limits, inventory, context),
+    encodedPayloads,
+    decodedSources: encodedPayloads.decodedSources,
+    provenance: analysisProvenance(
+      manifestBytes, state, limits, inventory, encodedPayloads, context
+    ),
     metadata: {
       filesVisited: state.fileCount,
       entriesVisited: state.entryCount,
@@ -226,6 +239,9 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
       sourceBytesScanned: state.totalBytes,
       packageFilesHashed: inventory.fileCount,
       packageBytesHashed: inventory.totalBytes,
+      encodedPayloadCandidateChars: encodedPayloads.candidateEncodedChars,
+      encodedPayloadsDecoded: encodedPayloads.decodedCount,
+      encodedPayloadBytesDecoded: encodedPayloads.totalDecodedBytes,
       warnings: state.warnings,
       limits
     }

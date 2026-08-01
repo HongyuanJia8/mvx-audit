@@ -44,13 +44,15 @@ source map, or other unparsed regular file changes. It deliberately describes
 the unpacked tree rather than ZIP metadata, compression, or a CRX signature.
 Use `artifact.sha256` for the exact packed bytes.
 
-The `mvx-static-v3` analysis profile includes:
+The `mvx-static-v4` analysis profile includes:
 
 - the byte length and SHA-256 of the raw `manifest.json` bytes;
 - the relative path, byte length, and raw-byte SHA-256 of every scanned source;
 - a SHA-256 over the sorted relative package layout and entry types;
 - the `mvx-package-v1` combined SHA-256;
 - the effective file, entry, depth, and byte limits;
+- the `mvx-encoded-payloads-v1` profile, normalized fixed limits, and combined
+  decoded-payload inventory SHA-256;
 - the sorted raw-byte provenance of every analyst-supplied declarative rule
   pack and its normalized effective limits; and
 - a combined SHA-256 over that canonical identity record.
@@ -329,11 +331,24 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
   rules, 5,000 indicators, 1 MB total literal bytes, and 10,000 matches. See
   [declarative rule packs](rule-packs.md) for the complete limits.
+- In executable JS/HTML source, direct literal Base64 calls to global `atob`,
+  `window.atob`, `self.atob`, or `globalThis.atob` are decoded without
+  executing JavaScript. Only unescaped, canonical Base64 literals of at least
+  16 decoded bytes are inventoried.
+  Defaults allow 4,096 candidate calls, 128 decoded payloads, 1.5 million
+  encoded characters per payload, 8 million candidate characters in total,
+  1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
+  recursive layers. Limit breaches fail with
+  `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8 payloads are rescanned by built-in and
+  declarative source rules; binary payloads retain byte length and SHA-256 but
+  are not interpreted. The decoded text is never persisted in the report.
 
 ## Known limitations
 
 - Pattern matching is intentionally explainable and can produce false positives
-  or miss obfuscated, bundled, aliased, or dynamically constructed behavior.
+  or miss bundled, aliased, dynamically constructed, encrypted, escaped,
+  concatenated, non-Base64, or deeper-than-two-stage obfuscation. Direct
+  literal `atob` coverage is not general JavaScript deobfuscation.
 - Permissions may be justified by product requirements that static input does
   not contain.
 - Data-flow, control-flow, publisher identity/authorization validation, and
