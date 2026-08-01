@@ -8,6 +8,7 @@ import { resolveRulePacks } from './rule-packs.js';
 import { createFinding } from './model.js';
 import { applyDispositionPolicies, resolveDispositionPolicies } from './disposition-policy.js';
 import { analyzeEncodedPayloads } from './encoded-payloads.js';
+import { analyzeStaticDnrRules } from './dnr-rules.js';
 import { assertOptionsObject } from './options.js';
 import { VERSION } from './version.js';
 
@@ -58,7 +59,8 @@ export async function auditExtension(inputPath, options = {}) {
   const preparedDispositionPolicies = await resolveDispositionPolicies(options);
   const snapshot = await loadExtension(inputPath, options.limits, {
     rulePacks: preparedRulePacks.provenance,
-    rulePackLimits: preparedRulePacks.limits
+    rulePackLimits: preparedRulePacks.limits,
+    dnrRuleLimits: options.dnrRuleLimits ?? {}
   });
   const declaredPermissions = [
     ...(Array.isArray(snapshot.manifest.permissions) ? snapshot.manifest.permissions : []),
@@ -67,7 +69,8 @@ export async function auditExtension(inputPath, options = {}) {
   const findings = sortFindings([
     ...analyzeIntegrity(snapshot.manifest, snapshot.files),
     ...analyzePackage(snapshot.executableFiles),
-    ...analyzeManifest(snapshot.manifest, snapshot.sources),
+    ...analyzeManifest(snapshot.manifest),
+    ...analyzeStaticDnrRules(snapshot.dnrRules),
     ...analyzeSources([...snapshot.sources, ...snapshot.decodedSources]),
     ...analyzeEncodedPayloads(snapshot.encodedPayloads),
     ...analyzeCustomRules(snapshot, preparedRulePacks)
@@ -94,6 +97,7 @@ export async function auditExtension(inputPath, options = {}) {
     },
     analysis: snapshot.provenance,
     package: snapshot.inventory,
+    dnrRules: snapshot.dnrRules,
     encodedPayloads: {
       profile: snapshot.encodedPayloads.profile,
       parserProfiles: snapshot.encodedPayloads.parserProfiles,
@@ -137,6 +141,7 @@ export async function auditExtension(inputPath, options = {}) {
       'Absence of a finding is not proof that an extension is safe.',
       'Manifest V3 reduces selected attack surfaces but does not make granted privileges harmless.',
       'Literal Base64 decoding is bounded static evidence; it does not execute code or fully deobfuscate dynamic behavior.',
+      'Static DNR inspection is bounded structural analysis; it does not prove that a browser accepted or exercised a rule.',
       ...(preparedRulePacks.packs.length > 0 ? [
         'Analyst-supplied declarative rule-pack matches are review indicators, not proof of malicious intent.'
       ] : []),

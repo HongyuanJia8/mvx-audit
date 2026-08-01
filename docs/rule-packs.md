@@ -88,7 +88,7 @@ to render; they do not establish publisher trust.
 Every report records each pack's namespace, name, version, exact raw byte
 length, raw-byte SHA-256, rule count, and indicator count. Input filenames and
 absolute paths are excluded. Packs are sorted by namespace, so identical pack
-bytes and limits produce the same `mvx-static-v4` analysis identity regardless
+bytes and limits produce the same `mvx-static-v5` analysis identity regardless
 of input order or local path. Reformatting JSON changes the pack and analysis
 hashes, but not the package digest.
 

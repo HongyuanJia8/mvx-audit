@@ -7,12 +7,21 @@ versioning from the 2.0 reset onward.
 
 ### Added
 
+- Strict, bounded inventory of manifest-declared static Declarative Net Request
+  JSON under `mvx-dnr-static-v1`, covering all six action types, precise
+  `modifyHeaders` and `redirect` evidence, disabled rulesets, duplicate-key and
+  UTF-8 rejection, malformed/unverifiable-rule findings, deterministic
+  text/SARIF/comparison output, offline replay, and fail-closed work limits.
+  The combined provenance contract is now `mvx-static-v5` and binds the DNR
+  profile, normalized limits, raw ruleset hashes, structural totals, and
+  evidence inventory. A paired request-redirect scenario expands the validated
+  research corpus to 18 scenarios and 36 fixtures.
 - Bounded, non-executing analysis of direct literal Base64 `atob` payloads,
   including syntax-valid ECMAScript executable-context filtering with an exact
   bundled parser and published registry-integrity shrinkwrap, recursive strict-UTF-8
   rescanning by built-in and declarative rules, content-addressed inventory and
   hash-only decoded evidence, fail-closed attempt/work limits, SARIF/text/
-  comparison reporting, offline-verification replay, and the `mvx-static-v4`
+  comparison reporting, offline-verification replay, and the encoded-payload
   analysis identity. JavaScript lexical goals, ASI, templates, additional arguments,
   HTML script end tags, and attribute character references retain bounded,
   source-mapped handling. Complete WHATWG JavaScript MIME selection, legacy

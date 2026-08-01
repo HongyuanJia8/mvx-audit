@@ -32,6 +32,7 @@ const OPTIONS = new Set([
   'archiveLimits',
   'dispositionPolicies',
   'dispositionPolicyLimits',
+  'dnrRuleLimits',
   'expectedAnalysisSha256',
   'expectedArchiveSha256',
   'expectedExtensionId',
@@ -123,6 +124,7 @@ function snapshotOptions(options) {
       ownValue(options, 'dispositionPolicyLimits'),
       'Disposition-policy limits'
     ),
+    dnrRuleLimits: snapshotRecord(ownValue(options, 'dnrRuleLimits'), 'DNR-rule limits'),
     expectedAnalysisSha256: ownValue(options, 'expectedAnalysisSha256'),
     expectedArchiveSha256: ownValue(options, 'expectedArchiveSha256'),
     expectedExtensionId: ownValue(options, 'expectedExtensionId'),
@@ -711,6 +713,7 @@ async function replayAuditReport(report, inputPath, stable, preparedReviewData) 
   const dispositionAt = report.dispositionEvaluation?.evaluatedAt;
   const auditOptions = Object.assign(Object.create(null), {
     archiveLimits: stable.archiveLimits,
+    dnrRuleLimits: stable.dnrRuleLimits,
     limits: stable.limits,
     ...(preparedReviewData ? {
       _preparedRulePacks: preparedReviewData.rulePacks,

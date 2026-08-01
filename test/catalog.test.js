@@ -9,8 +9,8 @@ test('catalog contains a diverse paired corpus and validates against analyzer ou
   const validation = await validateCatalog();
   assert.deepEqual(validation.errors, []);
   assert.equal(validation.valid, true);
-  assert.equal(validation.scenarios, 17);
-  assert.equal(validation.fixturePairs, 17);
+  assert.equal(validation.scenarios, 18);
+  assert.equal(validation.fixturePairs, 18);
 });
 
 test('catalog identifiers and fixture paths are unique', async () => {

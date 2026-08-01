@@ -17,6 +17,7 @@ const PACKED_COMPARISON_OPTIONS = new Set([
   'dispositionAt',
   'dispositionPolicies',
   'dispositionPolicyLimits',
+  'dnrRuleLimits',
   'expectedAfterArchiveSha256',
   'expectedBeforeArchiveSha256',
   'expectedExtensionId',
@@ -331,6 +332,10 @@ function snapshotPackedComparisonOptions(options) {
     expectedAfterArchiveSha256: ownOption(options, 'expectedAfterArchiveSha256'),
     expectedBeforeArchiveSha256: ownOption(options, 'expectedBeforeArchiveSha256'),
     expectedExtensionId: ownOption(options, 'expectedExtensionId'),
+    dnrRuleLimits: snapshotRecord(
+      ownOption(options, 'dnrRuleLimits'),
+      'Packed comparison DNR-rule limits'
+    ),
     limits: snapshotRecord(ownOption(options, 'limits'), 'Packed comparison scan limits'),
     requireSameExtensionId: ownOption(options, 'requireSameExtensionId'),
     requireValidSignature: ownOption(options, 'requireValidSignature'),
@@ -396,6 +401,7 @@ export async function compareExtensionArchives(beforePath, afterPath, options = 
     && stableOptions.requireValidSignature !== true;
   const shared = {
     archiveLimits: stableOptions.archiveLimits,
+    dnrRuleLimits: stableOptions.dnrRuleLimits,
     limits: stableOptions.limits,
     requireValidSignature: stableOptions.requireValidSignature || strictContinuity,
     temporaryDirectory: stableOptions.temporaryDirectory,

@@ -22,6 +22,7 @@ test('SARIF output maps every evidence location to a result', async () => {
     sarif.runs[0].results.length);
   assert.deepEqual(sarif.runs[0].properties.analysis, audit.analysis);
   assert.deepEqual(sarif.runs[0].properties.package, audit.package);
+  assert.deepEqual(sarif.runs[0].properties.dnrRules, audit.dnrRules);
 });
 
 test('Markdown comparison includes caveat and permission delta', async () => {
@@ -38,7 +39,7 @@ test('text output includes score, evidence, and remediation', async () => {
   const text = auditToText(audit);
   assert.match(text, /Risk: high \(61\/100\)/);
   assert.match(text, /Package \(mvx-package-v1\): 2 file\(s\), 246 bytes, SHA-256: [a-f0-9]{64}/);
-  assert.match(text, /Analysis \(mvx-static-v4\) SHA-256: [a-f0-9]{64}/);
+  assert.match(text, /Analysis \(mvx-static-v5\) SHA-256: [a-f0-9]{64}/);
   assert.match(text, /at fixture\.js:2/);
   assert.match(text, /Fix: Avoid reading cookie values/);
 });
@@ -49,6 +50,7 @@ test('reporters remain compatible with schema-v1 results that predate package an
   delete legacyAudit.analysis;
   delete legacyAudit.package;
   delete legacyAudit.encodedPayloads;
+  delete legacyAudit.dnrRules;
   legacyAudit.findings.forEach((finding) => { delete finding.fingerprint; });
   assert.doesNotMatch(auditToText(legacyAudit), /Analysis .* SHA-256/);
   const legacySarif = auditToSarif(legacyAudit);

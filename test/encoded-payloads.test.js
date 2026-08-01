@@ -96,7 +96,7 @@ test('audit inventories direct Base64 literals and scans decoded behavior withou
   }, { 'worker.js': `const stage = atob('${base64(hidden)}');\n` });
 
   const result = await auditExtension(temp);
-  assert.equal(result.analysis.profile, 'mvx-static-v4');
+  assert.equal(result.analysis.profile, 'mvx-static-v5');
   assert.equal(result.encodedPayloads.profile, ENCODED_PAYLOAD_PROFILE);
   assert.equal(result.encodedPayloads.parserProfiles, ENCODED_PAYLOAD_PARSER_PROFILES);
   assert.equal(Object.isFrozen(ENCODED_PAYLOAD_PARSER_PROFILES), true);

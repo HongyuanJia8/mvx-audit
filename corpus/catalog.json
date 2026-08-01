@@ -56,6 +56,16 @@
       "references": ["https://developer.chrome.com/docs/extensions/reference/api/webRequest", "https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest"]
     },
     {
+      "id": "request-redirect",
+      "title": "Request redirection",
+      "category": "network-control",
+      "description": "A matching loopback request is redirected by a blocking listener or declarative rule.",
+      "mv3Effect": "changed",
+      "fixtures": { "mv2": "fixtures/request-redirect/mv2", "mv3": "fixtures/request-redirect/mv3" },
+      "expectedFindings": { "mv2": ["MVX110"], "mv3": ["MVX114"] },
+      "references": ["https://developer.chrome.com/docs/extensions/reference/api/webRequest", "https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest"]
+    },
+    {
       "id": "csp-header-removal",
       "title": "Response security-header removal",
       "category": "network-control",
@@ -187,4 +197,3 @@
     }
   ]
 }
-

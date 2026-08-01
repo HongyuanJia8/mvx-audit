@@ -35,6 +35,15 @@ rendering. It never imports code or fetches pack references. A valid pack is not
 trusted intelligence: operators remain responsible for its source, license,
 expiry, integrity, and conclusions.
 
+Manifest-declared static DNR files are untrusted package input. MVX reads only
+normalized extension-relative JSON files already admitted by the package scan,
+requires strict UTF-8, rejects duplicate JSON keys, and applies fixed ruleset,
+rule, retained-evidence, nesting, and JSON-value budgets. It never resolves
+redirect destinations or executes rules. Disabled rulesets are still reviewed
+because extension code can enable declared static rulesets later. The
+`mvx-dnr-static-v1` result is structural triage, not a complete Chrome schema
+validator or proof that Chrome accepted, enabled, matched, or executed a rule.
+
 Encoded-payload analysis is static and never calls `eval`, `Function`, `atob`,
 or extension code. A bounded ECMAScript parser recognizes direct, unescaped
 Base64 string literals in syntax-valid calls to bare `atob` or the `window`,

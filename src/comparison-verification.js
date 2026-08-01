@@ -28,6 +28,7 @@ const OPTIONS = new Set([
   'archiveLimits',
   'dispositionPolicies',
   'dispositionPolicyLimits',
+  'dnrRuleLimits',
   'expectedAfterAnalysisSha256',
   'expectedAfterArchiveSha256',
   'expectedAfterPackageSha256',
@@ -118,6 +119,7 @@ function snapshotOptions(options) {
       ownValue(options, 'dispositionPolicyLimits'),
       'Disposition-policy limits'
     ),
+    dnrRuleLimits: snapshotRecord(ownValue(options, 'dnrRuleLimits'), 'DNR-rule limits'),
     expectedAfterAnalysisSha256: ownValue(options, 'expectedAfterAnalysisSha256'),
     expectedAfterArchiveSha256: ownValue(options, 'expectedAfterArchiveSha256'),
     expectedAfterPackageSha256: ownValue(options, 'expectedAfterPackageSha256'),
@@ -429,6 +431,7 @@ export async function verifyComparisonReport(
   });
   const shared = {
     archiveLimits: stable.archiveLimits,
+    dnrRuleLimits: stable.dnrRuleLimits,
     limits: stable.limits,
     temporaryDirectory: stable.temporaryDirectory
   };

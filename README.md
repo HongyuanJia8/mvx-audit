@@ -9,7 +9,7 @@ Chrome extensions. It combines static auditing, MV2/MV3 capability comparison,
 reproducible real-world threat intelligence, hash-verified quarantine,
 real-sample triage benchmarking, and an optional networkless dynamic canary lab.
 
-The repository combines a curated corpus of **17 threat scenarios and 34
+The repository combines a curated corpus of **18 threat scenarios and 36
 paired MV2/MV3 fixtures** with a reproducible real-world intelligence snapshot
 covering **5,122 unique extension IDs** and **504 indexed non-empty CRX
 artifacts**. Live packages are never bundled or fetched by normal commands.
@@ -132,8 +132,10 @@ development.
 - Broad host, content-script, external messaging, and web-resource exposure.
 - Sensitive permission review, including capability chains such as
   `cookies` + `<all_urls>`.
-- Network-control review for blocking `webRequest` and MV3
-  `declarativeNetRequest` header rules.
+- Network-control review for blocking `webRequest` and declared static MV3
+  `declarativeNetRequest` rules, including header modification, redirects, all
+  six action classes, malformed/unverifiable rules, and disabled rulesets that
+  can later be enabled through the extension API.
 - Source indicators for dynamic evaluation, HTML injection, wildcard
   messaging, keystroke observation, cookie enumeration, insecure transport,
   downloads, clipboard reads, and unvalidated privileged message bridges.
@@ -194,8 +196,9 @@ development.
   finding/evidence/capability delta plus packed continuity and package changes,
   and supports independently trusted report and side identities.
 
-See the complete [rule reference](docs/rule-reference.md), [declarative rule
-pack guide](docs/rule-packs.md), [disposition-policy guide](docs/disposition-policies.md),
+See the complete [rule reference](docs/rule-reference.md), [static DNR analysis
+guide](docs/dnr-analysis.md), [declarative rule pack guide](docs/rule-packs.md),
+[disposition-policy guide](docs/disposition-policies.md),
 [audit-verification guide](docs/audit-verification.md),
 [comparison-verification guide](docs/comparison-verification.md),
 [packed comparison guide](docs/packed-comparison.md), and
@@ -208,7 +211,7 @@ endpoints, different browser versions, and hundreds of duplicate CSV files.
 Those artifacts could not support a scientific MV2/MV3 conclusion and created
 an unacceptable safety risk. They were removed in version 2.0.
 
-The replacement [synthetic corpus](corpus/README.md) covers 17 distinct capability and
+The replacement [synthetic corpus](corpus/README.md) covers 18 distinct capability and
 implementation patterns with a single machine-validated registry. Every entry
 has paired manifests, an explicit MV3 effect classification, expected analyzer
 findings, and links to primary Chrome documentation. The generated [capability
@@ -347,9 +350,9 @@ Every successful audit includes `package.sha256` and `analysis.sha256`.
 Matching package values mean the same `mvx-package-v1` profile inventoried the
 same extension-relative entries and regular-file bytes, even when directories
 differ. The analysis identity additionally binds the text-analysis profile,
-effective limits, the content-addressed encoded-payload inventory, and exact
-declarative rule-pack provenance. Neither value is a signature or a digest of
-the original CRX/ZIP container; retain
+effective limits, the content-addressed encoded-payload and static-DNR
+inventories, and exact declarative rule-pack provenance. Neither value is a
+signature or a digest of the original CRX/ZIP container; retain
 `artifact.sha256` or the quarantine SHA-256 for exact packed-artifact identity.
 Packed results also include `artifact.authenticity`; this cryptographic status
 has the narrower trust meaning described above. When supplied,

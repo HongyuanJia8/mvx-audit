@@ -122,7 +122,7 @@ test('CLI validates the complete corpus', async () => {
   const capture = captureStreams();
   const code = await runCli(['corpus', 'validate'], capture.streams);
   assert.equal(code, 0);
-  assert.match(capture.output().stdout, /17 scenarios/);
+  assert.match(capture.output().stdout, /18 scenarios/);
 });
 
 test('CLI help documents stable exit codes', async () => {

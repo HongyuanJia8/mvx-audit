@@ -25,6 +25,15 @@ within the 3.x release line.
 | MVX111 | Medium | Non-HTTPS host permissions. |
 | MVX112 | High | MV2 `background.scripts` used in an MV3 manifest. |
 | MVX113 | High | Declarative Net Request `modifyHeaders` rules. |
+| MVX114 | High | Declarative Net Request `redirect` rules. |
+| MVX115 | High | Malformed or structurally unverifiable declared static DNR rulesets/rules. |
+
+MVX113 and MVX114 retain the declared ruleset ID, enabled state, positive rule
+ID, action type, ruleset path, and one-based source line. MVX115 distinguishes
+invalid descriptors, UTF-8/JSON/duplicate-key failures, non-array roots,
+duplicate or invalid rule IDs, and unsupported or contradictory action shapes.
+Missing declared ruleset files remain `MVX002`. See the [static DNR analysis
+profile](dnr-analysis.md) for the exact boundary.
 
 ## Source rules
 

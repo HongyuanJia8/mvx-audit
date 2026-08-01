@@ -6,6 +6,7 @@ import { unpackCrx } from './archive.js';
 import { MvxError } from './errors.js';
 import { SEVERITIES, sortFindings, summarizeFindings } from './model.js';
 import { resolveRulePacks } from './rule-packs.js';
+import { normalizeDnrRuleLimits } from './dnr-rules.js';
 import { analyzeArchiveAuthenticity } from './rules/archive-rules.js';
 
 const EXTENSION_ID = /^[a-p]{32}$/;
@@ -48,6 +49,7 @@ export async function runStaticBenchmark({
   threshold = 'high',
   acknowledgeRisk = false,
   requireValidSignature = false,
+  dnrRuleLimits,
   rulePacks,
   rulePackLimits,
   _preparedRulePacks,
@@ -57,6 +59,7 @@ export async function runStaticBenchmark({
 } = {}) {
   if (!acknowledgeRisk) throw new MvxError('Refusing malware extraction without --acknowledge-risk', { code: 'RISK_ACK_REQUIRED' });
   if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 1000) throw new MvxError('Benchmark limit must be between 1 and 1000', { code: 'INVALID_ARGUMENT' });
+  const normalizedDnrRuleLimits = normalizeDnrRuleLimits(dnrRuleLimits ?? {});
   const preparedRulePacks = await resolveRulePacks({ rulePacks, rulePackLimits, _preparedRulePacks });
   const severityLimit = thresholdIndex(threshold);
   const catalog = new Map(records.map((record) => [record.extensionId, record]));
@@ -89,7 +92,10 @@ export async function runStaticBenchmark({
         && archive.authenticity.extensionId !== sample.extensionId) {
         throw new MvxError('Verified CRX extension ID does not match its quarantine directory', { code: 'ARCHIVE_IDENTITY_MISMATCH' });
       }
-      const audit = await auditor(destination, { _preparedRulePacks: preparedRulePacks });
+      const audit = await auditor(destination, {
+        dnrRuleLimits: normalizedDnrRuleLimits,
+        _preparedRulePacks: preparedRulePacks
+      });
       const findings = sortFindings([
         ...audit.findings,
         ...analyzeArchiveAuthenticity(archive.authenticity)
@@ -149,6 +155,7 @@ export async function runStaticBenchmark({
     threshold,
     rulePacks: preparedRulePacks.provenance,
     rulePackLimits: preparedRulePacks.limits,
+    dnrRuleLimits: normalizedDnrRuleLimits,
     summary: {
       quarantinedArtifacts: discovered.samples.length,
       selected: selected.length,

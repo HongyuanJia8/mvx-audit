@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readdir, readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { extractEncodedPayloads } from './encoded-payloads.js';
+import { declaredStaticDnrPaths, extractStaticDnrRules } from './dnr-rules.js';
 import { MvxError } from './errors.js';
 import { executableFormat, packageInventory } from './package.js';
 import { readBoundedRegularFile } from './safe-file.js';
@@ -18,7 +19,7 @@ export const SCAN_LIMITS = Object.freeze({
   maxPackageFileBytes: 100_000_000,
   maxPackageBytes: 250_000_000
 });
-const ANALYSIS_PROFILE = 'mvx-static-v4';
+const ANALYSIS_PROFILE = 'mvx-static-v5';
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -26,6 +27,15 @@ function sha256(value) {
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function validUtf8(bytes) {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeScanLimits(options) {
@@ -48,7 +58,7 @@ export function normalizeScanLimits(options) {
   return limits;
 }
 
-function analysisProvenance(manifestBytes, state, limits, inventory, encodedPayloads, context) {
+function analysisProvenance(manifestBytes, state, limits, inventory, encodedPayloads, dnrRules, context) {
   const manifest = {
     path: 'manifest.json',
     bytes: manifestBytes.length,
@@ -75,6 +85,11 @@ function analysisProvenance(manifestBytes, state, limits, inventory, encodedPayl
       browserEventHandlerProfile: encodedPayloads.browserEventHandlerProfile,
       limits: encodedPayloads.limits,
       sha256: encodedPayloads.sha256
+    },
+    dnrRules: {
+      profile: dnrRules.profile,
+      limits: dnrRules.limits,
+      sha256: dnrRules.sha256
     },
     rulePacks: context.rulePacks,
     rulePackLimits: context.rulePackLimits
@@ -155,7 +170,9 @@ async function walk(root, current, state, limits, manifestBytes, depth = 0) {
     if (state.fileCount >= limits.maxFiles) throw new MvxError(`Extension contains more than ${limits.maxFiles} files`, { code: 'SCAN_LIMIT' });
     state.fileCount += 1;
     state.files.push(relative);
-    const source = relative !== 'manifest.json' && SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase());
+    const source = relative !== 'manifest.json'
+      && (SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
+        || state.dnrPaths.has(relative));
     const maxBytes = source ? Math.min(limits.maxFileBytes, limits.maxPackageFileBytes) : limits.maxPackageFileBytes;
     const bytes = relative === 'manifest.json' ? manifestBytes : await readBoundedRegularFile(absolute, {
       maxBytes,
@@ -176,11 +193,14 @@ async function walk(root, current, state, limits, manifestBytes, depth = 0) {
       throw new MvxError(`Scannable source exceeds ${limits.maxTotalBytes} bytes`, { code: 'SCAN_LIMIT' });
     }
     state.totalBytes += bytes.length;
-    state.sources.push({ path: relative, content: bytes.toString('utf8'), bytes: bytes.length, sha256: inventoryEntry.sha256 });
+    state.sources.push({
+      path: relative, content: bytes.toString('utf8'), validUtf8: validUtf8(bytes),
+      bytes: bytes.length, sha256: inventoryEntry.sha256
+    });
   }
 }
 
-export async function loadExtension(inputPath, options = {}, context = { rulePacks: [], rulePackLimits: {} }) {
+export async function loadExtension(inputPath, options = {}, context = {}) {
   const limits = normalizeScanLimits(options);
   const { root, manifestPath } = await resolveRoot(inputPath);
   let manifestStat;
@@ -216,13 +236,21 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
     warnings: [],
     layout: [],
     inventory: [],
-    executableFiles: []
+    executableFiles: [],
+    dnrPaths: declaredStaticDnrPaths(manifest)
   };
   await walk(root, root, state, limits, manifestBytes);
   const inventory = packageInventory(state.inventory);
   const encodedPayloads = extractEncodedPayloads(
     state.sources.filter((source) => !/\.json$/i.test(source.path))
   );
+  const dnrRules = extractStaticDnrRules(manifest, [
+    ...state.sources,
+    {
+      path: 'manifest.json', content: manifestSource, validUtf8: validUtf8(manifestBytes),
+      bytes: manifestBytes.length, sha256: sha256(manifestBytes)
+    }
+  ], context.dnrRuleLimits ?? {});
   return {
     root: await realpath(root),
     manifest,
@@ -232,9 +260,13 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
     executableFiles: state.executableFiles,
     inventory,
     encodedPayloads,
+    dnrRules,
     decodedSources: encodedPayloads.decodedSources,
     provenance: analysisProvenance(
-      manifestBytes, state, limits, inventory, encodedPayloads, context
+      manifestBytes, state, limits, inventory, encodedPayloads, dnrRules, {
+        rulePacks: context.rulePacks ?? [],
+        rulePackLimits: context.rulePackLimits ?? {}
+      }
     ),
     metadata: {
       filesVisited: state.fileCount,
@@ -257,6 +289,15 @@ export async function loadExtension(inputPath, options = {}, context = { rulePac
       encodedPayloadXmlExpandedChars: encodedPayloads.xmlExpandedChars,
       encodedPayloadsDecoded: encodedPayloads.decodedCount,
       encodedPayloadBytesDecoded: encodedPayloads.totalDecodedBytes,
+      dnrRulesets: dnrRules.totals.rulesets,
+      dnrParsedRulesets: dnrRules.totals.parsedRulesets,
+      dnrInvalidRulesets: dnrRules.totals.invalidRulesets,
+      dnrMissingRulesets: dnrRules.totals.missingRulesets,
+      dnrRules: dnrRules.totals.rules,
+      dnrValidRules: dnrRules.totals.validRules,
+      dnrInvalidRules: dnrRules.totals.invalidRules,
+      dnrTrackedRules: dnrRules.totals.trackedRules,
+      dnrJsonValues: dnrRules.totals.jsonValues,
       warnings: state.warnings,
       limits
     }

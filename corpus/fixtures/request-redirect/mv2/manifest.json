@@ -1,0 +1,1 @@
+{"manifest_version":2,"name":"MVX request redirect fixture (MV2)","version":"1.0.0","permissions":["webRequest","webRequestBlocking","http://127.0.0.1/*"],"background":{"scripts":["background.js"]}}

@@ -1,0 +1,1 @@
+[{"id":1,"priority":1,"action":{"type":"redirect","redirect":{"url":"http://127.0.0.1/redirected"}},"condition":{"urlFilter":"||127.0.0.1/source","resourceTypes":["xmlhttprequest"]}}]
