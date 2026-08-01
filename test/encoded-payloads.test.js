@@ -896,7 +896,9 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
     ['duplicate', '<!DOCTYPE svg [<!ENTITY a "x"><!ENTITY a "y">]><svg/>', /Duplicate XML entity/],
     ['undefined', '<!DOCTYPE svg [<!ENTITY a "&missing;">]><svg/>', /Undefined XML entity/],
     ['public', '<!DOCTYPE svg PUBLIC "identifier" "external.dtd"><svg/>', /External XML DTD/],
-    ['xml10-control', '<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "&#1;">]><svg/>', /Undefined XML entity/]
+    ['xml10-control', '<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "&#1;">]><svg/>', /Undefined XML entity/],
+    ['numeric-markup', '<!DOCTYPE svg [<!ENTITY a "&#60;script>">]><svg/>', /Markup-bearing numeric/],
+    ['numeric-reference', '<!DOCTYPE svg [<!ENTITY a "&#38;#60;script>">]><svg/>', /Markup-bearing numeric/]
   ];
   for (const [name, content, message] of unsupportedDtds) {
     assert.throws(

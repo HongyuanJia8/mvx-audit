@@ -877,6 +877,11 @@ function xmlEntityValue(
     let replacement = XML_ENTITIES[reference];
     if (replacement === undefined && reference.startsWith('#')) {
       replacement = xmlCharacterReference(reference, version);
+      if (replacement === '<' || replacement === '&') {
+        throw invalidXmlDtd(
+          'Markup-bearing numeric references in XML entities are unsupported'
+        );
+      }
     } else if (replacement === undefined && Object.hasOwn(rawValues, reference)) {
       replacement = xmlEntityValue(
         rawValues[reference], reference, rawValues, resolvedValues,
