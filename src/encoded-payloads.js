@@ -1291,13 +1291,14 @@ function* svgDocumentAtobLiterals(content, budget, limits) {
     starts = xmlLineStarts(content, xmlVersion);
     sourceCursor = parser.position;
   });
-  for (const event of ['comment', 'processinginstruction']) {
-    parser.on(event, () => {
-      chargeLeaf();
-      sourceCursor = content[parser.position] === '>'
-        ? parser.position + 1 : parser.position;
-    });
-  }
+  parser.on('comment', () => {
+    chargeLeaf();
+    sourceCursor = parser.position + 1;
+  });
+  parser.on('processinginstruction', () => {
+    chargeLeaf();
+    sourceCursor = parser.position;
+  });
   parser.on('error', () => { syntaxError = true; });
   try {
     parser.write(content).close();

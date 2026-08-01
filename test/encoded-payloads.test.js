@@ -644,6 +644,14 @@ test('srcdoc and standalone SVG documents retain bounded executable contexts', a
   )]);
   assert.equal(splitScript.decodedCount, 1);
 
+  const processingInstructionScript = extractEncodedPayloads([source(
+    '<svg xmlns="http://www.w3.org/2000/svg"><script>'
+      + `let safe=1<?audit?>>0;atob(&quot;${payload}&quot;)`
+      + '</script></svg>',
+    'processing-instruction-script.svg'
+  )]);
+  assert.equal(processingInstructionScript.decodedCount, 1);
+
   const malformed = extractEncodedPayloads([source(
     `<svg xmlns="http://www.w3.org/2000/svg"><script>atob('${payload}')</svg>`,
     'malformed.svg'
