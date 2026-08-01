@@ -12,6 +12,9 @@ const MAX_ENCODED_SOURCE_BYTES = 2_000_000;
 const MAX_DECODED_SOURCE_BYTES = 1_500_000;
 const FETCH_TIMEOUT_MS = 15_000;
 const SVG_SMIL_EVENT_HANDLERS = Object.freeze(['onbegin', 'onend', 'onrepeat']);
+const SVG_SCRIPT_SOURCE =
+  'third_party/blink/renderer/core/svg/svg_script_element.cc';
+const SVG_SCRIPT_ONERROR_MODE = 'error-handler';
 const SVG_SMIL_ELEMENT_SOURCES = Object.freeze([
   Object.freeze({
     name: 'animate',
@@ -42,7 +45,8 @@ const SOURCE_PATHS = Object.freeze([
   'third_party/blink/renderer/core/svg/svg_attribute_names.json5',
   'third_party/blink/renderer/core/svg/animation/svg_smil_element.cc',
   'third_party/blink/renderer/core/svg/svg_animation_element.h',
-  ...SVG_SMIL_ELEMENT_SOURCES.map((entry) => entry.path)
+  ...SVG_SMIL_ELEMENT_SOURCES.map((entry) => entry.path),
+  SVG_SCRIPT_SOURCE
 ]);
 const REQUIRED_GENERIC_HANDLERS = Object.freeze([
   'onbeforecopy', 'onbeforecut', 'onbeforepaste',
@@ -154,6 +158,11 @@ for (const entry of SVG_SMIL_ELEMENT_SOURCES) {
     throw new Error(`SVG SMIL element inheritance is missing: ${entry.name}`);
   }
 }
+const svgScriptSource = sources.get(SVG_SCRIPT_SOURCE);
+if (!svgScriptSource.includes('SVGScriptElement::ParseAttribute')
+  || !svgScriptSource.includes('JSEventHandler::HandlerType::kOnErrorEventHandler')) {
+  throw new Error('SVG script onerror handler grammar is missing');
+}
 
 const identity = {
   revision: REVISION,
@@ -163,11 +172,23 @@ const identity = {
   html,
   svg,
   svgSmilHandlers: SVG_SMIL_EVENT_HANDLERS,
-  svgSmilElements: sortedUnique(SVG_SMIL_ELEMENT_SOURCES.map((entry) => entry.name))
+  svgSmilElements: sortedUnique(SVG_SMIL_ELEMENT_SOURCES.map((entry) => entry.name)),
+  svgScriptOnerror: Object.freeze({
+    attribute: 'onerror', element: 'script', mode: SVG_SCRIPT_ONERROR_MODE
+  })
 };
 const digest = sha256(JSON.stringify(identity));
 const profile = `mvx-chromium-event-handlers-v${PROFILE_VERSION}-sha256-${digest}`;
-const rendered = renderProfile(profile, digest, identity);
+const baseRendered = renderProfile(profile, digest, identity);
+const svgNamespaceAnchor = '  if (namespace === SVG_NAMESPACE) {\n';
+if (baseRendered.split(svgNamespaceAnchor).length !== 2) {
+  throw new Error('Generated SVG namespace handler anchor is ambiguous');
+}
+const rendered = baseRendered.replace(
+  svgNamespaceAnchor,
+  "  if (namespace === SVG_NAMESPACE) {\n    if (tagName === 'script'"
+    + ` && attributeName === 'onerror') return '${SVG_SCRIPT_ONERROR_MODE}';\n`
+);
 if (process.argv.includes('--check')) {
   if (await readFile(outputPath, 'utf8') !== rendered) {
     throw new Error('Browser event-handler profile is stale; run npm run handlers:update');

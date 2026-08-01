@@ -107,7 +107,7 @@ test('cookie capability chain is detected in both manifest and source', async ()
   assert.deepEqual(result.capabilities.hostPermissions, ['<all_urls>']);
   assert.equal(result.analysis.manifest.sha256, '3a9e7868763f271ead5caefe274ea72c63cfa19d1b197511dcbf28a0ef7a8fff');
   assert.equal(result.analysis.packageLayoutSha256, 'b0261980aa905c75bd30450d2ffc1af5fa27454eb9923d75f1c4d25bec134744');
-  assert.equal(result.analysis.sha256, '67cd04bac5d8ca1a6e3b0551afad56bb5f3aac54de5f50234127d6d08637bdf0');
+  assert.equal(result.analysis.sha256, '8c91c4845c3b9d4772b48134f5aef3dec6d43bf0a7e2f13381cdddc5fe44746c');
 });
 
 test('multiple source patterns retain deterministic evidence locations', async (t) => {

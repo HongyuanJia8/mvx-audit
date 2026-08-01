@@ -65,11 +65,13 @@
   "dependencies": {
     "acorn": "8.18.0",
     "entities": "6.0.1",
-    "parse5": "7.3.0"
+    "parse5": "7.3.0",
+    "saxes": "6.0.0"
   },
   "bundleDependencies": [
     "acorn",
     "entities",
-    "parse5"
+    "parse5",
+    "saxes"
   ]
 }

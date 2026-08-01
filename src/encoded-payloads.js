@@ -4,6 +4,7 @@ import { DecodingMode, EntityDecoder, htmlDecodeTree } from 'entities/decode';
 import {
   defaultTreeAdapter, Parser as HtmlParser, Tokenizer as HtmlTokenizer
 } from 'parse5';
+import { SaxesParser } from 'saxes';
 import {
   BROWSER_EVENT_HANDLER_PROFILE, htmlEventHandlerMode
 } from './browser-event-handlers.js';
@@ -16,7 +17,8 @@ export const ENCODED_PAYLOAD_PROFILE = 'mvx-encoded-payloads-v1';
 export const ENCODED_PAYLOAD_PARSER_PROFILES = Object.freeze({
   ecmascript: 'acorn-8.18.0',
   html: 'parse5-7.3.0',
-  htmlEntities: 'entities-6.0.1'
+  htmlEntities: 'entities-6.0.1',
+  xml: 'saxes-6.0.0'
 });
 export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
   maxCandidates: 4_096,
@@ -49,6 +51,7 @@ const JAVASCRIPT_TYPES = new Set([
 ]);
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const XLINK_NAMESPACE = 'http://www.w3.org/1999/xlink';
 const HANDLER_PREFIX = 'function __mvx_event_handler__(event){';
 const ERROR_HANDLER_PREFIX =
   'function __mvx_event_handler__(event, source, lineno, colno, error){';
@@ -587,51 +590,51 @@ function sourceTag(content, node, mergedAttributeLocations) {
   };
 }
 
-function scriptMode(content, tag, namespace) {
+function scriptModeForValues(attributes, namespace) {
   if (namespace !== HTML_NAMESPACE && namespace !== SVG_NAMESPACE) return null;
   if (namespace === HTML_NAMESPACE
-    && tag.attributes.some((attribute) => attribute.name === 'src')) return null;
+    && attributes.some((attribute) => attribute.name === 'src')) return null;
   if (namespace === SVG_NAMESPACE
-    && tag.attributes.some((attribute) => attribute.name === 'href')) return null;
-  const type = tag.attributes.find((attribute) => attribute.name === 'type');
+    && attributes.some((attribute) => attribute.name === 'href')) return null;
+  const type = attributes.find((attribute) => attribute.name === 'type');
   let mode;
   if (type) {
-    const decoded = type.valueStart === undefined ? ''
-      : decodeHtmlAttribute(content, type.valueStart, type.valueEnd).content;
-    const normalized = asciiLower(trimHtmlSpace(decoded));
+    const normalized = asciiLower(trimHtmlSpace(type.value));
     mode = normalized === '' || JAVASCRIPT_TYPES.has(normalized) ? 'script'
       : normalized === 'module' ? 'module' : null;
   } else if (namespace === SVG_NAMESPACE) {
     mode = 'script';
   } else {
-    const language = tag.attributes.find((attribute) => attribute.name === 'language');
-    if (!language || language.valueStart === undefined) {
+    const language = attributes.find((attribute) => attribute.name === 'language');
+    if (!language) {
       mode = 'script';
     } else {
-      const decoded = decodeHtmlAttribute(
-        content, language.valueStart, language.valueEnd
-      ).content;
-      const normalized = asciiLower(decoded);
+      const normalized = asciiLower(language.value);
       mode = normalized === '' || JAVASCRIPT_TYPES.has(`text/${normalized}`) ? 'script' : null;
     }
   }
   if (namespace === SVG_NAMESPACE) return mode;
-  if (mode === 'script' && tag.attributes.some((attribute) => attribute.name === 'nomodule')) {
+  if (mode === 'script' && attributes.some((attribute) => attribute.name === 'nomodule')) {
     return null;
   }
-  const event = tag.attributes.find((attribute) => attribute.name === 'event');
-  const target = tag.attributes.find((attribute) => attribute.name === 'for');
+  const event = attributes.find((attribute) => attribute.name === 'event');
+  const target = attributes.find((attribute) => attribute.name === 'for');
   if (mode === 'script' && event && target) {
-    const eventValue = event.valueStart === undefined ? '' : trimHtmlSpace(
-      decodeHtmlAttribute(content, event.valueStart, event.valueEnd).content
-    );
-    const targetValue = target.valueStart === undefined ? '' : trimHtmlSpace(
-      decodeHtmlAttribute(content, target.valueStart, target.valueEnd).content
-    );
+    const eventValue = trimHtmlSpace(event.value);
+    const targetValue = trimHtmlSpace(target.value);
     if (asciiLower(targetValue) !== 'window'
       || !['onload', 'onload()'].includes(asciiLower(eventValue))) return null;
   }
   return mode;
+}
+
+function scriptMode(content, tag, namespace) {
+  return scriptModeForValues(tag.attributes.map((attribute) => ({
+    name: attribute.name,
+    value: attribute.valueStart === undefined ? '' : decodeHtmlAttribute(
+      content, attribute.valueStart, attribute.valueEnd
+    ).content
+  })), namespace);
 }
 
 function* htmlAtobLiterals(
@@ -728,9 +731,267 @@ function* htmlAtobLiterals(
   }
 }
 
+const XML_ENTITIES = Object.freeze({
+  amp: '&', apos: "'", gt: '>', lt: '<', quot: '"'
+});
+
+function decodeXmlSourceRange(content, start, end, { attribute = false, entities = true } = {}) {
+  let decoded = '';
+  const offsets = [];
+  let cursor = start;
+  while (cursor < end) {
+    const character = content[cursor];
+    if (character === '\r') {
+      decoded += attribute ? ' ' : '\n';
+      offsets.push(cursor);
+      cursor += content[cursor + 1] === '\n' ? 2 : 1;
+      continue;
+    }
+    if (attribute && (character === '\n' || character === '\t')) {
+      decoded += ' ';
+      offsets.push(cursor);
+      cursor += 1;
+      continue;
+    }
+    if (entities && character === '&') {
+      const semicolon = content.indexOf(';', cursor + 1);
+      if (semicolon < 0 || semicolon >= end) {
+        throw new MvxError('XML entity source mapping is incomplete', {
+          code: 'ENCODED_PAYLOAD_LIMIT'
+        });
+      }
+      const entity = content.slice(cursor + 1, semicolon);
+      let replacement = XML_ENTITIES[entity];
+      if (replacement === undefined && /^#x[0-9a-f]+$/i.test(entity)) {
+        replacement = String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
+      } else if (replacement === undefined && /^#[0-9]+$/.test(entity)) {
+        replacement = String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
+      }
+      if (replacement === undefined) {
+        throw new MvxError('XML entity source mapping is unsupported', {
+          code: 'ENCODED_PAYLOAD_LIMIT'
+        });
+      }
+      decoded += replacement;
+      for (let index = 0; index < replacement.length; index += 1) offsets.push(cursor);
+      cursor = semicolon + 1;
+      continue;
+    }
+    decoded += character;
+    offsets.push(cursor);
+    cursor += 1;
+  }
+  offsets.push(end);
+  return { content: decoded, offsets };
+}
+
+function xmlAttributeValueBounds(content, name, searchStart, end) {
+  const nameStart = content.indexOf(name, searchStart);
+  if (nameStart < 0 || nameStart >= end) return null;
+  let cursor = nameStart + name.length;
+  while (cursor < end && isHtmlSpace(content[cursor])) cursor += 1;
+  if (content[cursor] !== '=') return null;
+  cursor += 1;
+  while (cursor < end && isHtmlSpace(content[cursor])) cursor += 1;
+  const quote = content[cursor];
+  if (quote !== "'" && quote !== '"') return null;
+  const valueEnd = content.indexOf(quote, cursor + 1);
+  if (valueEnd < 0 || valueEnd >= end) return null;
+  return { start: cursor + 1, end: valueEnd };
+}
+
+function joinDecodedParts(parts, fallbackOffset) {
+  let content = '';
+  const offsets = [];
+  let finalOffset = fallbackOffset;
+  for (const part of parts) {
+    content += part.content;
+    offsets.push(...part.offsets.slice(0, -1));
+    finalOffset = part.offsets.at(-1);
+  }
+  offsets.push(finalOffset);
+  return { content, offsets };
+}
+
+function* svgDocumentAtobLiterals(content, starts, budget, limits) {
+  budget.htmlMaxDocumentDepth = Math.max(budget.htmlMaxDocumentDepth, 1);
+  const chargeToken = () => {
+    budget.htmlTokens += 1;
+    if (budget.htmlTokens > limits.maxHtmlTokens) {
+      throw new MvxError(`XML tokens exceed ${limits.maxHtmlTokens}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
+  const chargeNode = () => {
+    budget.htmlNodes += 1;
+    if (budget.htmlNodes > limits.maxHtmlNodes) {
+      throw new MvxError(`XML node allocations exceed ${limits.maxHtmlNodes}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
+  const chargeWork = (units) => {
+    budget.htmlTreeWork += units;
+    if (budget.htmlTreeWork > limits.maxHtmlTreeWork) {
+      throw new MvxError(`XML tree work exceeds ${limits.maxHtmlTreeWork}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
+  chargeNode();
+  const parser = new SaxesParser({ xmlns: true, position: true });
+  const elements = [];
+  const contexts = [];
+  let attributes = [];
+  let attributeSearchStart = 0;
+  let sourceCursor = 0;
+  let syntaxError = false;
+  const chargeLeaf = () => {
+    chargeToken();
+    chargeNode();
+    chargeWork(Math.max(1, elements.length));
+  };
+  parser.on('opentagstart', () => {
+    attributes = [];
+    attributeSearchStart = Math.max(sourceCursor, parser.position - 1);
+  });
+  parser.on('attribute', (attribute) => {
+    budget.htmlAttributes += 1;
+    if (budget.htmlAttributes > limits.maxHtmlAttributes) {
+      throw new MvxError(`XML attributes exceed ${limits.maxHtmlAttributes}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+    chargeWork(1);
+    const bounds = xmlAttributeValueBounds(
+      content, attribute.name, attributeSearchStart, parser.position
+    );
+    if (!bounds) {
+      throw new MvxError('XML attribute source mapping is incomplete', {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+    const decoded = decodeXmlSourceRange(content, bounds.start, bounds.end, {
+      attribute: true
+    });
+    if (decoded.content !== attribute.value) {
+      throw new MvxError('XML attribute source mapping does not match the parser', {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+    attributes.push({
+      qualifiedName: attribute.name,
+      localName: attribute.local,
+      prefix: attribute.prefix,
+      value: attribute.value,
+      decoded
+    });
+    attributeSearchStart = parser.position;
+  });
+  parser.on('opentag', (tag) => {
+    chargeToken();
+    chargeNode();
+    const depth = elements.length + 1;
+    budget.htmlMaxDepth = Math.max(budget.htmlMaxDepth, depth);
+    if (depth > limits.maxHtmlTreeDepth) {
+      throw new MvxError(`XML tree depth exceeds ${limits.maxHtmlTreeDepth}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+    chargeWork(depth);
+    for (const attribute of attributes) {
+      const resolved = tag.attributes[attribute.qualifiedName];
+      if (attribute.prefix !== '' || resolved?.uri !== '') continue;
+      const mode = htmlEventHandlerMode(tag.uri, tag.local, attribute.localName);
+      if (mode) contexts.push({ ...attribute.decoded, mode });
+    }
+    const scriptAttributes = attributes.map((attribute) => ({
+      name: attribute.localName === 'href'
+        && (tag.attributes[attribute.qualifiedName]?.uri === ''
+          || tag.attributes[attribute.qualifiedName]?.uri === XLINK_NAMESPACE) ? 'href'
+        : attribute.prefix === '' ? attribute.localName : attribute.qualifiedName,
+      value: attribute.value
+    }));
+    const mode = tag.local === 'script'
+      ? scriptModeForValues(scriptAttributes, tag.uri) : null;
+    elements.push({
+      script: mode ? { mode, parts: [], startOffset: parser.position } : null
+    });
+    sourceCursor = parser.position;
+  });
+  parser.on('text', (value) => {
+    chargeLeaf();
+    // Saxes has already consumed the opening '<' of the next markup token when
+    // it publishes a text event. Keep that delimiter for the following event.
+    const end = content[parser.position - 1] === '<'
+      ? parser.position - 1 : parser.position;
+    if (elements.at(-1)?.script) {
+      const decoded = decodeXmlSourceRange(content, sourceCursor, end);
+      if (decoded.content !== value) {
+        throw new MvxError('XML text source mapping does not match the parser', {
+          code: 'ENCODED_PAYLOAD_LIMIT'
+        });
+      }
+      elements.at(-1).script.parts.push(decoded);
+    }
+    sourceCursor = end;
+  });
+  parser.on('cdata', (value) => {
+    chargeLeaf();
+    const start = sourceCursor + 9;
+    const end = parser.position - 3;
+    if (elements.at(-1)?.script) {
+      const decoded = decodeXmlSourceRange(content, start, end, { entities: false });
+      if (decoded.content !== value) {
+        throw new MvxError('XML CDATA source mapping does not match the parser', {
+          code: 'ENCODED_PAYLOAD_LIMIT'
+        });
+      }
+      elements.at(-1).script.parts.push(decoded);
+    }
+    sourceCursor = parser.position;
+  });
+  parser.on('closetag', () => {
+    chargeToken();
+    chargeWork(Math.max(1, elements.length));
+    const element = elements.pop();
+    if (element?.script) {
+      contexts.push({
+        ...joinDecodedParts(element.script.parts, element.script.startOffset),
+        mode: element.script.mode
+      });
+    }
+    sourceCursor = parser.position;
+  });
+  for (const event of ['comment', 'doctype', 'processinginstruction', 'xmldecl']) {
+    parser.on(event, () => {
+      chargeLeaf();
+      sourceCursor = parser.position;
+    });
+  }
+  parser.on('error', () => { syntaxError = true; });
+  try {
+    parser.write(content).close();
+  } catch (error) {
+    if (error instanceof MvxError) throw error;
+    syntaxError = true;
+  }
+  if (syntaxError) return;
+  for (const context of contexts) {
+    yield* javascriptAtobLiterals(
+      context.content, 0, context.content.length, starts, budget, limits,
+      context.offsets, context.mode
+    );
+  }
+}
+
 function directAtobLiterals(source, budget, limits) {
   const starts = lineStarts(source.content);
-  if (/\.(?:html?|svg)$/i.test(source.path) && source.depth === 0) {
+  if (/\.svg$/i.test(source.path) && source.depth === 0) {
+    return svgDocumentAtobLiterals(source.content, starts, budget, limits);
+  }
+  if (/\.html?$/i.test(source.path) && source.depth === 0) {
     return htmlAtobLiterals(source.content, starts, budget, limits);
   }
   return javascriptAtobLiterals(

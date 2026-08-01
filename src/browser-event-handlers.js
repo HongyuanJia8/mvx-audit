@@ -2,13 +2,13 @@
 // reviewed unit when advancing the browser revision; never resolve HEAD at
 // audit time.
 export const BROWSER_EVENT_HANDLER_PROFILE =
-  'mvx-chromium-event-handlers-v1-sha256-e0bf4e3ac2790bbc91b19ade04f6ac96757bdef87f30150bb72feb5381e06937';
+  'mvx-chromium-event-handlers-v1-sha256-eb73431ee6afe8d0d75a6f58744136e74ca5ba7ef8ecee9fe02dff4d9a86f14c';
 
 export const BROWSER_EVENT_HANDLER_PROVENANCE = Object.freeze({
   browser: 'Chromium',
   revision: '3c06821a384385ee5f355148a5fcd427f5230118',
   capturedAt: '2026-07-31',
-  sha256: 'e0bf4e3ac2790bbc91b19ade04f6ac96757bdef87f30150bb72feb5381e06937',
+  sha256: 'eb73431ee6afe8d0d75a6f58744136e74ca5ba7ef8ecee9fe02dff4d9a86f14c',
   sources: Object.freeze([
     'third_party/blink/renderer/core/html/html_body_element.cc',
     'third_party/blink/renderer/core/html/html_element.cc',
@@ -20,7 +20,8 @@ export const BROWSER_EVENT_HANDLER_PROVENANCE = Object.freeze({
     'third_party/blink/renderer/core/svg/svg_animate_element.h',
     'third_party/blink/renderer/core/svg/svg_animate_motion_element.h',
     'third_party/blink/renderer/core/svg/svg_animate_transform_element.h',
-    'third_party/blink/renderer/core/svg/svg_set_element.h'
+    'third_party/blink/renderer/core/svg/svg_set_element.h',
+    'third_party/blink/renderer/core/svg/svg_script_element.cc'
   ])
 });
 
@@ -239,6 +240,7 @@ export function htmlEventHandlerMode(namespace, tagName, attributeName) {
     return HTML_EVENT_HANDLER_SET.has(attributeName) ? 'handler' : null;
   }
   if (namespace === SVG_NAMESPACE) {
+    if (tagName === 'script' && attributeName === 'onerror') return 'error-handler';
     if (SVG_SMIL_EVENT_HANDLER_SET.has(attributeName)
       && !SVG_SMIL_EVENT_HANDLER_ELEMENT_SET.has(tagName)) return null;
     if (HTML_EVENT_HANDLER_SET.has(attributeName)

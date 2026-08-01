@@ -139,6 +139,7 @@ development.
   downloads, clipboard reads, and unvalidated privileged message bridges.
 - Bounded static extraction of direct literal Base64 `atob` payloads, with
   syntax-valid ECMAScript/HTML/SVG and nested-`srcdoc` executable-context filtering,
+  including namespace- and case-correct XML parsing for standalone `.svg` files,
   recursive UTF-8 rescanning by
   built-in and analyst-supplied rules, exact decoded-byte hashes, hash-only
   decoded evidence, original/decoded line provenance, and no code execution.

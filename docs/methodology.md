@@ -334,9 +334,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - In executable JS/HTML/SVG contexts, a bounded ECMAScript parser finds syntax-
   valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
   or `globalThis.atob` without executing JavaScript. The exact parser version is
-  bundled in the published package. Exact bundled Parse5 and entities versions
-  supply HTML5 tokenization, tree construction, and character-reference
-  decoding, while the published shrinkwrap records every parser's registry
+  bundled in the published package. Exact bundled Parse5, Saxes, and entities
+  versions supply HTML5 tokenization and tree construction, namespace-aware XML
+  parsing, and character-reference decoding, while the published shrinkwrap records every parser's registry
   integrity. Comments, literal text, regex lexical goals, templates, automatic
   semicolon insertion, and delimiters follow the ECMAScript grammar.
   Additional call arguments are allowed, but only the first literal is decoded.
@@ -348,10 +348,13 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   evidence locations. Unsandboxed `iframe[srcdoc]` and sandboxes with
   `allow-scripts` are parsed as bounded nested HTML documents. SVG handlers use
   their browser `evt` formal parameter; SMIL timing handlers are limited to the
-  pinned revision's animation elements. SVG scripts ignore HTML-only `src`,
+  pinned revision's animation elements, while SVG script `onerror` uses the
+  browser's special error-handler parameters. SVG scripts ignore HTML-only `src`,
   `language`, `nomodule`, `for`, and `event` controls and decode SVG text
   character references and CDATA sections before ECMAScript parsing; SVG `href` remains the
-  external-source control.
+  external-source control. Standalone `.svg` package files are parsed as XML,
+  preserving namespace resolution and case-sensitive element and attribute names,
+  and are discarded as executable evidence when the XML is not well formed.
   Only names in a frozen, exported browser event-handler profile are
   executable; arbitrary `on*` attributes remain data. The generated profile is
   derived from a pinned Chromium revision's actual generic HTML, body, frameset,
@@ -377,15 +380,17 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
   recursive layers. ECMAScript work is capped at 1 million tokens and 2 million
-  AST node allocations across original and decoded inputs. HTML work is
-  separately capped at 1 million tokens, 16,384 attributes, 100,000 node
+  AST node allocations across original and decoded inputs. HTML and standalone
+  SVG XML work is separately capped at 1 million tokens, 16,384 attributes, 100,000 node
   allocations, 2,048 open-element depth, 16 document levels, and 4 million
   depth-weighted tree-construction work units. Nested HTML content is capped at
   5 million characters in total.
   These content-deterministic counters interrupt tokenization, allocation, and
   expensive tree construction before a complete DOM is required, while parser
   stack exhaustion independently fails closed. The effective limits and work
-  counters participate in encoded-payload identity. Limit breaches fail with
+  counters participate in encoded-payload identity. The published `html*` work
+  fields are shared markup-parser budgets for both HTML and standalone SVG XML.
+  Limit breaches fail with
   `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8
   payloads are rescanned by built-in and declarative source rules; binary
   payloads retain byte length and SHA-256 but are not interpreted. Syntax-

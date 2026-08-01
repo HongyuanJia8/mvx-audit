@@ -48,7 +48,7 @@ function source(content, sourcePath = 'worker.js') {
 }
 
 const HANDLER_PROFILE_GOLDEN = Object.freeze({
-  profile: 'mvx-chromium-event-handlers-v1-sha256-e0bf4e3ac2790bbc91b19ade04f6ac96757bdef87f30150bb72feb5381e06937',
+  profile: 'mvx-chromium-event-handlers-v1-sha256-eb73431ee6afe8d0d75a6f58744136e74ca5ba7ef8ecee9fe02dff4d9a86f14c',
   lists: Object.freeze({
     body: Object.freeze({ count: 23, sha256: '4ddd4a6e31f75be8eb3d0f339a432333f93e35c1d7b4d63ff63e8d6cb64f5dca' }),
     frameset: Object.freeze({ count: 23, sha256: 'ec184fa2af1bf99c1dbc41b3bbbf199f7b5d5cd76f38fa7a9028ca2c8be1a985' }),
@@ -397,7 +397,10 @@ test('frozen Chromium handler profile matches independent goldens and contexts',
     html: HTML_EVENT_HANDLER_ATTRIBUTES,
     svg: SVG_EVENT_HANDLER_ATTRIBUTES,
     svgSmilHandlers: SVG_SMIL_EVENT_HANDLER_ATTRIBUTES,
-    svgSmilElements: SVG_SMIL_EVENT_HANDLER_ELEMENTS
+    svgSmilElements: SVG_SMIL_EVENT_HANDLER_ELEMENTS,
+    svgScriptOnerror: {
+      attribute: 'onerror', element: 'script', mode: 'error-handler'
+    }
   };
   const identityHash = createHash('sha256')
     .update(JSON.stringify(identity)).digest('hex');
@@ -512,11 +515,13 @@ test('SVG handlers, SMIL scope, and scripts follow SVG execution grammar', () =>
     `<svg onrepeat="atob('${payload}')"></svg>`,
     `<svg><animate onbegin="let event; atob('${payload}')"></animate></svg>`,
     `<svg><animate onbegin="let evt; atob('${payload}')"></animate></svg>`,
-    `<svg><rect onclick="let event; atob('${payload}')"></rect></svg>`
+    `<svg><rect onclick="let event; atob('${payload}')"></rect></svg>`,
+    `<svg><script onerror="let source; atob('${payload}')"></script></svg>`,
+    `<svg><script onerror="let evt; atob('${payload}')"></script></svg>`
   ].join('\n'), 'svg-handlers.html')]);
-  assert.equal(contexts.candidates, 3);
-  assert.equal(contexts.decodedCount, 2);
-  assert.deepEqual(contexts.entries.map((entry) => entry.encodedLine), [4, 6]);
+  assert.equal(contexts.candidates, 5);
+  assert.equal(contexts.decodedCount, 3);
+  assert.deepEqual(contexts.entries.map((entry) => entry.encodedLine), [4, 6, 8]);
 
   const scripts = extractEncodedPayloads([source([
     `<svg><script nomodule>atob('${payload}')</script></svg>`,
@@ -548,12 +553,39 @@ test('srcdoc and standalone SVG documents retain bounded executable contexts', a
   assert.ok(documents.htmlNestedChars > 0);
   assert.deepEqual(documents.entries.map((entry) => entry.encodedLine), [2, 4]);
 
+  const standalone = extractEncodedPayloads([source([
+    '<?xml version="1.0"?>',
+    '<s:svg xmlns:s="http://www.w3.org/2000/svg"',
+    ' xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:v="urn:vendor">',
+    `  <s:script><![CDATA[atob('${payload}')]]></s:script>`,
+    `  <s:rect onclick="atob(&quot;${payload}&quot;)"/>`,
+    `  <s:script v:href="metadata">atob('${payload}')</s:script>`,
+    `  <s:SCRIPT>atob('${payload}')</s:SCRIPT>`,
+    `  <s:rect onClick="atob('${payload}')" v:onclick="atob('${payload}')"/>`,
+    `  <s:script xlink:href="external.js">atob('${payload}')</s:script>`,
+    `  <s:script type="application/json">atob('${payload}')</s:script>`,
+    '</s:svg>'
+  ].join('\r\n'), 'namespaced.svg')]);
+  assert.equal(standalone.decodedCount, 3);
+  assert.deepEqual(standalone.entries.map((entry) => entry.encodedLine), [4, 5, 6]);
+  assert.ok(standalone.htmlTokens > 0);
+  assert.ok(standalone.htmlAttributes > 0);
+  assert.ok(standalone.htmlNodes > 0);
+  assert.ok(standalone.htmlTreeWork > 0);
+  assert.equal(standalone.htmlMaxDocumentDepth, 1);
+
+  const malformed = extractEncodedPayloads([source(
+    `<svg xmlns="http://www.w3.org/2000/svg"><script>atob('${payload}')</svg>`,
+    'malformed.svg'
+  )]);
+  assert.equal(malformed.decodedCount, 0);
+
   const temp = await mkdtemp(path.join(os.tmpdir(), 'mvx-encoded-svg-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
   await writeExtension(temp, {
     manifest_version: 3, name: 'SVG source fixture', version: '1.0.0'
   }, {
-    'page.svg': `<svg xmlns="http://www.w3.org/2000/svg"><script>atob("${payload}")</script></svg>`
+    'page.svg': `<s:svg xmlns:s="http://www.w3.org/2000/svg"><s:script><![CDATA[atob("${payload}")]]></s:script></s:svg>`
   });
   const result = await auditExtension(temp);
   assert.equal(result.encodedPayloads.decodedCount, 1);
@@ -777,6 +809,26 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
   assert.throws(
     () => extractEncodedPayloads([html], { maxHtmlAttributes: 1 }),
     (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML attributes/.test(error.message)
+  );
+  const svg = source(
+    '<svg xmlns="http://www.w3.org/2000/svg"><g id="x">text</g></svg>',
+    'limits.svg'
+  );
+  assert.throws(
+    () => extractEncodedPayloads([svg], { maxHtmlTokens: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /XML tokens/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([svg], { maxHtmlNodes: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /XML node/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([svg], { maxHtmlAttributes: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /XML attributes/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([svg], { maxHtmlTreeDepth: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /XML tree depth/.test(error.message)
   );
   assert.throws(
     () => extractEncodedPayloads([

@@ -17,11 +17,11 @@ versioning from the 2.0 reset onward.
   HTML script end tags, and attribute character references retain bounded,
   source-mapped handling. Complete WHATWG JavaScript MIME selection, legacy
   `language`, modern `nomodule`, classic/module/function-body grammar, parser
-  stack exhaustion, exact bundled HTML5 parsing, a content-hashed generated
+  stack exhaustion, exact bundled HTML5 and namespace-aware XML parsing, a content-hashed generated
   Chromium-revision HTML/body/frameset/MathML/SVG event-handler profile with independent
   golden tests, namespace-specific SVG script/handler/CDATA grammars, inert-template,
   nested-`srcdoc`, standalone-SVG, and corrected-root handling, and construction-time
-  ECMAScript/HTML token, attribute, node, document-depth, tree-depth, and tree-work
+  ECMAScript/HTML/XML token, attribute, node, document-depth, tree-depth, and tree-work
   limits fail closed and participate in analysis identity.
   Malformed HTML, raw-text elements, duplicate and merged attributes, handler
   formal parameters, and tag-scoped SVG/SMIL handlers retain
