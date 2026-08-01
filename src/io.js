@@ -29,6 +29,15 @@ function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function validUtf8(bytes) {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeScanLimits(options) {
   if (!options || Array.isArray(options) || typeof options !== 'object') {
     throw new MvxError('Scan limits must be an object', { code: 'INVALID_ARGUMENT' });
@@ -184,14 +193,8 @@ async function walk(root, current, state, limits, manifestBytes, depth = 0) {
       throw new MvxError(`Scannable source exceeds ${limits.maxTotalBytes} bytes`, { code: 'SCAN_LIMIT' });
     }
     state.totalBytes += bytes.length;
-    let validUtf8 = true;
-    try {
-      new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-      validUtf8 = false;
-    }
     state.sources.push({
-      path: relative, content: bytes.toString('utf8'), validUtf8,
+      path: relative, content: bytes.toString('utf8'), validUtf8: validUtf8(bytes),
       bytes: bytes.length, sha256: inventoryEntry.sha256
     });
   }
@@ -239,10 +242,15 @@ export async function loadExtension(inputPath, options = {}, context = {}) {
   await walk(root, root, state, limits, manifestBytes);
   const inventory = packageInventory(state.inventory);
   const encodedPayloads = extractEncodedPayloads(
-    state.sources.filter((source) => !/\.json$/i.test(source.path)
-      && !state.dnrPaths.has(source.path))
+    state.sources.filter((source) => !/\.json$/i.test(source.path))
   );
-  const dnrRules = extractStaticDnrRules(manifest, state.sources, context.dnrRuleLimits ?? {});
+  const dnrRules = extractStaticDnrRules(manifest, [
+    ...state.sources,
+    {
+      path: 'manifest.json', content: manifestSource, validUtf8: validUtf8(manifestBytes),
+      bytes: manifestBytes.length, sha256: sha256(manifestBytes)
+    }
+  ], context.dnrRuleLimits ?? {});
   return {
     root: await realpath(root),
     manifest,

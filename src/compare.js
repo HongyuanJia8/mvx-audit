@@ -401,6 +401,7 @@ export async function compareExtensionArchives(beforePath, afterPath, options = 
     && stableOptions.requireValidSignature !== true;
   const shared = {
     archiveLimits: stableOptions.archiveLimits,
+    dnrRuleLimits: stableOptions.dnrRuleLimits,
     limits: stableOptions.limits,
     requireValidSignature: stableOptions.requireValidSignature || strictContinuity,
     temporaryDirectory: stableOptions.temporaryDirectory,

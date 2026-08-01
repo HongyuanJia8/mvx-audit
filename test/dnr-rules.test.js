@@ -6,7 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { auditExtension } from '../src/analyzer.js';
 import { verifyAuditReport } from '../src/audit-verification.js';
-import { compareExtensions } from '../src/compare.js';
+import { compareExtensionArchives, compareExtensions } from '../src/compare.js';
+import { verifyComparisonReport } from '../src/comparison-verification.js';
 import {
   DNR_RULE_LIMITS, DNR_RULE_PROFILE, analyzeStaticDnrRules,
   extractStaticDnrRules, normalizeDnrRuleLimits
@@ -293,6 +294,47 @@ test('manifest-declared DNR files are inspected without relying on a .json suffi
   assert.equal(audit.encodedPayloads.candidates, 0);
 });
 
+test('DNR declarations can add scanning scope but cannot suppress source analysis', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-dnr-poisoning-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeExtension(root, {
+    manifest_version: 3,
+    name: 'DNR path poisoning',
+    version: '1.0.0',
+    background: { service_worker: 'worker.js' },
+    declarative_net_request: {
+      rule_resources: [{ id: 'poison', path: 'worker.js' }]
+    }
+  }, {
+    'worker.js': 'atob("ZXZhbChzZWNyZXRQYXlsb2FkKTs=");\n'
+  });
+  const audit = await auditExtension(root);
+  assert.equal(audit.encodedPayloads.candidates, 1);
+  assert.equal(audit.encodedPayloads.decodedCount, 1);
+  assert.ok(audit.findings.some((finding) => finding.id === 'MVX115'));
+  assert.ok(audit.findings.some((finding) => finding.id === 'MVX213'));
+  assert.ok(audit.findings.some((finding) => finding.id === 'MVX201'));
+});
+
+test('a DNR ruleset self-reference to manifest.json is explicitly unverifiable', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-dnr-manifest-self-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeExtension(root, {
+    manifest_version: 3,
+    name: 'Manifest self reference',
+    version: '1.0.0',
+    declarative_net_request: {
+      rule_resources: [{ id: 'self', enabled: true, path: 'manifest.json' }]
+    }
+  });
+  const audit = await auditExtension(root);
+  assert.equal(audit.dnrRules.rulesets[0].status, 'root-not-array');
+  assert.match(audit.dnrRules.rulesets[0].sha256, /^[a-f0-9]{64}$/);
+  assert.ok(audit.findings.some((finding) => finding.id === 'MVX115'));
+  assert.ok(!audit.findings.some((finding) => finding.id === 'MVX002'));
+  assert.deepEqual(audit.analysis.sources, []);
+});
+
 test('offline verification replays the exact DNR limits and inventory', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvx-dnr-verification-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -321,6 +363,17 @@ test('offline verification replays the exact DNR limits and inventory', async (t
   await assert.rejects(
     () => verifyAuditReport(report, extension, { dnrRuleLimits: { maxRules: 1 } }),
     (error) => error.code === 'DNR_RULE_LIMIT'
+  );
+
+  const comparison = await compareExtensions(extension, extension, { dnrRuleLimits });
+  const comparisonReport = path.join(root, 'comparison.json');
+  await writeFile(comparisonReport, `${JSON.stringify(comparison, null, 2)}\n`);
+  assert.equal((await verifyComparisonReport(
+    comparisonReport, extension, extension, { dnrRuleLimits }
+  )).valid, true);
+  await assert.rejects(
+    () => verifyComparisonReport(comparisonReport, extension, extension),
+    (error) => error.code === 'COMPARISON_REPORT_MISMATCH'
   );
 });
 
@@ -352,6 +405,13 @@ test('packed audits apply DNR limits before returning a report and clean extract
   ]));
   await assert.rejects(
     () => auditExtensionArchive(archive, {
+      temporaryDirectory,
+      dnrRuleLimits: { maxRules: 1 }
+    }),
+    (error) => error.code === 'DNR_RULE_LIMIT'
+  );
+  await assert.rejects(
+    () => compareExtensionArchives(archive, archive, {
       temporaryDirectory,
       dnrRuleLimits: { maxRules: 1 }
     }),
