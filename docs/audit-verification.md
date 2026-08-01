@@ -48,7 +48,8 @@ matches the retained report:
 
 - exact tool name and version, report schema, findings, summaries, capabilities,
   assumptions, scan metadata, package inventory, and analysis provenance;
-- exact `mvx-encoded-payloads-v1` limits, candidates, content-addressed
+- exact `mvx-encoded-payloads-v1` limits, parser work counters, candidates,
+  content-addressed
   inventory, and built-in/declarative findings recovered from strict UTF-8
   payloads;
 - exact raw-byte provenance and normalized limits for all rule packs;

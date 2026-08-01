@@ -342,6 +342,13 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   Additional call arguments are allowed, but only the first literal is decoded.
   HTML analysis is limited to inline executable script bodies and event
   handlers, using classic, module, or actual function-body grammar as applicable.
+  Template contents and tree-builder attribute merges on repeated `html` and
+  `body` start tags retain their original evidence locations. SVG handlers use
+  their browser `evt` formal parameter; SMIL timing handlers are limited to the
+  pinned revision's animation elements. SVG scripts ignore HTML-only `src`,
+  `language`, `nomodule`, `for`, and `event` controls and decode SVG text
+  character references before ECMAScript parsing; SVG `href` remains the
+  external-source control.
   Only names in a frozen, exported browser event-handler profile are
   executable; arbitrary `on*` attributes remain data. The generated profile is
   derived from a pinned Chromium revision's actual generic HTML, body, frameset,
@@ -355,7 +362,8 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   [JavaScript MIME type essence list](https://mimesniff.spec.whatwg.org/#javascript-mime-type),
   legacy `language`, and modern-Chrome `nomodule` behavior. Standalone JS with
   unknown loading mode may use strict script or module grammar. Actual script
-  tree construction, raw-text states, duplicate-attribute suppression,
+  tree construction, raw-text states, duplicate-attribute suppression and root
+  attribute merging,
   HTML/MathML/SVG namespaces, end-tag boundaries, and all character references
   preserve original source offsets. The
   scanner does not resolve runtime bindings, so this is a medium-confidence
@@ -364,10 +372,14 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   Defaults allow 4,096 candidate calls, 128 decoded payloads, 1.5 million
   inspected literal characters per attempt, 8 million candidate characters in total,
   1 MB decoded bytes per payload, 5 MB decoded bytes in total, and two
-  recursive layers. Parser work is capped at 1 million tokens and 2 million AST
-  node allocations across original and decoded inputs; these counters interrupt
-  tokenization and AST construction, including copied nodes, while parser stack
-  exhaustion independently fails closed. Limit breaches fail with
+  recursive layers. ECMAScript work is capped at 1 million tokens and 2 million
+  AST node allocations across original and decoded inputs. HTML work is
+  separately capped at 1 million tokens, 100,000 node allocations, 2,048 open-
+  element depth, and 4 million depth-weighted tree-construction work units.
+  These content-deterministic counters interrupt tokenization, allocation, and
+  expensive tree construction before a complete DOM is required, while parser
+  stack exhaustion independently fails closed. The effective limits and work
+  counters participate in encoded-payload identity. Limit breaches fail with
   `ENCODED_PAYLOAD_LIMIT`. Strict UTF-8
   payloads are rescanned by built-in and declarative source rules; binary
   payloads retain byte length and SHA-256 but are not interpreted. Syntax-

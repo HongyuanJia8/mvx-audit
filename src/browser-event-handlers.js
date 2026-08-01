@@ -2,19 +2,25 @@
 // reviewed unit when advancing the browser revision; never resolve HEAD at
 // audit time.
 export const BROWSER_EVENT_HANDLER_PROFILE =
-  'mvx-chromium-event-handlers-v1-sha256-c4a32df3d5b9d85a0ce371c8b96c6060d69f22105de5a8dd5ce9302f1ccd1ec0';
+  'mvx-chromium-event-handlers-v1-sha256-e0bf4e3ac2790bbc91b19ade04f6ac96757bdef87f30150bb72feb5381e06937';
 
 export const BROWSER_EVENT_HANDLER_PROVENANCE = Object.freeze({
   browser: 'Chromium',
   revision: '3c06821a384385ee5f355148a5fcd427f5230118',
   capturedAt: '2026-07-31',
-  sha256: 'c4a32df3d5b9d85a0ce371c8b96c6060d69f22105de5a8dd5ce9302f1ccd1ec0',
+  sha256: 'e0bf4e3ac2790bbc91b19ade04f6ac96757bdef87f30150bb72feb5381e06937',
   sources: Object.freeze([
     'third_party/blink/renderer/core/html/html_body_element.cc',
     'third_party/blink/renderer/core/html/html_element.cc',
     'third_party/blink/renderer/core/html/html_frame_set_element.cc',
     'third_party/blink/renderer/core/mathml/mathml_element.cc',
-    'third_party/blink/renderer/core/svg/svg_attribute_names.json5'
+    'third_party/blink/renderer/core/svg/svg_attribute_names.json5',
+    'third_party/blink/renderer/core/svg/animation/svg_smil_element.cc',
+    'third_party/blink/renderer/core/svg/svg_animation_element.h',
+    'third_party/blink/renderer/core/svg/svg_animate_element.h',
+    'third_party/blink/renderer/core/svg/svg_animate_motion_element.h',
+    'third_party/blink/renderer/core/svg/svg_animate_transform_element.h',
+    'third_party/blink/renderer/core/svg/svg_set_element.h'
   ])
 });
 
@@ -197,10 +203,25 @@ export const SVG_EVENT_HANDLER_ATTRIBUTES = Object.freeze([
   'onrepeat'
 ]);
 
+export const SVG_SMIL_EVENT_HANDLER_ATTRIBUTES = Object.freeze([
+  'onbegin',
+  'onend',
+  'onrepeat'
+]);
+
+export const SVG_SMIL_EVENT_HANDLER_ELEMENTS = Object.freeze([
+  'animate',
+  'animateMotion',
+  'animateTransform',
+  'set'
+]);
+
 const HTML_EVENT_HANDLER_SET = new Set(HTML_EVENT_HANDLER_ATTRIBUTES);
 const BODY_EVENT_HANDLER_SET = new Set(BODY_EVENT_HANDLER_ATTRIBUTES);
 const FRAMESET_EVENT_HANDLER_SET = new Set(FRAMESET_EVENT_HANDLER_ATTRIBUTES);
 const SVG_EVENT_HANDLER_SET = new Set(SVG_EVENT_HANDLER_ATTRIBUTES);
+const SVG_SMIL_EVENT_HANDLER_SET = new Set(SVG_SMIL_EVENT_HANDLER_ATTRIBUTES);
+const SVG_SMIL_EVENT_HANDLER_ELEMENT_SET = new Set(SVG_SMIL_EVENT_HANDLER_ELEMENTS);
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const MATHML_NAMESPACE = 'http://www.w3.org/1998/Math/MathML';
@@ -217,8 +238,11 @@ export function htmlEventHandlerMode(namespace, tagName, attributeName) {
   if (namespace === MATHML_NAMESPACE) {
     return HTML_EVENT_HANDLER_SET.has(attributeName) ? 'handler' : null;
   }
-  if (namespace === SVG_NAMESPACE
-    && (HTML_EVENT_HANDLER_SET.has(attributeName)
-      || SVG_EVENT_HANDLER_SET.has(attributeName))) return 'handler';
+  if (namespace === SVG_NAMESPACE) {
+    if (SVG_SMIL_EVENT_HANDLER_SET.has(attributeName)
+      && !SVG_SMIL_EVENT_HANDLER_ELEMENT_SET.has(tagName)) return null;
+    if (HTML_EVENT_HANDLER_SET.has(attributeName)
+      || SVG_EVENT_HANDLER_SET.has(attributeName)) return 'svg-handler';
+  }
   return null;
 }

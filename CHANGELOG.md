@@ -19,9 +19,11 @@ versioning from the 2.0 reset onward.
   `language`, modern `nomodule`, classic/module/function-body grammar, parser
   stack exhaustion, exact bundled HTML5 parsing, a content-hashed generated
   Chromium-revision HTML/body/frameset/MathML/SVG event-handler profile with independent
-  golden tests, and construction-time token/AST-allocation limits fail closed
-  and participate in analysis identity. Malformed HTML, raw-text elements,
-  duplicate attributes, handler formal parameters, and SVG/SMIL handlers retain
+  golden tests, namespace-specific SVG script/handler grammars, template and
+  corrected-root handling, and construction-time ECMAScript/HTML token, node,
+  depth, and tree-work limits fail closed and participate in analysis identity.
+  Malformed HTML, raw-text elements, duplicate and merged attributes, handler
+  formal parameters, and tag-scoped SVG/SMIL handlers retain
   browser-aligned executable-context handling.
 - Independent identity-bound isolated-lab verification for exact report,
   package, analysis, scenario, event-stream, deterministic evaluation, seccomp,

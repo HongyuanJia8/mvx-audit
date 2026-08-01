@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { Parser } from 'acorn';
+import { Parser as AcornParser } from 'acorn';
 import { DecodingMode, EntityDecoder, htmlDecodeTree } from 'entities/decode';
-import { parse as parseHtml } from 'parse5';
+import { defaultTreeAdapter, Parser as HtmlParser } from 'parse5';
 import {
   BROWSER_EVENT_HANDLER_PROFILE, htmlEventHandlerMode
 } from './browser-event-handlers.js';
@@ -25,6 +25,10 @@ export const ENCODED_PAYLOAD_LIMITS = Object.freeze({
   maxTotalDecodedBytes: 5_000_000,
   maxParserTokens: 1_000_000,
   maxAstNodes: 2_000_000,
+  maxHtmlTokens: 1_000_000,
+  maxHtmlNodes: 100_000,
+  maxHtmlTreeDepth: 2_048,
+  maxHtmlTreeWork: 4_000_000,
   maxDepth: 2,
   minDecodedBytes: 16
 });
@@ -38,9 +42,12 @@ const JAVASCRIPT_TYPES = new Set([
   'text/javascript1.3', 'text/javascript1.4', 'text/javascript1.5',
   'text/jscript', 'text/livescript', 'text/x-ecmascript', 'text/x-javascript'
 ]);
+const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const HANDLER_PREFIX = 'function __mvx_event_handler__(event){';
 const ERROR_HANDLER_PREFIX =
   'function __mvx_event_handler__(event, source, lineno, colno, error){';
+const SVG_HANDLER_PREFIX = 'function __mvx_event_handler__(evt){';
 const HANDLER_SUFFIX = '\n}';
 
 function sha256(value) {
@@ -149,7 +156,8 @@ function chargeMalformedSource(segment, budget, limits) {
 
 function parseJavaScriptGoal(segment, sourceType, parserBudget, limits, handler = null) {
   const prefix = handler === 'error' ? ERROR_HANDLER_PREFIX
-    : handler === 'event' ? HANDLER_PREFIX : '';
+    : handler === 'event' ? HANDLER_PREFIX
+      : handler === 'svg-event' ? SVG_HANDLER_PREFIX : '';
   const input = handler ? `${prefix}${segment}${HANDLER_SUFFIX}` : segment;
   const chargeAstNode = () => {
     parserBudget.astNodes += 1;
@@ -159,7 +167,7 @@ function parseJavaScriptGoal(segment, sourceType, parserBudget, limits, handler 
       });
     }
   };
-  class BoundedParser extends Parser {
+  class BoundedParser extends AcornParser {
     startNode() {
       chargeAstNode();
       return super.startNode();
@@ -219,6 +227,9 @@ function parseJavaScript(segment, mode, parserBudget, limits) {
   if (mode === 'error-handler') {
     return parseJavaScriptGoal(segment, 'script', parserBudget, limits, 'error');
   }
+  if (mode === 'svg-handler') {
+    return parseJavaScriptGoal(segment, 'script', parserBudget, limits, 'svg-event');
+  }
   const script = parseJavaScriptGoal(segment, 'script', parserBudget, limits);
   return script ?? parseJavaScriptGoal(segment, 'module', parserBudget, limits);
 }
@@ -273,7 +284,7 @@ function* javascriptAtobLiterals(
   }
 }
 
-function decodeHtmlAttribute(content, start, end) {
+function decodeHtmlRange(content, start, end, mode) {
   let decoded = '';
   const offsets = [];
   const raw = content.slice(start, end);
@@ -296,7 +307,7 @@ function decodeHtmlAttribute(content, start, end) {
     }
     if (ampersand === -1) break;
     entityOffset = start + ampersand;
-    decoder.startEntity(DecodingMode.Attribute);
+    decoder.startEntity(mode);
     let consumed = decoder.write(raw, ampersand + 1);
     if (consumed < 0) consumed = decoder.end();
     if (consumed === 0) {
@@ -307,6 +318,14 @@ function decodeHtmlAttribute(content, start, end) {
   }
   offsets.push(end);
   return { content: decoded, offsets };
+}
+
+function decodeHtmlAttribute(content, start, end) {
+  return decodeHtmlRange(content, start, end, DecodingMode.Attribute);
+}
+
+function decodeHtmlText(content, start, end) {
+  return decodeHtmlRange(content, start, end, DecodingMode.Legacy);
 }
 
 function attributeValueBounds(content, location) {
@@ -324,12 +343,149 @@ function attributeValueBounds(content, location) {
   return { start: cursor, end: location.endOffset };
 }
 
-function sourceTag(content, node) {
+function parseBoundedHtml(content, budget, limits) {
+  let activeStartTag = null;
+  const mergedAttributeLocations = new WeakMap();
+  const chargeNode = () => {
+    budget.htmlNodes += 1;
+    if (budget.htmlNodes > limits.maxHtmlNodes) {
+      throw new MvxError(`HTML node allocations exceed ${limits.maxHtmlNodes}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
+  const adapter = {
+    ...defaultTreeAdapter,
+    createDocument() {
+      chargeNode();
+      return defaultTreeAdapter.createDocument();
+    },
+    createDocumentFragment() {
+      chargeNode();
+      return defaultTreeAdapter.createDocumentFragment();
+    },
+    createElement(tagName, namespaceURI, attrs) {
+      chargeNode();
+      return defaultTreeAdapter.createElement(tagName, namespaceURI, attrs);
+    },
+    createCommentNode(data) {
+      chargeNode();
+      return defaultTreeAdapter.createCommentNode(data);
+    },
+    createTextNode(value) {
+      chargeNode();
+      return defaultTreeAdapter.createTextNode(value);
+    },
+    setDocumentType(document, name, publicId, systemId) {
+      if (!document.childNodes.some((node) => node.nodeName === '#documentType')) chargeNode();
+      defaultTreeAdapter.setDocumentType(document, name, publicId, systemId);
+    },
+    insertText(parentNode, value) {
+      const previous = parentNode.childNodes.at(-1);
+      if (!previous || !defaultTreeAdapter.isTextNode(previous)) chargeNode();
+      defaultTreeAdapter.insertText(parentNode, value);
+    },
+    insertTextBefore(parentNode, value, referenceNode) {
+      const previous = parentNode.childNodes[
+        parentNode.childNodes.indexOf(referenceNode) - 1
+      ];
+      if (!previous || !defaultTreeAdapter.isTextNode(previous)) chargeNode();
+      defaultTreeAdapter.insertTextBefore(parentNode, value, referenceNode);
+    },
+    adoptAttributes(recipient, attrs) {
+      const existing = new Set(recipient.attrs.map((attribute) => attribute.name));
+      const locations = activeStartTag?.location?.attrs ?? {};
+      for (const attribute of attrs) {
+        if (existing.has(attribute.name) || !locations[attribute.name]) continue;
+        let merged = mergedAttributeLocations.get(recipient);
+        if (!merged) {
+          merged = new Map();
+          mergedAttributeLocations.set(recipient, merged);
+        }
+        merged.set(attribute.name, locations[attribute.name]);
+      }
+      defaultTreeAdapter.adoptAttributes(recipient, attrs);
+    }
+  };
+  const chargeToken = () => {
+    budget.htmlTokens += 1;
+    if (budget.htmlTokens > limits.maxHtmlTokens) {
+      throw new MvxError(`HTML tokens exceed ${limits.maxHtmlTokens}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
+  const chargeTagWork = (parser) => {
+    const depth = Math.max(1, parser.openElements.stackTop + 2);
+    budget.htmlMaxDepth = Math.max(budget.htmlMaxDepth, depth);
+    if (depth > limits.maxHtmlTreeDepth) {
+      throw new MvxError(`HTML tree depth exceeds ${limits.maxHtmlTreeDepth}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+    budget.htmlTreeWork += depth;
+    if (budget.htmlTreeWork > limits.maxHtmlTreeWork) {
+      throw new MvxError(`HTML tree-construction work exceeds ${limits.maxHtmlTreeWork}`, {
+        code: 'ENCODED_PAYLOAD_LIMIT'
+      });
+    }
+  };
+  class BoundedHtmlParser extends HtmlParser {
+    onStartTag(token) {
+      chargeToken();
+      chargeTagWork(this);
+      activeStartTag = token;
+      try {
+        return super.onStartTag(token);
+      } finally {
+        activeStartTag = null;
+      }
+    }
+
+    onEndTag(token) {
+      chargeToken();
+      chargeTagWork(this);
+      return super.onEndTag(token);
+    }
+
+    onComment(token) { chargeToken(); return super.onComment(token); }
+
+    onDoctype(token) { chargeToken(); return super.onDoctype(token); }
+
+    onCharacter(token) { chargeToken(); return super.onCharacter(token); }
+
+    onNullCharacter(token) { chargeToken(); return super.onNullCharacter(token); }
+
+    onWhitespaceCharacter(token) {
+      chargeToken();
+      return super.onWhitespaceCharacter(token);
+    }
+
+    onEof(token) { chargeToken(); return super.onEof(token); }
+  }
+  try {
+    return {
+      document: BoundedHtmlParser.parse(content, {
+        sourceCodeLocationInfo: true,
+        treeAdapter: adapter
+      }),
+      mergedAttributeLocations
+    };
+  } catch (error) {
+    if (error instanceof MvxError) throw error;
+    throw new MvxError('HTML parser exceeded a safe runtime resource', {
+      code: 'ENCODED_PAYLOAD_LIMIT', cause: error
+    });
+  }
+}
+
+function sourceTag(content, node, mergedAttributeLocations) {
   const locations = node.sourceCodeLocation?.attrs ?? {};
+  const mergedLocations = mergedAttributeLocations.get(node) ?? new Map();
   return {
     name: node.tagName,
     attributes: node.attrs.map((attribute) => {
-      const location = locations[attribute.name];
+      const location = locations[attribute.name] ?? mergedLocations.get(attribute.name);
       const bounds = location ? attributeValueBounds(content, location) : null;
       return {
         name: attribute.name,
@@ -339,8 +495,12 @@ function sourceTag(content, node) {
   };
 }
 
-function scriptMode(content, tag) {
-  if (tag.attributes.some((attribute) => attribute.name === 'src')) return null;
+function scriptMode(content, tag, namespace) {
+  if (namespace !== HTML_NAMESPACE && namespace !== SVG_NAMESPACE) return null;
+  if (namespace === HTML_NAMESPACE
+    && tag.attributes.some((attribute) => attribute.name === 'src')) return null;
+  if (namespace === SVG_NAMESPACE
+    && tag.attributes.some((attribute) => attribute.name === 'href')) return null;
   const type = tag.attributes.find((attribute) => attribute.name === 'type');
   let mode;
   if (type) {
@@ -349,6 +509,8 @@ function scriptMode(content, tag) {
     const normalized = asciiLower(trimHtmlSpace(decoded));
     mode = normalized === '' || JAVASCRIPT_TYPES.has(normalized) ? 'script'
       : normalized === 'module' ? 'module' : null;
+  } else if (namespace === SVG_NAMESPACE) {
+    mode = 'script';
   } else {
     const language = tag.attributes.find((attribute) => attribute.name === 'language');
     if (!language || language.valueStart === undefined) {
@@ -361,6 +523,7 @@ function scriptMode(content, tag) {
       mode = normalized === '' || JAVASCRIPT_TYPES.has(`text/${normalized}`) ? 'script' : null;
     }
   }
+  if (namespace === SVG_NAMESPACE) return mode;
   if (mode === 'script' && tag.attributes.some((attribute) => attribute.name === 'nomodule')) {
     return null;
   }
@@ -380,12 +543,14 @@ function scriptMode(content, tag) {
 }
 
 function* htmlAtobLiterals(content, starts, budget, limits) {
-  const document = parseHtml(content, { sourceCodeLocationInfo: true });
+  const { document, mergedAttributeLocations } = parseBoundedHtml(
+    content, budget, limits
+  );
   const stack = [document];
   while (stack.length > 0) {
     const node = stack.pop();
     if (node.tagName && node.sourceCodeLocation?.startTag) {
-      const tag = sourceTag(content, node);
+      const tag = sourceTag(content, node, mergedAttributeLocations);
       for (const attribute of tag.attributes) {
         const mode = htmlEventHandlerMode(
           node.namespaceURI, tag.name, attribute.name
@@ -403,15 +568,26 @@ function* htmlAtobLiterals(content, starts, budget, limits) {
       if (tag.name === 'script') {
         const bodyStart = node.sourceCodeLocation.startTag.endOffset;
         const bodyEnd = node.sourceCodeLocation.endTag?.startOffset ?? content.length;
-        const mode = scriptMode(content, tag);
+        const mode = scriptMode(content, tag, node.namespaceURI);
         if (mode) {
-          yield* javascriptAtobLiterals(
-            content, bodyStart, bodyEnd, starts, budget, limits, null, mode
-          );
+          if (node.namespaceURI === SVG_NAMESPACE) {
+            const decoded = decodeHtmlText(content, bodyStart, bodyEnd);
+            yield* javascriptAtobLiterals(
+              decoded.content, 0, decoded.content.length, starts, budget, limits,
+              decoded.offsets, mode
+            );
+          } else {
+            yield* javascriptAtobLiterals(
+              content, bodyStart, bodyEnd, starts, budget, limits, null, mode
+            );
+          }
         }
       }
     }
-    const children = node.childNodes ?? [];
+    const children = [
+      ...(node.childNodes ?? []),
+      ...(node.content ? [node.content] : [])
+    ];
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push(children[index]);
     }
@@ -474,7 +650,11 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
     candidates: 0,
     candidateEncodedChars: 0,
     parserTokens: 0,
-    astNodes: 0
+    astNodes: 0,
+    htmlTokens: 0,
+    htmlNodes: 0,
+    htmlTreeWork: 0,
+    htmlMaxDepth: 0
   };
   let totalDecodedBytes = 0;
 
@@ -561,6 +741,10 @@ export function extractEncodedPayloads(sources, options = ENCODED_PAYLOAD_LIMITS
     candidateEncodedChars: candidateBudget.candidateEncodedChars,
     parserTokens: candidateBudget.parserTokens,
     astNodes: candidateBudget.astNodes,
+    htmlTokens: candidateBudget.htmlTokens,
+    htmlNodes: candidateBudget.htmlNodes,
+    htmlTreeWork: candidateBudget.htmlTreeWork,
+    htmlMaxDepth: candidateBudget.htmlMaxDepth,
     entries: frozenEntries
   });
   return Object.freeze({

@@ -11,7 +11,8 @@ import { verifyComparisonReport } from '../src/comparison-verification.js';
 import {
   BROWSER_EVENT_HANDLER_PROFILE, BROWSER_EVENT_HANDLER_PROVENANCE,
   BODY_EVENT_HANDLER_ATTRIBUTES, FRAMESET_EVENT_HANDLER_ATTRIBUTES,
-  HTML_EVENT_HANDLER_ATTRIBUTES, SVG_EVENT_HANDLER_ATTRIBUTES
+  HTML_EVENT_HANDLER_ATTRIBUTES, SVG_EVENT_HANDLER_ATTRIBUTES,
+  SVG_SMIL_EVENT_HANDLER_ATTRIBUTES, SVG_SMIL_EVENT_HANDLER_ELEMENTS
 } from '../src/browser-event-handlers.js';
 import {
   analyzeEncodedPayloads, ENCODED_PAYLOAD_LIMITS,
@@ -26,7 +27,9 @@ import {
   BODY_EVENT_HANDLER_ATTRIBUTES as PUBLIC_BODY_EVENT_HANDLER_ATTRIBUTES,
   FRAMESET_EVENT_HANDLER_ATTRIBUTES as PUBLIC_FRAMESET_EVENT_HANDLER_ATTRIBUTES,
   HTML_EVENT_HANDLER_ATTRIBUTES as PUBLIC_HTML_EVENT_HANDLER_ATTRIBUTES,
-  SVG_EVENT_HANDLER_ATTRIBUTES as PUBLIC_SVG_EVENT_HANDLER_ATTRIBUTES
+  SVG_EVENT_HANDLER_ATTRIBUTES as PUBLIC_SVG_EVENT_HANDLER_ATTRIBUTES,
+  SVG_SMIL_EVENT_HANDLER_ATTRIBUTES as PUBLIC_SVG_SMIL_EVENT_HANDLER_ATTRIBUTES,
+  SVG_SMIL_EVENT_HANDLER_ELEMENTS as PUBLIC_SVG_SMIL_EVENT_HANDLER_ELEMENTS
 } from '../src/index.js';
 import { verifyAuditReport } from '../src/audit-verification.js';
 import { auditToSarif, auditToText, comparisonToMarkdown } from '../src/reporters.js';
@@ -45,12 +48,14 @@ function source(content, sourcePath = 'worker.js') {
 }
 
 const HANDLER_PROFILE_GOLDEN = Object.freeze({
-  profile: 'mvx-chromium-event-handlers-v1-sha256-c4a32df3d5b9d85a0ce371c8b96c6060d69f22105de5a8dd5ce9302f1ccd1ec0',
+  profile: 'mvx-chromium-event-handlers-v1-sha256-e0bf4e3ac2790bbc91b19ade04f6ac96757bdef87f30150bb72feb5381e06937',
   lists: Object.freeze({
     body: Object.freeze({ count: 23, sha256: '4ddd4a6e31f75be8eb3d0f339a432333f93e35c1d7b4d63ff63e8d6cb64f5dca' }),
     frameset: Object.freeze({ count: 23, sha256: 'ec184fa2af1bf99c1dbc41b3bbbf199f7b5d5cd76f38fa7a9028ca2c8be1a985' }),
     html: Object.freeze({ count: 115, sha256: 'c93522e21c1c8e010b0ae87f4888ca36301e36946a2fef6d9929203ce4f70000' }),
-    svg: Object.freeze({ count: 6, sha256: 'f3c1555b121deca7b728d41730c4b5f1de1257d20733afa3152e80f691929672' })
+    svg: Object.freeze({ count: 6, sha256: 'f3c1555b121deca7b728d41730c4b5f1de1257d20733afa3152e80f691929672' }),
+    svgSmilHandlers: Object.freeze({ count: 3, sha256: 'ba241ea684f08f4e179cd32686fe97b32474b3bf1d84fee706609f59834cbb0e' }),
+    svgSmilElements: Object.freeze({ count: 4, sha256: 'e0cb45d18ac1b4379b739bc882e54494a608d835866fce503473f2200a253765' })
   })
 });
 
@@ -362,7 +367,9 @@ test('frozen Chromium handler profile matches independent goldens and contexts',
     body: BODY_EVENT_HANDLER_ATTRIBUTES,
     frameset: FRAMESET_EVENT_HANDLER_ATTRIBUTES,
     html: HTML_EVENT_HANDLER_ATTRIBUTES,
-    svg: SVG_EVENT_HANDLER_ATTRIBUTES
+    svg: SVG_EVENT_HANDLER_ATTRIBUTES,
+    svgSmilHandlers: SVG_SMIL_EVENT_HANDLER_ATTRIBUTES,
+    svgSmilElements: SVG_SMIL_EVENT_HANDLER_ELEMENTS
   };
   assert.equal(BROWSER_EVENT_HANDLER_PROFILE, HANDLER_PROFILE_GOLDEN.profile);
   for (const [name, values] of Object.entries(lists)) {
@@ -383,7 +390,9 @@ test('frozen Chromium handler profile matches independent goldens and contexts',
     body: BODY_EVENT_HANDLER_ATTRIBUTES,
     frameset: FRAMESET_EVENT_HANDLER_ATTRIBUTES,
     html: HTML_EVENT_HANDLER_ATTRIBUTES,
-    svg: SVG_EVENT_HANDLER_ATTRIBUTES
+    svg: SVG_EVENT_HANDLER_ATTRIBUTES,
+    svgSmilHandlers: SVG_SMIL_EVENT_HANDLER_ATTRIBUTES,
+    svgSmilElements: SVG_SMIL_EVENT_HANDLER_ELEMENTS
   };
   const identityHash = createHash('sha256')
     .update(JSON.stringify(identity)).digest('hex');
@@ -458,6 +467,66 @@ test('HTML5 parsing excludes inert text and duplicates and includes foreign hand
   assert.equal(formalParameters.decodedCount, 0);
 });
 
+test('HTML templates and tree-corrected root attributes retain executable locations', () => {
+  const payload = base64('eval(templatePayload);xxxx');
+  const templates = extractEncodedPayloads([source([
+    `<template><button onclick="atob('${payload}')"></button></template>`,
+    `<template><script>atob('${payload}')</script></template>`
+  ].join('\n'), 'templates.html')]);
+  assert.equal(templates.candidates, 2);
+  assert.equal(templates.decodedCount, 2);
+  assert.deepEqual(templates.entries.map((entry) => entry.encodedLine), [1, 2]);
+
+  const mergedRoots = extractEncodedPayloads([source([
+    '<html><head></head><body><p>x</p>',
+    `<body onclick="atob('${payload}')">`,
+    `<html onclick="atob('${payload}')">`
+  ].join('\n'), 'merged-roots.html')]);
+  assert.equal(mergedRoots.candidates, 2);
+  assert.equal(mergedRoots.decodedCount, 2);
+  assert.deepEqual(mergedRoots.entries.map((entry) => entry.encodedLine), [2, 3]);
+});
+
+test('SVG handlers, SMIL scope, and scripts follow SVG execution grammar', () => {
+  const payload = base64('eval(svgPayload);xxxxxxxx');
+  const smil = extractEncodedPayloads([source(
+    `<svg>${SVG_SMIL_EVENT_HANDLER_ELEMENTS.flatMap((tagName) =>
+      SVG_SMIL_EVENT_HANDLER_ATTRIBUTES.map((attributeName) =>
+        `<${tagName} ${attributeName}="atob('${payload}')"></${tagName}>`)
+    ).join('\n')}</svg>`,
+    'smil.html'
+  )]);
+  assert.equal(
+    smil.decodedCount,
+    SVG_SMIL_EVENT_HANDLER_ELEMENTS.length * SVG_SMIL_EVENT_HANDLER_ATTRIBUTES.length
+  );
+
+  const contexts = extractEncodedPayloads([source([
+    `<svg><rect onbegin="atob('${payload}')"></rect></svg>`,
+    `<svg><circle onend="atob('${payload}')"></circle></svg>`,
+    `<svg onrepeat="atob('${payload}')"></svg>`,
+    `<svg><animate onbegin="let event; atob('${payload}')"></animate></svg>`,
+    `<svg><animate onbegin="let evt; atob('${payload}')"></animate></svg>`,
+    `<svg><rect onclick="let event; atob('${payload}')"></rect></svg>`
+  ].join('\n'), 'svg-handlers.html')]);
+  assert.equal(contexts.candidates, 3);
+  assert.equal(contexts.decodedCount, 2);
+  assert.deepEqual(contexts.entries.map((entry) => entry.encodedLine), [4, 6]);
+
+  const scripts = extractEncodedPayloads([source([
+    `<svg><script nomodule>atob('${payload}')</script></svg>`,
+    `<svg><script language="json">atob('${payload}')</script></svg>`,
+    `<svg><script src="ignored.js">atob('${payload}')</script></svg>`,
+    `<svg><script for="document" event="onclick">atob('${payload}')</script></svg>`,
+    `<svg><script>atob(&quot;${payload}&quot;)</script></svg>`,
+    `<svg><script href="external.js">atob('${payload}')</script></svg>`,
+    `<math><script>atob('${payload}')</script></math>`
+  ].join('\n'), 'svg-scripts.html')]);
+  assert.equal(scripts.candidates, 5);
+  assert.equal(scripts.decodedCount, 5);
+  assert.deepEqual(scripts.entries.map((entry) => entry.encodedLine), [1, 2, 3, 4, 5]);
+});
+
 test('malformed literal attempts consume fixed budgets without repeated rescans', () => {
   const twoIncompleteLines = source("atob('unterminated\natob('unterminated");
   assert.throws(
@@ -502,6 +571,22 @@ test('malformed literal attempts consume fixed budgets without repeated rescans'
   const htmlMilliseconds = Number(process.hrtime.bigint() - htmlStarted) / 1e6;
   assert.equal(htmlResult.candidates, 0);
   assert.ok(htmlMilliseconds < 2_000, `malformed HTML scan took ${htmlMilliseconds}ms`);
+
+  const adversarialHtml = source(
+    '<div>'.repeat(32_000) + '</span>'.repeat(32_000), 'adversarial.html'
+  );
+  const adversarialStarted = process.hrtime.bigint();
+  assert.throws(
+    () => extractEncodedPayloads([adversarialHtml]),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML tree depth/.test(error.message)
+  );
+  const adversarialMilliseconds = Number(
+    process.hrtime.bigint() - adversarialStarted
+  ) / 1e6;
+  assert.ok(
+    adversarialMilliseconds < 2_000,
+    `adversarial HTML scan took ${adversarialMilliseconds}ms`
+  );
 });
 
 test('all ECMAScript line terminators preserve encoded and decoded provenance', async (t) => {
@@ -552,6 +637,11 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
   );
   assert.equal(PUBLIC_HTML_EVENT_HANDLER_ATTRIBUTES, HTML_EVENT_HANDLER_ATTRIBUTES);
   assert.equal(PUBLIC_SVG_EVENT_HANDLER_ATTRIBUTES, SVG_EVENT_HANDLER_ATTRIBUTES);
+  assert.equal(
+    PUBLIC_SVG_SMIL_EVENT_HANDLER_ATTRIBUTES,
+    SVG_SMIL_EVENT_HANDLER_ATTRIBUTES
+  );
+  assert.equal(PUBLIC_SVG_SMIL_EVENT_HANDLER_ELEMENTS, SVG_SMIL_EVENT_HANDLER_ELEMENTS);
   const payload = base64('x'.repeat(16));
   const two = source(`atob('${payload}'); atob('${payload}');`);
   assert.throws(
@@ -602,6 +692,32 @@ test('encoded-payload resource limits fail closed and malformed limits are rejec
   assert.equal(
     extractEncodedPayloads([source('const o={x};')], { maxAstNodes: 8 }).astNodes,
     8
+  );
+  const html = source('<div><span>text</span></div>', 'limits.html');
+  const htmlResult = extractEncodedPayloads([html]);
+  assert.ok(htmlResult.htmlTokens > 0);
+  assert.ok(htmlResult.htmlNodes > 0);
+  assert.ok(htmlResult.htmlTreeWork > 0);
+  assert.ok(htmlResult.htmlMaxDepth > 0);
+  assert.throws(
+    () => extractEncodedPayloads([html], { maxHtmlTokens: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML tokens/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([html], { maxHtmlNodes: 1 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML node/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([
+      source('<div>'.repeat(16), 'depth.html')
+    ], { maxHtmlTreeDepth: 8 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /HTML tree depth/.test(error.message)
+  );
+  assert.throws(
+    () => extractEncodedPayloads([
+      source('<div>'.repeat(16), 'work.html')
+    ], { maxHtmlTreeDepth: 32, maxHtmlTreeWork: 16 }),
+    (error) => error.code === 'ENCODED_PAYLOAD_LIMIT' && /tree-construction work/.test(error.message)
   );
   const deeplyNested = source(
     '['.repeat(3_000) + `atob('${base64('eval(deepPayload);xxxx')}')` + ']'.repeat(3_000)
