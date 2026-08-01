@@ -40,6 +40,9 @@ export function auditToText(result) {
     ...(result.encodedPayloads ? [
       `Encoded payloads (${result.encodedPayloads.profile}): ${result.encodedPayloads.decodedCount} decoded, ${result.encodedPayloads.totalDecodedBytes} bytes, SHA-256: ${result.encodedPayloads.sha256}`
     ] : []),
+    ...(result.dnrRules ? [
+      `Static DNR rules (${result.dnrRules.profile}): ${result.dnrRules.totals.rulesets} ruleset(s), ${result.dnrRules.totals.rules} rule(s), ${result.dnrRules.totals.invalidRulesets} invalid ruleset(s), ${result.dnrRules.totals.invalidRules} invalid rule(s), SHA-256: ${result.dnrRules.sha256}`
+    ] : []),
     ...(result.rulePacks?.length ? [`Rule packs: ${result.rulePacks.length} (${result.rulePacks.map((pack) => `${escapeText(pack.namespace)}@${escapeText(pack.version)}`).join(', ')})`] : []),
     ...(result.dispositionPolicies?.length ? [
       `Disposition policy provenance: ${result.dispositionPolicies.length}`,
@@ -96,6 +99,7 @@ export function auditToSarif(result) {
     ...(result.analysis ? { analysis: result.analysis } : {}),
     ...(result.package ? { package: result.package } : {}),
     ...(result.encodedPayloads ? { encodedPayloads: result.encodedPayloads } : {}),
+    ...(result.dnrRules ? { dnrRules: result.dnrRules } : {}),
     ...(result.rulePacks?.length ? { rulePacks: result.rulePacks } : {}),
     ...(result.dispositionPolicies?.length ? {
       dispositionPolicies: result.dispositionPolicies,
@@ -152,6 +156,15 @@ export function auditToSarif(result) {
             encoding: item.encoding,
             depth: item.depth,
             utf8: item.utf8
+          } : {}),
+          ...(item.rulesetId ? {
+            dnrRule: {
+              rulesetId: item.rulesetId,
+              rulesetEnabled: item.rulesetEnabled,
+              ...(item.ruleId !== undefined ? { ruleId: item.ruleId } : {}),
+              ...(item.action ? { action: item.action } : {}),
+              ...(item.reason ? { reason: item.reason } : {})
+            }
           } : {})
         }
       }))),
@@ -226,6 +239,10 @@ export function comparisonToMarkdown(comparison) {
     ...(before.package && after.package ? [`| Package SHA-256 | \`${before.package.sha256}\` | \`${after.package.sha256}\` |`] : []),
     ...(before.encodedPayloads && after.encodedPayloads ? [
       `| Encoded payloads decoded | ${before.encodedPayloads.decodedCount} | ${after.encodedPayloads.decodedCount} |`
+    ] : []),
+    ...(before.dnrRules && after.dnrRules ? [
+      `| Static DNR rules | ${before.dnrRules.totals.rules} | ${after.dnrRules.totals.rules} |`,
+      `| Invalid DNR rulesets/rules | ${before.dnrRules.totals.invalidRulesets}/${before.dnrRules.totals.invalidRules} | ${after.dnrRules.totals.invalidRulesets}/${after.dnrRules.totals.invalidRules} |`
     ] : []),
     ...(before.analysis && after.analysis ? [`| Analysis SHA-256 | \`${before.analysis.sha256}\` | \`${after.analysis.sha256}\` |`] : []),
     ...(before.artifact && after.artifact ? [

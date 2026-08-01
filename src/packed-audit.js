@@ -124,6 +124,7 @@ export async function auditExtensionArchive(inputPath, options = {}) {
     });
     const audit = await auditExtension(extracted, {
       limits: options.limits,
+      dnrRuleLimits: options.dnrRuleLimits,
       _preparedRulePacks: preparedRulePacks,
       _preparedDispositionPolicies: emptyDispositionPolicies
     });

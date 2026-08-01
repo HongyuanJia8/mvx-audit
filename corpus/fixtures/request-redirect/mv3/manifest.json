@@ -1,0 +1,1 @@
+{"manifest_version":3,"name":"MVX request redirect fixture (MV3)","version":"1.0.0","permissions":["declarativeNetRequest"],"host_permissions":["http://127.0.0.1/*"],"declarative_net_request":{"rule_resources":[{"id":"redirect_fixture","enabled":true,"path":"rules.json"}]}}

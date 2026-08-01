@@ -44,7 +44,7 @@ source map, or other unparsed regular file changes. It deliberately describes
 the unpacked tree rather than ZIP metadata, compression, or a CRX signature.
 Use `artifact.sha256` for the exact packed bytes.
 
-The `mvx-static-v4` analysis profile includes:
+The `mvx-static-v5` analysis profile includes:
 
 - the byte length and SHA-256 of the raw `manifest.json` bytes;
 - the relative path, byte length, and raw-byte SHA-256 of every scanned source;
@@ -53,6 +53,8 @@ The `mvx-static-v4` analysis profile includes:
 - the effective file, entry, depth, and byte limits;
 - the `mvx-encoded-payloads-v1` profile, normalized fixed limits, and combined
   decoded-payload inventory SHA-256;
+- the `mvx-dnr-static-v1` profile, normalized limits, and combined static-DNR
+  ruleset inventory SHA-256;
 - the sorted raw-byte provenance of every analyst-supplied declarative rule
   pack and its normalized effective limits; and
 - a combined SHA-256 over that canonical identity record.
@@ -331,6 +333,12 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
   controls are rejected. Defaults allow 32 packs, 5 MB total input, 1,000
   rules, 5,000 indicators, 1 MB total literal bytes, and 10,000 matches. See
   [declarative rule packs](rule-packs.md) for the complete limits.
+- Manifest-declared static DNR JSON is decoded as strict UTF-8, parsed without
+  execution, checked for duplicate keys, and structurally classified under
+  fixed rule, value, depth, ruleset, and retained-evidence budgets. Both enabled
+  and disabled rulesets are included. Missing declared files are reported by
+  `MVX002`; malformed or structurally unverifiable declarations and rules are
+  reported by `MVX115`. See [static DNR analysis](dnr-analysis.md).
 - In executable JS/HTML/SVG contexts, a bounded ECMAScript parser finds syntax-
   valid direct literal Base64 calls to bare `atob`, `window.atob`, `self.atob`,
   or `globalThis.atob` without executing JavaScript. The exact parser version is
@@ -421,8 +429,9 @@ risk scores demonstrate analyzer coverage, not empirical browser behavior.
 - Verified packed lineage covers the embedded developer key only; store
   listing history, signing-key ownership, and acquisition-channel trust require
   external evidence.
-- Declarative rules are recognized by selected structural strings, not a full
-  Chrome ruleset schema implementation.
+- Static DNR analysis validates rule identity and action structure but not the
+  complete Chrome condition schema, browser-version behavior, rule precedence,
+  dynamic/session rules, browser acceptance, or runtime reachability.
 - Firefox and Safari extension semantics are not evaluated.
 
 ## Runtime experiments

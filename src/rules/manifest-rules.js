@@ -62,7 +62,7 @@ function rule(id, title, severity, category, description, remediation, reference
   return { id, title, severity, category, description, remediation, references, confidence };
 }
 
-export function analyzeManifest(manifest, sources = []) {
+export function analyzeManifest(manifest) {
   const findings = [];
   const version = manifest.manifest_version;
   const permissions = permissionLists(manifest);
@@ -186,19 +186,6 @@ export function analyzeManifest(manifest, sources = []) {
       'MV3 uses a single extension service worker and does not accept background.scripts.',
       'Migrate background logic to background.service_worker and make state event-driven.', [REFERENCES.mv3]
     ), evidence('background.scripts', manifest.background.scripts)));
-  }
-
-  const ruleResources = Array.isArray(manifest.declarative_net_request?.rule_resources) ? manifest.declarative_net_request.rule_resources : [];
-  const dnrPaths = new Set(ruleResources.map((resource) => resource?.path).filter(Boolean));
-  const dnrEvidence = sources
-    .filter((source) => dnrPaths.has(source.path) && /"type"\s*:\s*"modifyHeaders"/.test(source.content))
-    .map((source) => ({ file: source.path, line: source.content.slice(0, source.content.search(/"type"\s*:\s*"modifyHeaders"/)).split('\n').length, snippet: '"type": "modifyHeaders"' }));
-  if (dnrEvidence.length > 0) {
-    findings.push(createFinding(rule(
-      'MVX113', 'Declarative header modification rules', 'high', 'network-control',
-      'Declarative Net Request rules can add, remove, or set selected request and response headers.',
-      'Constrain urlFilter, resourceTypes, initiatorDomains, and header operations to the minimum required scope.', [REFERENCES.dnr]
-    ), dnrEvidence));
   }
 
   return findings;

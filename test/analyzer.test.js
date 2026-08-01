@@ -20,7 +20,8 @@ test('a minimal MV3 manifest produces no supported findings', async (t) => {
   assert.equal(result.summary.rating, 'clean');
   assert.match(result.analysis.sha256, /^[a-f0-9]{64}$/);
   assert.match(result.analysis.manifest.sha256, /^[a-f0-9]{64}$/);
-  assert.equal(result.analysis.profile, 'mvx-static-v4');
+  assert.equal(result.analysis.profile, 'mvx-static-v5');
+  assert.equal(result.analysis.dnrRules.profile, 'mvx-dnr-static-v1');
   assert.equal(result.analysis.encodedPayloads.profile, 'mvx-encoded-payloads-v1');
   assert.equal(result.encodedPayloads.decodedCount, 0);
   assert.deepEqual(result.analysis.sources, []);
@@ -107,7 +108,7 @@ test('cookie capability chain is detected in both manifest and source', async ()
   assert.deepEqual(result.capabilities.hostPermissions, ['<all_urls>']);
   assert.equal(result.analysis.manifest.sha256, '3a9e7868763f271ead5caefe274ea72c63cfa19d1b197511dcbf28a0ef7a8fff');
   assert.equal(result.analysis.packageLayoutSha256, 'b0261980aa905c75bd30450d2ffc1af5fa27454eb9923d75f1c4d25bec134744');
-  assert.equal(result.analysis.sha256, 'fa508ff9f98c86622da3a26a7328b9b4d536ba7033b0f25778db06a8b69f1572');
+  assert.equal(result.analysis.sha256, 'b57ae698199aabddb9d1280d47bc1953df5ce6a6fe687537eff40c40cc0fe427');
 });
 
 test('multiple source patterns retain deterministic evidence locations', async (t) => {
