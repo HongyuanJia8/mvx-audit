@@ -191,8 +191,10 @@ function validateRule(rule, seenIds) {
       return { reason: 'invalid-redirect-action', ruleId: rule.id };
     }
   } else if (type === 'modifyHeaders') {
-    const request = rule.action.requestHeaders ?? [];
-    const response = rule.action.responseHeaders ?? [];
+    const request = rule.action.requestHeaders === undefined
+      ? [] : rule.action.requestHeaders;
+    const response = rule.action.responseHeaders === undefined
+      ? [] : rule.action.responseHeaders;
     if (hasRedirect || !Array.isArray(request) || !Array.isArray(response)
       || request.length + response.length === 0
       || ![...request, ...response].every(validHeaderModification)) {

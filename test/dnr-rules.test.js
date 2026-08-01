@@ -102,15 +102,25 @@ test('DNR structural failures are explicit and do not become capability findings
     { id: 1, action: { type: 'redirect', redirect: { url: 'https://example.invalid/' } }, condition: {} },
     { id: 3, action: { type: 'futureAction' }, condition: {} },
     { id: 4, action: { type: 'redirect', redirect: { url: 'javascript:alert(1)' } }, condition: {} },
-    { id: 5, action: { type: 'modifyHeaders', requestHeaders: [] }, condition: {} }
+    { id: 5, action: { type: 'modifyHeaders', requestHeaders: [] }, condition: {} },
+    {
+      id: 6,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: null,
+        responseHeaders: [{ header: 'x-test', operation: 'remove' }]
+      },
+      condition: {}
+    }
   ]);
   const inventory = extractStaticDnrRules(manifest(), [source(content)]);
   assert.equal(inventory.totals.validRules, 1);
-  assert.equal(inventory.totals.invalidRules, 4);
+  assert.equal(inventory.totals.invalidRules, 5);
   assert.deepEqual(inventory.entries.map((entry) => entry.reason), [
     'duplicate-rule-id',
     'unsupported-action-type',
     'invalid-redirect-action',
+    'invalid-header-action',
     'invalid-header-action'
   ]);
   assert.deepEqual(analyzeStaticDnrRules(inventory).map((finding) => finding.id), ['MVX115']);
