@@ -1,8 +1,11 @@
 # MVX Audit: Chrome Manifest V2 vs V3 Security
 
 [![CI](https://github.com/hyj28/mvx-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/hyj28/mvx-audit/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/mvx-audit.svg)](https://www.npmjs.com/package/mvx-audit)
+[![GitHub release](https://img.shields.io/github/v/release/hyj28/mvx-audit)](https://github.com/hyj28/mvx-audit/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
+[![SLSA provenance](https://img.shields.io/badge/provenance-SLSA%20attested-6f42c1.svg)](https://github.com/hyj28/mvx-audit/attestations)
 
 MVX Audit is a deterministic, minimal-dependency security research toolkit for
 Chrome extensions. It combines static auditing, MV2/MV3 capability comparison,
@@ -13,6 +16,10 @@ The repository combines a curated corpus of **18 threat scenarios and 36
 paired MV2/MV3 fixtures** with a reproducible real-world intelligence snapshot
 covering **5,122 unique extension IDs** and **504 indexed non-empty CRX
 artifacts**. Live packages are never bundled or fetched by normal commands.
+
+Install the published CLI from [npm](https://www.npmjs.com/package/mvx-audit),
+or inspect the checksums, SBOM, and build provenance attached to the latest
+[GitHub Release](https://github.com/hyj28/mvx-audit/releases/latest).
 
 ## Why this project exists
 
@@ -36,82 +43,81 @@ xmlchars parser stack is bundled in the published package, and
 `npm-shrinkwrap.json` records registry integrity; no browser is downloaded.
 
 ```bash
-git clone https://github.com/hyj28/mvx-audit.git
-cd mvx-audit
-npm ci
+npm install --global mvx-audit
+mvx --version
 
 # Audit an unpacked extension directory
-node bin/mvx.js audit /path/to/extension
+mvx audit /path/to/extension
 
 # Audit a CRX/ZIP through a cleanup-enforced temporary extraction
-node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk
+mvx audit /path/to/extension.crx --acknowledge-risk
 
 # Fail before extraction unless a CRX2/CRX3 developer signature verifies
-node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
+mvx audit /path/to/extension.crx --acknowledge-risk \
   --require-valid-signature
 
 # Bind the audit to identity values obtained from an independent trusted source
-node bin/mvx.js audit /path/to/extension.crx --acknowledge-risk \
+mvx audit /path/to/extension.crx --acknowledge-risk \
   --expected-archive-sha256 <sha256> --expected-extension-id <extension-id>
 
 # Reproduce a retained static report against exact input and trusted identities
-node bin/mvx.js audit verify report.json /path/to/extension \
+mvx audit verify report.json /path/to/extension \
   --acknowledge-risk --expected-report-sha256 <sha256> \
   --expected-package-sha256 <sha256>
 
 # Fail CI when a high- or critical-severity finding exists
-node bin/mvx.js audit /path/to/extension --format sarif \
+mvx audit /path/to/extension --format sarif \
   --output results.sarif --fail-on high
 
 # Attach complete identity-bound review metadata without deleting raw findings
-node bin/mvx.js dispositions validate examples/disposition-policy.json
-node bin/mvx.js audit /path/to/extension \
-  --disposition-policy review.json --fail-on-unreviewed high
+mvx dispositions validate /path/to/disposition-policy.json
+mvx audit /path/to/extension \
+  --disposition-policy /path/to/disposition-policy.json --fail-on-unreviewed high
 
 # Compare a migration
-node bin/mvx.js compare /path/to/mv2 /path/to/mv3 \
+mvx compare /path/to/mv2 /path/to/mv3 \
   --format markdown --output migration-review.md
 
 # Compare two exact signed releases with developer-key continuity
-node bin/mvx.js compare packed before.crx after.crx --acknowledge-risk \
+mvx compare packed before.crx after.crx --acknowledge-risk \
   --require-valid-signature --require-same-extension-id \
   --before-archive-sha256 <sha256> --after-archive-sha256 <sha256>
 
 # Reproduce a retained comparison and every derived delta
-node bin/mvx.js compare verify comparison.json before.crx after.crx \
+mvx compare verify comparison.json before.crx after.crx \
   --acknowledge-risk --require-valid-signature \
   --expected-report-sha256 <sha256> \
   --before-archive-sha256 <sha256> --after-archive-sha256 <sha256>
 
 # Validate and apply local declarative campaign indicators
-node bin/mvx.js rules validate examples/campaign-rule-pack.json
-node bin/mvx.js audit /path/to/extension \
-  --rule-pack examples/campaign-rule-pack.json
+mvx rules validate /path/to/campaign-rule-pack.json
+mvx audit /path/to/extension \
+  --rule-pack /path/to/campaign-rule-pack.json
 
 # Explore and validate the built-in research corpus
-node bin/mvx.js corpus list
-npm run corpus:validate
+mvx corpus list
+mvx corpus validate
 
 # Query real-world threat intelligence without downloading malware
-node bin/mvx.js intel stats
-node bin/mvx.js intel lookup <extension-id-or-sha256>
-npm run intel:validate
+mvx intel stats
+mvx intel lookup <extension-id-or-sha256>
+mvx intel validate
 
 # Inspect a live-artifact plan; this does not download anything
-node bin/mvx.js sample plan <extension-id>
-node bin/mvx.js sample plan-many --label behavior-confirmed-malicious --limit 100
+mvx sample plan <extension-id>
+mvx sample plan-many --label behavior-confirmed-malicious --limit 100
 
 # Explicit opt-in download to the Git-ignored quarantine
-node bin/mvx.js sample fetch <extension-id> --acknowledge-risk
-node bin/mvx.js sample fetch-many --acknowledge-risk \
+mvx sample fetch <extension-id> --acknowledge-risk
+mvx sample fetch-many --acknowledge-risk \
   --label behavior-confirmed-malicious --limit 100 --max-total-bytes 250000000
 
 # Bounded CRX2/CRX3 extraction for static analysis
-node bin/mvx.js sample unpack quarantine/<id>/<sha256>.crx --acknowledge-risk
-node bin/mvx.js audit quarantine/<id>/unpacked/<sha256>
+mvx sample unpack quarantine/<id>/<sha256>.crx --acknowledge-risk
+mvx audit quarantine/<id>/unpacked/<sha256>
 
 # Re-evaluate and verify a retained isolated-lab evidence bundle offline
-node bin/mvx.js lab verify results/report.json /path/to/exact-extension \
+mvx lab verify results/report.json /path/to/exact-extension \
   results/scenario.json results/events.jsonl \
   --expected-report-sha256 <sha256> \
   --expected-package-sha256 <sha256> \
@@ -119,12 +125,36 @@ node bin/mvx.js lab verify results/report.json /path/to/exact-extension \
   --expected-image-id sha256:<independently-pinned-image-id>
 
 # Benchmark quarantined real samples without executing extension code
-node bin/mvx.js benchmark static quarantine --acknowledge-risk \
+mvx benchmark static quarantine --acknowledge-risk \
   --label behavior-confirmed-malicious --threshold high --format json
 ```
 
-Use `npm link` if you want the equivalent `mvx` command during local
-development.
+For a source checkout instead of the published package:
+
+```bash
+git clone https://github.com/hyj28/mvx-audit.git
+cd mvx-audit
+npm ci
+npm link
+```
+
+## Release integrity
+
+The current [v3.1.0 release](https://github.com/hyj28/mvx-audit/releases/tag/v3.1.0)
+is published to npm and GitHub from the same tarball:
+
+- `mvx-audit-3.1.0.tgz` — SHA-256
+  `60932cc37443069dd48d28c88a187a46dd27b29ed912fec0355897e76e6a4a4e`
+- `mvx-audit-3.1.0.cdx.json` — CycloneDX SBOM
+- `SHA256SUMS` — downloadable asset checksums
+- [SLSA build provenance](https://github.com/hyj28/mvx-audit/attestations/38357984)
+  and [CycloneDX attestation](https://github.com/hyj28/mvx-audit/attestations/38357985)
+  bound to the release tarball
+
+Tag releases are built and attested in GitHub Actions. npm publishing uses an
+OIDC Trusted Publisher rather than a long-lived registry token. See
+[CONTRIBUTING.md](CONTRIBUTING.md#release-process) for the maintained release
+procedure.
 
 ## What an audit includes
 
